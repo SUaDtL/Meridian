@@ -52,6 +52,12 @@ interface RenderInput {
   design: DesignState;
   prepared: ReturnType<typeof prepareSource>;
   key: string;
+  projection?: RenderDesignProjection;
+}
+
+export interface RenderDesignProjection {
+  key: string;
+  resolve(model: FlowModel | undefined): Promise<DesignState>;
 }
 
 // SVG strings dominate memory. Count their UTF-16 storage and the source-bearing
@@ -151,11 +157,12 @@ function safeSvg(raw: string): SVGSVGElement {
   return svg;
 }
 
-async function performRender({ settings, nodeAccents, design, prepared, key }: RenderInput, signal: AbortSignal): Promise<RenderResult> {
+async function performRender({ settings, nodeAccents, design: inputDesign, prepared, key, projection }: RenderInput, signal: AbortSignal): Promise<RenderResult> {
   checkRenderSignal(signal);
   const { text } = prepared;
   const warnings = [...prepared.warnings];
-  const layoutKey = layoutFingerprint(text, settings, design);
+  const fingerprint = layoutFingerprint(text, settings, inputDesign);
+  const layoutKey = projection ? JSON.stringify([fingerprint, projection.key]) : fingerprint;
   const cachedLayout = layoutCache.get(layoutKey);
   const theme = getTheme(settings.theme);
   const id = cachedLayout?.id ?? `meridian-${++serial}`;
@@ -173,7 +180,7 @@ async function performRender({ settings, nodeAccents, design, prepared, key }: R
     look: 'classic',
     layout: settings.layout,
     // Only an explicitly chosen preset changes the published ELK defaults.
-    elk: design.preset === 'infrastructure' ? { preset: 'default', straightenEdges: true, lineHops: 'gap', mergeEdges: false } : undefined,
+    elk: inputDesign.preset === 'infrastructure' ? { preset: 'default', straightenEdges: true, lineHops: 'gap', mergeEdges: false } : undefined,
     darkMode: theme.dark,
     fontFamily: font,
     deterministicIds: true,
@@ -251,10 +258,15 @@ async function performRender({ settings, nodeAccents, design, prepared, key }: R
     let modelBytes = 0;
     let rendered: { diagramType: string };
     let svg: SVGSVGElement;
+    let design = inputDesign;
     if (cachedLayout) {
       model = cachedLayout.model;
       modelBytes = cachedLayout.modelBytes;
       rendered = cachedLayout;
+      if (projection) {
+        design = await projection.resolve(model);
+        checkRenderSignal(signal);
+      }
       // Only this module's already-sanitized snapshots enter the layout cache.
       svg = new DOMParser().parseFromString(cachedLayout.svg, 'image/svg+xml').documentElement as unknown as SVGSVGElement;
       warnings.push(...cachedLayout.warnings);
@@ -271,7 +283,6 @@ async function performRender({ settings, nodeAccents, design, prepared, key }: R
         mermaid.initialize({ ...config, layout: 'cose-bilkent' });
         layoutWarnings.push('Mind maps use their native radial layout. The ELK and Dagre controls apply to graph diagrams.');
       }
-      let renderText = text;
       if (diagramType.startsWith('flowchart')) {
         const parsed = await mermaid.mermaidAPI.getDiagramFromText(text);
         checkRenderSignal(signal);
@@ -297,8 +308,12 @@ async function performRender({ settings, nodeAccents, design, prepared, key }: R
           defaultInterpolate: edges.defaultInterpolate,
         };
         modelBytes = JSON.stringify({ ...model, vertices: [...model.vertices] }).length * 2;
-        renderText = designRenderSource(text, design, model);
       }
+      if (projection) {
+        design = await projection.resolve(model);
+        checkRenderSignal(signal);
+      }
+      const renderText = model ? designRenderSource(text, design, model) : text;
       const output = await mermaid.render(id, renderText, host);
       checkRenderSignal(signal);
       rendered = output;
@@ -457,16 +472,17 @@ async function performRender({ settings, nodeAccents, design, prepared, key }: R
 
 const renderQueue = latestRenderQueue(performRender);
 
-export async function renderDiagram(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState = createDesign(), options: { signal?: AbortSignal } = {}): Promise<RenderResult> {
+export async function renderDiagram(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState = createDesign(), options: { signal?: AbortSignal; projection?: RenderDesignProjection } = {}): Promise<RenderResult> {
   if (options.signal?.aborted) throw renderAborted();
   // Validate synchronously before scheduling, lazy-loading Mermaid, or reading
   // a cache. A rejected source must never touch the rendering DOM.
   const prepared = prepareSource(source);
-  const key = renderFingerprint(source, settings, nodeAccents, design);
+  const fingerprint = renderFingerprint(source, settings, nodeAccents, design);
+  const key = options.projection ? JSON.stringify([fingerprint, options.projection.key]) : fingerprint;
   const cached = resultCache.get(key);
   if (cached) {
     renderQueue.cancel();
     return cached;
   }
-  return renderQueue.submit(key, { source, settings, nodeAccents, design, prepared, key }, options.signal);
+  return renderQueue.submit(key, { source, settings, nodeAccents, design, prepared, key, projection: options.projection }, options.signal);
 }

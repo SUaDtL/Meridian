@@ -219,3 +219,39 @@ declare global {
 }
 window.seedProjectEditor = seedProjectEditor;
 window.openProjectEditorFixture = openProjectEditorFixture;
+
+async function renderProjectFixture() {
+  const { renderMermaidProject } = await import('../../src/lib/authoring/project-render');
+  let layouts = 0;
+  const count = (records: MutationRecord[]) => {
+    for (const record of records) for (const node of record.addedNodes) {
+      if (node instanceof Element && node.getAttribute('data-meridian-render') === 'layout') layouts++;
+    }
+  };
+  const watch = new MutationObserver(count);
+  watch.observe(document.body, { childList: true });
+  let rendered;
+  try {
+    rendered = await renderMermaidProject(window.projectEditor.snapshot());
+    count(watch.takeRecords());
+  } finally {
+    watch.disconnect();
+  }
+  const svg = new DOMParser().parseFromString(rendered.result.svg, 'image/svg+xml');
+  return {
+    targetTable: rendered.targetTable,
+    layouts,
+    elements: rendered.result.elements,
+    targets: Array.from(svg.querySelectorAll('[data-element-key]'), target => ({
+      id: target.getAttribute('data-element-key'), kind: target.getAttribute('data-element-kind'),
+    })),
+    owners: Array.from(svg.querySelectorAll('[data-element-owner]'), target => target.getAttribute('data-element-owner')),
+  };
+}
+
+declare global {
+  interface Window {
+    renderProjectFixture: typeof renderProjectFixture;
+  }
+}
+window.renderProjectFixture = renderProjectFixture;

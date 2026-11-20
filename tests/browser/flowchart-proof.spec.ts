@@ -201,3 +201,34 @@ test('guarded v3 Add, Rename and Connect preserve source bytes and UUIDs through
   const reopened = await page.evaluate(id => window.openProjectEditorFixture(id), project.id);
   expect(reopened).toEqual({ ...changes.after, revision: 5, updatedAt: reopened.updatedAt });
 });
+
+test('measured v3 SVG, UUID targets, endpoints, group membership and styles pair with the same revision', async ({ page }) => {
+  const { createDocument } = await import('../../src/lib/storage');
+  const project = {
+    ...createDocument(), nodeAccents: { A: '#159' },
+    source: 'flowchart LR\n  subgraph G\n  A[One]\n  B[Two]\n  end\n  A direct@-->|Go| B',
+  };
+  await expect(page.evaluate(input => window.seedProjectEditor(input), project)).resolves.toBe('migrated');
+  const original = await page.evaluate(id => window.openProjectEditorFixture(id), project.id);
+  const ids = Object.fromEntries(original.identity.elements.map(item => [item.binding.sourceId, item.id]));
+  const rendered = await page.evaluate(() => window.renderProjectFixture());
+  expect(rendered.layouts).toBe(1);
+  expect(rendered.targetTable).toMatchObject({ schema: 'meridian-targets/v1', baseToken: { projectId: project.id, revision: 0 } });
+  expect(rendered.targetTable?.renderFingerprint).toMatch(/^[a-f0-9]{64}$/);
+  const targets = rendered.targetTable?.targets ?? [];
+  expect(targets).toHaveLength(4);
+  expect(targets.find(item => item.id === ids.A)).toMatchObject({ elementKind: 'node', parentId: ids.G });
+  expect(targets.find(item => item.id === ids.G)).toMatchObject({ elementKind: 'group', members: expect.arrayContaining([ids.A, ids.B]) });
+  expect(targets.find(item => item.id === ids.direct)).toMatchObject({ elementKind: 'edge', sourceId: ids.A, targetId: ids.B, direction: 'forward' });
+  expect(targets.every(item => Object.values(item.bounds).every(Number.isFinite))).toBe(true);
+  expect(rendered.elements?.find(item => item.key === ids.A)?.appearance?.fill).toBe('#115599');
+  expect(rendered.targets).toEqual(expect.arrayContaining(targets.map(item => ({ id: item.id, kind: item.elementKind }))));
+  expect(rendered.owners).toContain(ids.direct);
+  const next = await page.evaluate(async () => {
+    await window.projectEditor.edit('A different heading');
+    return window.renderProjectFixture();
+  });
+  expect(next.layouts).toBe(0);
+  expect(next.targetTable).toMatchObject({ baseToken: { revision: 1 }, renderFingerprint: rendered.targetTable?.renderFingerprint, targets });
+  expect(next.targetTable?.baseToken.stateDigest).not.toBe(rendered.targetTable?.baseToken.stateDigest);
+});
