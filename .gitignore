@@ -1,0 +1,6 @@
+# Assembled release artifact; source of truth is the verified bundle parts.
+public/index.html
+__pycache__/
+*.py[cod]
+.DS_Store
+node_modules/
