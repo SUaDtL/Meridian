@@ -5,6 +5,7 @@ const displayPlaces = 12;
 type Decimal = { coefficient: bigint; scale: number };
 type Rational = { numerator: bigint; denominator: bigint };
 export type NumericAggregate = 'sum' | 'mean' | 'min' | 'max' | 'countRows' | 'countValues';
+export type NumberLocale = { decimal: 'period' | 'comma'; grouping: 'none' | 'period' | 'comma' | 'space' };
 export interface ChartValue {
   exact: Rational;
   display: string;
@@ -51,6 +52,28 @@ function parseDecimal(token: string): Decimal {
 export function canonicalChartNumber(token: string): string {
   const decimal = parseDecimal(token);
   return formatDecimal(decimal.coefficient, decimal.scale);
+}
+
+/** Interpret only user-confirmed decimal and grouping separators. */
+export function localizedChartNumber(token: string, locale: NumberLocale) {
+  if (token.length > 64 || token.trim() !== token) throw new Error('CHART_NUMBER_SYNTAX');
+  const decimal = locale.decimal === 'comma' ? ',' : '.';
+  const grouping = { none: '', period: '.', comma: ',', space: ' ' }[locale.grouping];
+  if (decimal === grouping) throw new Error('CHART_NUMBER_SYNTAX');
+  const exponentIndex = token.search(/[eE]/);
+  const exponent = exponentIndex >= 0 ? token.slice(exponentIndex) : '';
+  if (exponent && !/^[eE][+-]?\d+$/.test(exponent)) throw new Error('CHART_NUMBER_SYNTAX');
+  const sign = /^[+-]/.test(token) ? token[0] : '';
+  const number = token.slice(sign.length, exponentIndex < 0 ? undefined : exponentIndex);
+  const [whole, fraction, extra] = number.split(decimal);
+  if (extra !== undefined || (fraction !== undefined && !/^\d*$/.test(fraction))) throw new Error('CHART_NUMBER_SYNTAX');
+  const integer = grouping === ' ' ? whole.replace(/[\u00A0\u202F]/g, ' ') : whole;
+  const groups = grouping ? integer.split(grouping) : [integer];
+  if (groups.length === 1 && !/^\d*$/.test(groups[0])) throw new Error('CHART_NUMBER_SYNTAX');
+  if (groups.length > 1 && (!/^\d{1,3}$/.test(groups[0]) || groups.slice(1).some(part => !/^\d{3}$/.test(part)))) {
+    throw new Error('CHART_NUMBER_SYNTAX');
+  }
+  return canonicalChartNumber(sign + groups.join('') + (fraction === undefined ? '' : '.' + fraction) + exponent);
 }
 
 function compareDecimals(a: Decimal, b: Decimal) {

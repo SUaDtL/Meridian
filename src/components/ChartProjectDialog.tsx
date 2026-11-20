@@ -7,7 +7,7 @@ import Worker from "../lib/authoring/chart-input.worker?worker&inline";
 import { chartDataLimits, type ChartDataset, type ChartField, type ChartProject, type ChartSpec, type FieldType } from "../lib/authoring/chart-data";
 import { openChartProjectEditor } from "../lib/authoring/chart-editor";
 import type { ChartInput, ChartInputFormat, ColumnConfirmation } from "../lib/authoring/chart-input";
-import { canonicalChartNumber } from "../lib/authoring/chart-numbers";
+import { canonicalChartNumber, type NumberLocale } from "../lib/authoring/chart-numbers";
 import { parseChartProject, validateChartProject } from "../lib/authoring/chart-project";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import { listChartCheckpoints, saveChartCheckpoint, type ChartCheckpoint } from "../lib/persistence/chart-drafts";
@@ -23,6 +23,7 @@ type Stage = "choose" | "columns" | "mapping" | "review" | "workspace";
 type Pending = { label: string; run: (signal: AbortSignal, extended: boolean) => Promise<void> };
 type Mark = ChartSpec["mark"];
 const fieldTypes: FieldType[] = ["string", "number", "date", "datetime", "boolean"];
+const defaultLocale: NumberLocale = { decimal: "period", grouping: "none" };
 const defaultFrame: ChartProject["frame"] = { theme: "porcelain", frame: "auto", padding: 32, showTitle: true, showBrand: true };
 const category = (field: ChartField) => field.type === "string" || field.type === "date" || field.type === "boolean";
 const xFields = (dataset: ChartDataset, mark: Mark) => dataset.fields.filter(field =>
@@ -231,7 +232,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
           delimiter: format === "\t" ? "tab" : format === ";" ? "semicolon" : "comma",
           conversions: dataset.fields.map((field, index) => ({
             fieldId: field.id, emptyToNull: columns[index]?.emptyIsNull ?? false,
-            grouping: "none", decimal: "period", invalid: "block",
+            ...(field.type === "number" ? columns[index]?.numeric ?? defaultLocale : defaultLocale), invalid: "block",
           })),
         }, checkpoint);
         setDrafts(previous => [record, ...previous.filter(item => item.id !== record.id)]);
@@ -252,9 +253,11 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     setSpec(chartSpec ?? mapping(dataset, "bar"));
     setFrame(defaultFrame);
     setAcceptTruncatedAxis(false);
-    setColumns(dataset.fields.map(({ id, name, type, unit }) => ({
-      name, type, unit, emptyIsNull: conversions.find(conversion => conversion.fieldId === id)?.emptyToNull ?? false,
-    })));
+    setColumns(dataset.fields.map(({ id, name, type, unit }) => {
+      const conversion = conversions.find(item => item.fieldId === id);
+      return { name, type, unit, emptyIsNull: conversion?.emptyToNull ?? false,
+        numeric: conversion ? { decimal: conversion.decimal, grouping: conversion.grouping } : undefined };
+    }));
     setStage("mapping");
   }
 
@@ -413,6 +416,21 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
             {fieldTypes.map(type => <option key={type} value={type}>{({ string: "Text", number: "Number", date: "Date", datetime: "Timestamp", boolean: "Boolean" })[type]}</option>)}
           </select></label>
           <label>Unit<input value={column.unit} maxLength={80} onChange={event => changeColumn(index, { unit: event.target.value })} /></label>
+          {column.type === "number" && raw.format !== "json" && <>
+            <label>Decimal separator<select value={column.numeric?.decimal ?? defaultLocale.decimal} onChange={event => {
+              const decimal = event.target.value as NumberLocale["decimal"];
+              const previous = column.numeric?.grouping ?? defaultLocale.grouping;
+              changeColumn(index, { numeric: { decimal, grouping: previous === decimal ? "none" : previous } });
+            }}><option value="period">Period</option><option value="comma">Comma</option></select></label>
+            <label>Thousands separator<select value={column.numeric?.grouping ?? defaultLocale.grouping} onChange={event => {
+              changeColumn(index, { numeric: { decimal: column.numeric?.decimal ?? defaultLocale.decimal, grouping: event.target.value as NumberLocale["grouping"] } });
+            }}>
+              <option value="none">None</option>
+              <option value="period" disabled={(column.numeric?.decimal ?? defaultLocale.decimal) === "period"}>Period</option>
+              <option value="comma" disabled={column.numeric?.decimal === "comma"}>Comma</option>
+              <option value="space">Space</option>
+            </select></label>
+          </>}
           <label className="chart-option"><input type="checkbox" checked={column.emptyIsNull} onChange={event => changeColumn(index, { emptyIsNull: event.target.checked })} />Treat empty fields as missing</label>
         </fieldset>)}
       </div>

@@ -1,10 +1,11 @@
 import { validateChartDataset, type ChartDataset, type ChartSpec } from '../authoring/chart-data';
+import type { NumberLocale } from '../authoring/chart-numbers';
 import { elementUuidPattern } from '../authoring/identities';
 import common from '../authoring/schemas/common.schema.json';
 import { matchesBundledContract } from '../authoring/validate-mermaid-project';
 import { draftBytes, draftWeek, listGuidedCheckpoints, maxDraftBytes, sameCheckpoint, saveGuidedCheckpoint } from './guided-drafts';
 
-type Conversion = { fieldId: string; emptyToNull: boolean; grouping: 'none'; decimal: 'period'; invalid: 'block' };
+type Conversion = NumberLocale & { fieldId: string; emptyToNull: boolean; invalid: 'block' };
 type CheckpointInput = {
   title: string;
   subtitle: string;
@@ -29,7 +30,8 @@ function chartCheckpoint(input: CheckpointInput, id: string, timestamp: number) 
   if (!Array.isArray(input.conversions) || input.conversions.length !== fields.size
     || new Set(input.conversions.map(item => item.fieldId)).size !== fields.size
     || input.conversions.some(rule => !fields.has(rule.fieldId) || typeof rule.emptyToNull !== 'boolean'
-      || rule.grouping !== 'none' || rule.decimal !== 'period' || rule.invalid !== 'block')) throw new Error('The chart conversion rules are incomplete.');
+      || !['none', 'comma', 'period', 'space'].includes(rule.grouping) || !['period', 'comma'].includes(rule.decimal)
+      || rule.grouping === rule.decimal || rule.invalid !== 'block')) throw new Error('The chart conversion rules are incomplete.');
   const conversions = input.conversions.map(({ fieldId, emptyToNull, grouping, decimal, invalid }) => ({ fieldId, emptyToNull, grouping, decimal, invalid }));
   return {
     schema: 'meridian-draft/v1' as const, feature: 'chart' as const, baseToken: null,
