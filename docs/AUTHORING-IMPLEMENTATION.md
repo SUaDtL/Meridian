@@ -195,6 +195,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 | Visual builder and stories | Atomic Add Next, explicit connection/node deletion with annotation recovery, reviewed group creation and removal for explicit declarations, and group- and path-based storyboard suggestions. [#32](https://github.com/SUaDtL/Meridian/pull/32) · [#33](https://github.com/SUaDtL/Meridian/pull/33) · [#34](https://github.com/SUaDtL/Meridian/pull/34) · [#36](https://github.com/SUaDtL/Meridian/pull/36) · [#40](https://github.com/SUaDtL/Meridian/pull/40) | Nested grouping, moving members, additional story tools and the remaining interaction gates |
 | Components | Local library with conflict-safe packs and reviewed projects from flat forward definitions. [#35](https://github.com/SUaDtL/Meridian/pull/35) | Grouped generation, insertion, port binding, and extraction |
 
+## Milestone 2 verified label contrast fixes
+
+- For a measured solid-text contrast finding, the checker previews a single text-color override and measures the rendered result again in the same viewing profile. Apply uses the current project token and the verified preview. Unknown backdrops stay outside the fix.
+- Chromium verifies the proposed ratio, a text-only change, the next readability check, and exact restoration with Undo. This advances the measured solid-contrast portion of F02.
+
 ## Milestone 3 path-based story suggestions
 
 - Follow a path starts from a selected node and uses individually chosen connections with explicit traversal direction. It stops after the first loop, retains only selected path content and optional one-hop context, and adds group containers without expanding unrelated descendants.

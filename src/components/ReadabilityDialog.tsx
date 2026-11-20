@@ -1,18 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import ReadabilityWorker from "../lib/authoring/readability.worker?worker&inline";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
+import type { BaseToken } from "../lib/authoring/base-token";
+import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
+import type { ReadyProposal } from "../lib/authoring/proposals";
 import { minimumAdvisoryLabelSize, viewingScale, type FrameGeometry, type ReadabilityFinding, type ReadabilityReport,
   type ReadabilityTarget, type ViewingProfile } from "../lib/authoring/readability";
 import Modal from "./Modal";
 
 const presentation: ViewingProfile = { width: 1280, height: 720, padding: 32 };
 const checkNames = { "QC-01": "Solid text contrast", "QC-03": "Viewed label size", "QC-05": "Duplicate names", "QC-06": "Separate regions" } as const;
+type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
+type ContrastPreview = NonNullable<ReturnType<Editor["readContrastPreview"]>>;
 
-export default function ReadabilityDialog({ frame, targets, revision, canvas, onClose }: {
+export default function ReadabilityDialog({ frame, targets, token, editor, canvas, onApply, onClose }: {
   frame: FrameGeometry;
   targets: ReadabilityTarget[];
-  revision: number;
+  token: BaseToken;
+  editor: Editor;
   canvas?: ViewingProfile;
+  onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyContrast"]>;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState<"canvas" | "presentation" | "custom">(canvas ? "canvas" : "presentation");
@@ -21,13 +28,16 @@ export default function ReadabilityDialog({ frame, targets, revision, canvas, on
   const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState<"once" | "narrow">();
   const [error, setError] = useState("");
+  const [fix, setFix] = useState<{ proposal: ReadyProposal; preview: ContrastPreview; url: string }>();
+  const [imageReady, setImageReady] = useState(false);
   const active = useRef<AbortController | undefined>(undefined);
   const profile = mode === "canvas" && canvas ? canvas : mode === "custom" ? custom : presentation;
   const byId = new Map(targets.map(target => [target.id, target]));
 
   useEffect(() => () => active.current?.abort(), []);
+  useEffect(() => () => { if (fix) URL.revokeObjectURL(fix.url); }, [fix]);
 
-  function reset() { setResult(undefined); setError(""); setRetry(undefined); }
+  function reset() { setResult(undefined); setError(""); setRetry(undefined); setFix(undefined); setImageReady(false); }
 
   async function check() {
     if (active.current || retry === "narrow") return;
@@ -36,6 +46,7 @@ export default function ReadabilityDialog({ frame, targets, revision, canvas, on
     active.current = work;
     setBusy(true);
     setError("");
+    setFix(undefined);
     try {
       viewingScale(profile, frame);
       const report = await runAuthoringWorker<ReadabilityReport>(() => new ReadabilityWorker(), { targets, profile, frame },
@@ -52,6 +63,38 @@ export default function ReadabilityDialog({ frame, targets, revision, canvas, on
     } finally {
       active.current = undefined;
       if (!work.signal.aborted) setBusy(false);
+    }
+  }
+
+  async function previewFix(elementId: string) {
+    if (active.current) return;
+    const work = new AbortController();
+    active.current = work;
+    setBusy(true);
+    setError("");
+    setFix(undefined);
+    setImageReady(false);
+    try {
+      const proposal = await editor.prepareContrast(elementId, profile, token, work.signal);
+      const preview = editor.readContrastPreview(proposal);
+      if (!preview) throw new Error("The diagram changed. Check readability again.");
+      const url = URL.createObjectURL(new Blob([preview.svg], { type: "image/svg+xml" }));
+      setFix({ proposal, preview, url });
+    } catch (reason) {
+      if (!work.signal.aborted) setError(reason instanceof Error ? reason.message : "The contrast change could not be previewed.");
+    } finally {
+      active.current = undefined;
+      if (!work.signal.aborted) setBusy(false);
+    }
+  }
+
+  function applyFix() {
+    if (!fix || !imageReady) return;
+    const status = onApply(fix.proposal);
+    if (status === "applied") onClose();
+    else {
+      setFix(undefined);
+      setError(status === "stale" ? "The diagram changed. Check readability again." : "The contrast change could not be applied with Undo.");
     }
   }
 
@@ -83,7 +126,7 @@ export default function ReadabilityDialog({ frame, targets, revision, canvas, on
             <input type="number" min={field === "padding" ? 0 : 100} max={8192} step={1} value={Number.isFinite(custom[field]) ? custom[field] : ""} disabled={busy}
               onChange={event => { setCustom({ ...custom, [field]: event.target.valueAsNumber }); reset(); }} /></label>
         ))}
-        <p>{profile.width} × {profile.height} CSS pixels · {profile.padding} pixels of padding · Project revision {revision}</p>
+        <p>{profile.width} × {profile.height} CSS pixels · {profile.padding} pixels of padding · Project revision {token.revision}</p>
         <div className="dialog-actions"><button className="button primary" disabled={busy || retry === "narrow"} onClick={() => void check()}>
           {retry === "once" ? "Retry for five seconds" : "Check diagram"}
         </button></div>
@@ -98,7 +141,19 @@ export default function ReadabilityDialog({ frame, targets, revision, canvas, on
         <p role="status">{result.findings.length} {result.findings.length === 1 ? "finding" : "findings"} from the checks above.</p>
         <ul>{result.findings.map((finding, index) => <li key={`${finding.rule}-${index}`}>
           <strong>{checkNames[finding.rule]}</strong><p>{findingText(finding)}</p>
+          {finding.rule === "QC-01" && <button type="button" className="button secondary" disabled={busy}
+            onClick={() => void previewFix(finding.target)}>Preview text contrast fix for {byId.get(finding.target)?.label || "unnamed label"}</button>}
         </li>)}</ul>
+      </section>}
+      {fix && <section aria-label="Proposed contrast fix" className="migration-preview">
+        <h3>Text contrast for {fix.preview.label || "unnamed label"}</h3>
+        <p>Use {fix.preview.color} text. Contrast changes from {fix.preview.beforeRatio.toFixed(2)}:1 to {fix.preview.afterRatio.toFixed(2)}:1. The target is {fix.preview.threshold}:1.</p>
+        <img src={fix.url} alt="Proposed text contrast" onLoad={() => setImageReady(true)}
+          onError={() => setError("The proposed diagram could not be displayed.")} />
+        <div className="dialog-actions">
+          <button type="button" className="button quiet" onClick={() => setFix(undefined)}>Cancel contrast fix</button>
+          <button type="button" className="button primary" disabled={!imageReady} onClick={applyFix}>Apply text color</button>
+        </div>
       </section>}
     </Modal>
   );
