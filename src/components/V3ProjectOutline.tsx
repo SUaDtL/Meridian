@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
 import type { OutlineSourceLocation, ProjectOutlineItem } from "../lib/authoring/project-outline";
+import { bulkConnectionLimit } from "../lib/authoring/project-flowchart";
 import Modal from "./Modal";
 
 const pageSize = 80;
@@ -40,7 +41,8 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
   return rows;
 }
 
-export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onBulkText, onDesign, onSaveComponent, onClose }: {
+export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onBulkText, onDesign, onSaveComponent,
+  onDeleteConnections, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
   onSelection: Dispatch<SetStateAction<ReadonlySet<string>>>;
@@ -50,6 +52,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   onBulkText: (hidden: number) => void;
   onDesign?: (hidden: number) => void;
   onSaveComponent?: (hidden: number) => void;
+  onDeleteConnections?: (hidden: number) => void;
   onClose: () => void;
 }) {
   const id = useId();
@@ -66,6 +69,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   const hidden = selected.size - visible.filter(row => selected.has(row.item.id)).length;
   const canSaveComponent = selected.size > 0 && selected.size <= 100
     && items.filter(item => item.kind === "node" && selected.has(item.id)).length === selected.size;
+  const canDeleteConnections = selected.size > 0 && selected.size <= bulkConnectionLimit
+    && items.filter(item => item.kind === "edge" && item.source && selected.has(item.id)).length === selected.size;
 
   useEffect(() => {
     if (active && document.activeElement === list.current) {
@@ -148,7 +153,11 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           {onSaveComponent && <button type="button" className="button secondary" disabled={!canSaveComponent}
             title={canSaveComponent ? undefined : "Select one to 100 nodes"}
             onClick={() => onSaveComponent(hidden)}>Save as component</button>}
+          {onDeleteConnections && relationships && <button type="button" className="button secondary" disabled={!canDeleteConnections}
+            onClick={() => onDeleteConnections(hidden)}>Delete selected connections</button>}
         </div>
+        {onDeleteConnections && relationships && selected.size > 0 && !canDeleteConnections
+          && <p>Choose up to {bulkConnectionLimit} connections with verified source IDs to delete together.</p>}
         <ul ref={list} role={relationships ? "listbox" : "tree"} aria-label={relationships ? "Relationships" : "Diagram elements"}
           aria-activedescendant={active && `${id}-${active.item.id}`} aria-multiselectable="true" tabIndex={visible.length ? 0 : -1} onKeyDown={keyboard}>
           {visible.map(({ item, depth, branch, expanded }) => (

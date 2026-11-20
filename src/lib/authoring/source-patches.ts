@@ -332,10 +332,18 @@ export function planEdgeLabel(source: string, edgeId: string, label: string): So
 
 /** Remove one explicitly identified edge and repair affected linkStyle ordinals. */
 export function planEdgeRemoval(source: string, edgeId: string): SourcePatch[] {
+  return planEdgeSelectionRemoval(source, [edgeId]);
+}
+
+/** Resolve the complete selection before changing any source span. */
+export function planEdgeSelectionRemoval(source: string, edgeIds: readonly string[]): SourcePatch[] {
   const { edges, styles } = readSubset(source);
-  const removed = edgeId ? edges.findIndex(edge => edge.id === edgeId) : -1;
-  if (removed === -1) throw unsupported();
-  return planEdgeRemovals(edges, styles, new Set([removed]));
+  const selection = new Set(edgeIds);
+  if (!selection.size || selection.size !== edgeIds.length) throw unsupported();
+  const removed = new Set<number>();
+  edges.forEach((edge, index) => { if (edge.id && selection.delete(edge.id)) removed.add(index); });
+  if (selection.size) throw unsupported();
+  return planEdgeRemovals(edges, styles, removed);
 }
 
 /** Delete a declared node only when the supplied IDs cover every incident edge. */

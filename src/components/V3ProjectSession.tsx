@@ -55,6 +55,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [componentHidden, setComponentHidden] = useState<number>();
   const [bulkTextHidden, setBulkTextHidden] = useState<number>();
+  const [deleteConnections, setDeleteConnections] = useState<{ ids: string[]; hidden: number }>();
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [renameTarget, setRenameTarget] = useState<string>();
@@ -424,7 +425,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setComparisonSelection({ ids: [...outlineSelection], hidden });
           setOutlineOpen(false);
           setComparison("design");
-        } : undefined} onSaveComponent={flatFlowchart ? setComponentHidden : undefined} />}
+        } : undefined} onSaveComponent={flatFlowchart ? setComponentHidden : undefined}
+        onDeleteConnections={flatFlowchart && !editingUnavailable ? hidden => {
+          setDeleteConnections({ ids: [...outlineSelection], hidden });
+          setEditFlowchart("removeEdges");
+        } : undefined} />}
       {componentHidden !== undefined && currentFrame && editor.current && connection.current && <Suspense>
         <SaveComponentDialog db={connection.current} editor={editor.current} frame={currentFrame.rendered}
           selection={outlineSelection} hidden={componentHidden} onClose={() => setComponentHidden(undefined)} />
@@ -514,11 +519,18 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         }} />}
       {editFlowchart && editor.current && (
         <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} initialOperation={editFlowchart} initialTarget={renameTarget}
-          onClose={() => { setEditFlowchart(undefined); setRenameTarget(undefined); }}
+          deleteConnections={deleteConnections}
+          onClose={() => { setEditFlowchart(undefined); setRenameTarget(undefined); setDeleteConnections(undefined); }}
           onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);
-            if (result.status === "applied") setProject(current.snapshot());
+            if (result.status === "applied") {
+              if (deleteConnections) {
+                setOutlineSelection(new Set());
+                setOutlineOpen(false);
+              }
+              setProject(current.snapshot());
+            }
             return result.status;
           }} />
       )}

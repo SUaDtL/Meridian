@@ -3,7 +3,7 @@ import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram } from '../render';
 import { canonicalJson } from './base-token';
 import { flowchartEngineConnections, flowchartEngineShapes, type ConnectionDirection, type Shape } from './flowchart-source';
-import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planFlowchartFragment, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval, type FlowchartFragment, type SourcePatch } from './source-patches';
+import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planEdgeSelectionRemoval, planFlowchartFragment, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval, type FlowchartFragment, type SourcePatch } from './source-patches';
 
 export type SourceIntent =
   | { op: 'addNode'; label: string; shape?: Shape }
@@ -13,6 +13,7 @@ export type SourceIntent =
   | { op: 'addGroup'; members: readonly string[]; label: string }
   | { op: 'removeGroup'; sourceId: string }
   | { op: 'removeNode'; sourceId: string; incidentEdgeIds: readonly string[] }
+  | { op: 'removeEdges'; sourceIds: readonly string[] }
   | { op: 'removeEdge'; sourceId: string };
 
 const directionsByEngineType = new Map(Object.entries(flowchartEngineConnections).map(([direction, type]) => [type, direction]));
@@ -54,6 +55,7 @@ function planSourceEdit(source: string, intent: SourceIntent): { sourceId: strin
     case 'removeGroup': return planGroupRemoval(source, intent.sourceId);
     case 'removeNode': return { sourceId: intent.sourceId, patches: planNodeRemoval(source, intent.sourceId, intent.incidentEdgeIds) };
     case 'removeEdge': return { sourceId: intent.sourceId, patches: planEdgeRemoval(source, intent.sourceId) };
+    case 'removeEdges': return { sourceId: intent.sourceIds[0], patches: planEdgeSelectionRemoval(source, intent.sourceIds) };
     case 'setEdgeLabel': return { sourceId: intent.sourceId, patches: planEdgeLabel(source, intent.sourceId, intent.label) };
     case 'setNodeLabel': return { sourceId: intent.sourceId, patches: planNodeLabel(source, intent.sourceId, intent.label) };
   }
@@ -90,6 +92,10 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
     case 'removeGroup':
       return { ...graph, groups: [] };
     case 'removeEdge': return { ...graph, edges: graph.edges.filter(edge => edge.id !== sourceId) };
+    case 'removeEdges': {
+      const removed = new Set(intent.sourceIds);
+      return { ...graph, edges: graph.edges.filter(edge => !edge.id || !removed.has(edge.id)) };
+    }
     case 'removeNode': {
       const removed = new Set(intent.incidentEdgeIds);
       return {
@@ -102,7 +108,8 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
 }
 
 function verifyVisibleLabel(result: RenderResult, intent: Exclude<SourceIntent, { op: 'addNext' }>, id: string) {
-  if ((intent.op === 'addEdge' && !intent.label) || intent.op === 'removeEdge' || intent.op === 'removeNode' || intent.op === 'removeGroup') return;
+  if ((intent.op === 'addEdge' && !intent.label) || intent.op === 'removeEdge' || intent.op === 'removeEdges'
+    || intent.op === 'removeNode' || intent.op === 'removeGroup') return;
   const svg = new DOMParser().parseFromString(result.svg, 'image/svg+xml');
   if (intent.op === 'addGroup') {
     const clusters = Array.from(svg.querySelectorAll('g.cluster[data-element-key]'))
