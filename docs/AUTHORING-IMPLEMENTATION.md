@@ -160,3 +160,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - Projects opened through migration and recovery now use the durable v3 editor session. The same heading dialog prepares a baseline-checked proposal in either the legacy editor or the v3 session. The v3 session supports Undo and Redo as newer revisions.
 - The v3 session reports Saved only when the current revision reaches IndexedDB and attempts a checkpoint before leaving. A stale anchor retains the tab's authored changes and offers download, a separate saved copy or an explicit reload. Save errors also permit retry.
 - Browser coverage opens the same migrated project in two tabs, verifies reversible edits and exact saved revisions, and saves the second tab's conflicting changes as a separate project. The original project and legacy backup remain available. This advances PS01, PS02 and PS04. Structural canvas editing and a full v3 replacement for the default editor remain open.
+
+## Milestone 0 live v3 flowchart edits
+
+[PR #18](https://github.com/SUaDtL/Meridian/pull/18) merged live v3 heading and save recovery as [`be48164`](https://github.com/SUaDtL/Meridian/commit/be48164adb30e9eaf856e7bd2a02bbc6ccb2709f).
+
+- The v3 project session offers Add node, Rename node and Connect nodes for supported flat flowcharts. Node choices come from measured targets and show their Mermaid identifiers so duplicate labels remain distinguishable. Other diagram forms retain rendering and heading editing.
+- Preview applies the established parser proof to a detached draft and renders the resulting v3 snapshot. Apply is available after the preview image loads and still checks the current snapshot. Cancelling or changing the draft leaves the project data untouched.
+- Chromium exercises the public controls, cancellation, all three operations, exact BOM and CRLF source preservation, stable existing identities, durable revisions and one-step Undo. This advances the supported portions of G01 and G03. The default editor still uses v1/v2 storage, and guided creation and broader source editing remain open.

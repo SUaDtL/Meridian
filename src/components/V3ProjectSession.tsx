@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import HeadingEditor from "./HeadingEditor";
 import Modal from "./Modal";
+import V3StructureEditor from "./V3StructureEditor";
 import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
+import { flowchartSubsetTopology } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import { buildExportFrame, buildMermaidProjectPresentation } from "../lib/export";
 import type { ProjectSaveState } from "../lib/persistence/project-save-queue";
@@ -25,6 +27,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const [renderError, setRenderError] = useState("");
   const [busy, setBusy] = useState(false);
   const [editHeading, setEditHeading] = useState(false);
+  const [editFlowchart, setEditFlowchart] = useState(false);
   const [outcome, setOutcome] = useState<ProposalOutcome>();
   const [confirmReload, setConfirmReload] = useState(false);
 
@@ -125,6 +128,23 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
 
   const title = project?.title || "Untitled diagram";
   const currentFrame = frame?.document === project ? frame : undefined;
+  const source = project?.source;
+  const flatFlowchart = useMemo(() => {
+    if (!source) return false;
+    try {
+      flowchartSubsetTopology(source);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [source]);
+  const targetTable = currentFrame?.rendered.targetTable;
+  const identities = project?.identity.elements;
+  const nodes = useMemo(() => {
+    const ids = new Map(identities?.map(record => [record.id, record.binding.sourceId]));
+    return targetTable?.targets.filter(item => item.elementKind === "node")
+      .map(item => ({ id: item.id, label: `${item.label} (${ids.get(item.id)})` })) ?? [];
+  }, [identities, targetTable]);
   const needsRecovery = save?.phase === "conflict" || save?.phase === "error";
   return (
     <>
@@ -142,8 +162,14 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
               : needsRecovery ? "Changes are only in this session."
               : "Saving changes…"}</p>
             {needsRecovery && <p role="alert">{save?.message}</p>}
+            {targetTable && !flatFlowchart && (
+              <p className="muted-note">Visual edits support flat flowcharts with explicit node declarations.</p>
+            )}
             <div className="recovery-actions">
               <button className="button secondary" disabled={busy} onClick={() => { setOutcome(undefined); setEditHeading(true); }}>Edit heading</button>
+              {targetTable && flatFlowchart && (
+                <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart(true)}>Edit flowchart</button>
+              )}
               <button className="button quiet" disabled={busy || !editor.current?.canUndo()} onClick={() => void run(async () => {
                 const current = editor.current!;
                 if (current.undo()) setProject(current.snapshot());
@@ -198,6 +224,15 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
         <HeadingEditor document={project} field="title" revision={project.revision} outcome={outcome}
           prepare={(_base, envelope) => editor.current!.prepareHeading(envelope)}
           onApply={applyHeading} onClose={() => setEditHeading(false)} />
+      )}
+      {editFlowchart && editor.current && (
+        <V3StructureEditor editor={editor.current} nodes={nodes} onClose={() => setEditFlowchart(false)}
+          onApply={proposal => {
+            const current = editor.current!;
+            const result = current.applyStructure(proposal);
+            if (result.status === "applied") setProject(current.snapshot());
+            return result.status;
+          }} />
       )}
     </>
   );
