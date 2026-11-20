@@ -14,6 +14,7 @@ export default defineConfig({
   expect: { timeout: 20_000, toHaveScreenshot: { animations: 'disabled', maxDiffPixelRatio: 0.01 } },
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
   use: {
+    actionTimeout: 15_000,
     baseURL: externalBase || 'http://127.0.0.1:4173',
     viewport: { width: 1600, height: 1000 },
     acceptDownloads: true,

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDocument, loadWorkspace, normalizeSource, parseProject, saveWorkspace, STORAGE_KEY, LEGACY_STORAGE_KEY } from './storage';
 import type { StudioDocument } from '../types';
+import { createScene } from './storyboard';
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -198,6 +199,43 @@ describe('portable project files and local workspace', () => {
     expect(imported.source).toBe(project.source);
     expect(saveWorkspace([imported], imported.id).ok).toBe(true);
     expect(loadWorkspace().documents[0]).toEqual(imported);
+  });
+
+  it('round trips the entire storyboard through project JSON and browser storage without changing source', () => {
+    const project = styledProject();
+    const opening = { ...createScene(), title: 'Start with café clients', duration: 2.5, transition: 0.5, visible: ['node:A'], highlight: ['node:A'] };
+    const detail = {
+      ...createScene(1), title: '<A & B> is a label', duration: 8, transition: 1.2,
+      visible: ['node:A', 'node:B', 'edge:id:request'], reveal: 'sequence' as const,
+      highlight: ['node:B'], flow: ['edge:id:request'],
+      camera: { mode: 'elements' as const, keys: ['node:B', 'node:temporarily-removed'], padding: 64 },
+    };
+    project.storyboard = { version: 1, scenes: [opening, detail], loop: true };
+    const imported = parseProject(JSON.stringify(project));
+    expect(imported).toEqual(project);
+    expect(imported.source).toBe(project.source);
+    expect(imported.storyboard?.scenes[1].camera.keys).toContain('node:temporarily-removed');
+    expect(saveWorkspace([imported], imported.id)).toEqual({ ok: true });
+    expect(loadWorkspace()).toEqual({ documents: [project], activeId: project.id });
+    expect(JSON.parse(storage.values.get(STORAGE_KEY)!).version).toBe(2);
+  });
+
+  it('rejects invalid storyboard imports and saves without overwriting a good workspace', () => {
+    const project = styledProject();
+    project.storyboard = { version: 1, loop: false, scenes: [createScene()] };
+    expect(saveWorkspace([project], project.id).ok).toBe(true);
+    const before = storage.values.get(STORAGE_KEY);
+    const invalid = {
+      ...project,
+      storyboard: { ...project.storyboard, scenes: [{ ...project.storyboard.scenes[0], camera: { mode: 'script', keys: ['node:A'], padding: 32 } }] },
+    };
+    expect(() => parseProject(JSON.stringify(invalid))).toThrow(/camera/);
+    expect(saveWorkspace([invalid as unknown as StudioDocument], project.id).ok).toBe(false);
+    expect(storage.values.get(STORAGE_KEY)).toBe(before);
+    const corrupted = JSON.stringify({ version: 2, documents: [invalid], activeId: project.id });
+    storage.values.set(STORAGE_KEY, corrupted);
+    expect(loadWorkspace().warning).toMatch(/could not be loaded/);
+    expect(storage.values.get(STORAGE_KEY)).toBe(corrupted);
   });
 
   it('does not fall back to a stale v1 workspace when the newer workspace is damaged', () => {

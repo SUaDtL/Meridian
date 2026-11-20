@@ -3,6 +3,8 @@ import { Minus, Plus, Maximize, Move, MousePointer2, RotateCcw, Focus, X } from 
 import type { RenderResult, StudioDocument } from '../types';
 import { buildExportSvg } from '../lib/export';
 import { getTheme } from '../lib/themes';
+import { createStoryboardPlayer } from '../lib/storyboard';
+import type { StoryboardController, StoryPlaybackState } from '../types/storyboard';
 
 type Point = { x: number; y: number };
 type TrackedPointer = Point & { type: string };
@@ -30,9 +32,13 @@ interface Props {
   present: boolean;
   motionPaused: boolean;
   fitRequest: number;
+  storyPreview?: boolean;
+  reducedMotion?: boolean;
+  onStoryController?: (controller: StoryboardController | null) => void;
+  onStoryPlayback?: (state: StoryPlaybackState) => void;
 }
 
-export default function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, present, motionPaused, fitRequest}: Props) {
+export default function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, present, motionPaused, fitRequest, storyPreview = false, reducedMotion = false, onStoryController, onStoryPlayback}: Props) {
   const viewport = useRef<HTMLDivElement>(null);
   const drawing = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -46,6 +52,8 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
   const camera = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
   const hadPinch = useRef(false);
   const suppressClickUntil = useRef(0);
+  const storyController = useRef<StoryboardController | null>(null);
+  const previousPlayback = useRef<StoryPlaybackState | null>(null);
   // Pointer events can arrive before React commits the preceding render.
   // Keep the gesture's camera synchronous while React paints the same values.
   const updateCamera = useCallback((nextZoom: number, nextPan: Point) => {
@@ -60,6 +68,35 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
     const el = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement;
     return {width:Number(el.getAttribute('width'))||900, height:Number(el.getAttribute('height'))||700};
   }, [svg]);
+
+  useEffect(() => {
+    if (!storyPreview || !doc.storyboard?.scenes.length) {
+      previousPlayback.current = null;
+      return;
+    }
+    const root = drawing.current?.querySelector<SVGSVGElement>('[data-meridian-export]');
+    if (!root) return;
+    setFocused(false);
+    root.querySelectorAll('.studio-selected,.studio-dimmed,.studio-edge-dimmed').forEach(element=>element.classList.remove('studio-selected','studio-dimmed','studio-edge-dimmed'));
+    const resume = previousPlayback.current;
+    const controller = createStoryboardPlayer(root, doc.storyboard, {
+      initialTime: resume?.time,
+      reducedMotion,
+      accent: theme.accent,
+      onUpdate: onStoryPlayback,
+    });
+    storyController.current = controller;
+    onStoryController?.(controller);
+    if (resume?.playing) controller.play();
+    return () => {
+      previousPlayback.current = controller.getState();
+      controller.destroy();
+      storyController.current = null;
+      onStoryController?.(null);
+    };
+  }, [svg, storyPreview, doc.storyboard, replayKey, onStoryController, onStoryPlayback]);
+
+  useEffect(() => { storyController.current?.setReducedMotion(reducedMotion); }, [reducedMotion]);
 
   const fit = useCallback(() => {
     const el = viewport.current;
@@ -104,16 +141,16 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
     if (selectedKey) visit(selectedKey);
     el.querySelectorAll<SVGElement>('[data-element-key], [data-element-owner]').forEach(node => {
       const key = node.getAttribute('data-element-key') || node.getAttribute('data-element-owner');
-      node.classList.toggle('studio-selected', key === selectedKey && node.hasAttribute('data-element-key'));
-      node.classList.toggle('studio-dimmed', focused && !!selectedKey && !!key && !active.has(key));
-      if (node.hasAttribute('data-element-key')) {
+      node.classList.toggle('studio-selected', !storyPreview && key === selectedKey && node.hasAttribute('data-element-key'));
+      node.classList.toggle('studio-dimmed', !storyPreview && focused && !!selectedKey && !!key && !active.has(key));
+      if (!storyPreview && node.hasAttribute('data-element-key')) {
         node.setAttribute('tabindex', '0');
         node.setAttribute('role', 'button');
         node.setAttribute('aria-label', `Select ${result?.elements?.find(item => item.key === key)?.label || node.textContent?.trim() || key}`);
         node.setAttribute('aria-pressed', String(key === selectedKey));
       }
     });
-  }, [svg, selectedKey, focused, replayKey, result]);
+  }, [svg, selectedKey, focused, replayKey, result, storyPreview]);
   useEffect(() => { if(!selectedKey) setFocused(false); },[selectedKey]);
 
   useEffect(() => {

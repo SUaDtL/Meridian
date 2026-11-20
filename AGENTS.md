@@ -12,6 +12,6 @@ This is the **independent** personal account repository `SUaDtL/Meridian`, simil
 4. Preserve Mermaid source, canvas behaviors, keyboard shortcuts, theme controls, local persistence, SVG/PNG/HTML export, reduced-motion behavior, and mobile panels.
 5. Before merging, obtain green workflow checks. Merge triggers a GitHub Pages deploy; do not claim a public live URL until verified.
 
-## Architectural debt
+## Source and architectural boundaries
 
-The first implementation is a compiled React/Mermaid single-page application recovered from the prior build, split only to accommodate GitHub connector upload limits. The parts are **not** maintainable authoring source. Restore a genuine source tree as a dedicated follow-up without regressing the working preview. Preserve dependency licenses. Avoid introducing credentials, external runtime network calls, unnecessary telemetry, or Mermaid input XSS.
+The maintained authoring source is the React/TypeScript project in `src/`, with pinned dependencies and a committed lockfile. The original eight compiled bundle parts are an archived regression reference, **not** editable source. The source-built Pages artifact must pass its integrity checks and browser suite before publication. Preserve dependency licenses and backward-compatible project imports. Keep design overrides and storyboard scenes separate from the user's Mermaid text. Avoid introducing credentials, external runtime network calls, unnecessary telemetry, or Mermaid input XSS.

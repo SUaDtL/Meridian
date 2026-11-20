@@ -2,6 +2,7 @@ import type { DiagramTemplate, StudioDocument, StudioSettings } from '../types';
 import { DEFAULT_SETTINGS } from './themes';
 import { TEMPLATES } from './templates';
 import { createDesign, validateDesign } from './design';
+import { validateStoryboard } from './storyboard';
 
 export const STORAGE_KEY = 'meridian:v2';
 export const LEGACY_STORAGE_KEY = 'meridian:v1';
@@ -9,7 +10,7 @@ const MAX_PROJECTS = 50;
 const MAX_SOURCE = 100_000;
 const MAX_WORKSPACE_BYTES = 8_000_000;
 const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-const DOCUMENT_KEYS = new Set(['schema', 'id', 'title', 'subtitle', 'source', 'settings', 'nodeAccents', 'design', 'updatedAt']);
+const DOCUMENT_KEYS = new Set(['schema', 'id', 'title', 'subtitle', 'source', 'settings', 'nodeAccents', 'design', 'storyboard', 'updatedAt']);
 const SETTING_KEYS = new Set([
   'theme', 'layout', 'curve', 'spacing', 'finish', 'shadow', 'glow', 'motion',
   'speed', 'background', 'ambient', 'frame', 'font', 'edgeWidth', 'padding',
@@ -114,6 +115,7 @@ function validateDocument(value: unknown): StudioDocument {
     settings: validateSettings(doc.settings),
     nodeAccents,
     design: doc.design === undefined && doc.schema === 'meridian/v1' ? createDesign() : validateDesign(doc.design),
+    ...(doc.storyboard === undefined ? {} : { storyboard: validateStoryboard(doc.storyboard) }),
     updatedAt,
   };
 }
