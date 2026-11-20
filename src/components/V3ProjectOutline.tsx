@@ -158,6 +158,16 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
             onClick={() => { if (active.item.source) onSource(active.item.source); }}>Jump to source</button>
         </div>}
         {active && !active.item.source && <p className="muted-note">Meridian could not verify a unique source span for this element.</p>}
+        {active && active.item.provenance.length > 0 && <section aria-label="Imported source">
+          <h3>Imported source</h3>
+          <ul>
+            {active.item.provenance.map((record, index) => <li key={index} style={{ overflowWrap: "anywhere" }}>
+              <strong>{record.relationship}</strong><br />
+              <code>{record.virtualPath}#{record.pointer}</code><br />
+              <small>{record.adapter} {record.adapterVersion}</small>
+            </li>)}
+          </ul>
+        </section>}
       </div>
     </Modal>
   );
