@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { applySourcePatches, planEdgeAddition, planEdgeRemoval, planNodeAddition, planNodeLabel, planNodeRemoval } from './source-patches';
+import { applySourcePatches, planEdgeAddition, planEdgeRemoval, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval } from './source-patches';
+
+it('wraps a consecutive authored range and leaves comments and relationship lines byte-exact', () => {
+  const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  %% Between declarations\r\n  B[Second] %% Keep this comment\r\n  C[Last]\r\n  A first@--> B\r\n  B second@--> C\r\n';
+  const plan = planGroupCreation(source, ['B', 'A'], 'First two');
+  expect(plan.sourceId).toBe('m_g1');
+  const grouped = applySourcePatches(source, plan.patches);
+  expect(grouped).toBe(
+    '\uFEFFflowchart LR\r\n  subgraph m_g1 ["First two"]\r\n  A[First]\r\n  %% Between declarations\r\n  B[Second] %% Keep this comment\r\n  end\r\n  C[Last]\r\n  A first@--> B\r\n  B second@--> C\r\n',
+  );
+  expect(() => planGroupCreation(source, ['A', 'C'], 'Separate statements')).toThrow('consecutive node declarations');
+  expect(() => planGroupCreation(source, ['A', 'A'], 'Repeated member')).toThrow('current node declarations');
+  const inverse = planGroupRemoval(grouped, 'm_g1');
+  expect(inverse.memberIds).toEqual(['A', 'B']);
+  expect(applySourcePatches(grouped, inverse.patches)).toBe(source);
+  const nested = grouped.replace('  A[First]', '  subgraph nested [Nested]\r\n  A[First]').replace('  B[Second]', '  end\r\n  B[Second]');
+  expect(() => planGroupRemoval(nested, 'm_g1')).toThrow('source panel');
+});
 
 it('removes only the exact incident set and preserves unaffected linkStyle positions', () => {
   const source = 'flowchart LR\nA[First]\nB[Middle] %% keep this\nC[Last]\nA incoming@--> B\nA kept@--> C\nB outgoing@--> C\nB loop@--> B\nlinkStyle 0,1,2,3 stroke:#123456\n';

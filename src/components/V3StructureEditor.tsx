@@ -16,10 +16,11 @@ type EdgeChoice = NodeChoice & { sourceId: string | null; targetId: string | nul
 type Preview = { proposal: ReadyProposal; url: string; impact?: ElementRemovalImpact };
 const nextRoles: readonly SemanticRole[] = ["process", "decision", "neutral", "service", "database", "queue", "external", "person"];
 
-export default function V3StructureEditor({ editor, nodes, edges, initialOperation = "addNode", initialTarget = "", onApply, onClose }: {
+export default function V3StructureEditor({ editor, nodes, edges, group, initialOperation = "addNode", initialTarget = "", onApply, onClose }: {
   editor: Editor;
   nodes: NodeChoice[];
   edges: EdgeChoice[];
+  group?: NodeChoice;
   initialOperation?: Operation;
   initialTarget?: string;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
@@ -32,15 +33,20 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
   const [incoming, setIncoming] = useState(false);
   const [role, setRole] = useState<SemanticRole | "">("");
   const [from, setFrom] = useState("");
-  const [to, setTo] = useState(initialTarget);
+  const [to, setTo] = useState(initialOperation === "removeGroup" ? group?.id ?? "" : initialTarget);
+  const [members, setMembers] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
   const work = useRef<AbortController | undefined>(undefined);
   const removingNode = operation === "removeNode";
+  const grouping = operation === "addGroup";
+  const ungrouping = operation === "removeGroup";
   const incident = removingNode && to ? edges.filter(edge => edge.sourceId === to || edge.targetId === to) : [];
   const unidentified = incident.filter(edge => !edge.explicit);
+  const boundary = grouping ? edges.filter(edge =>
+    members.has(edge.sourceId ?? "") !== members.has(edge.targetId ?? "")) : [];
 
   useEffect(() => () => { work.current?.abort(); }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
@@ -62,6 +68,7 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
         : operation === "addNext" ? { op: operation, anchorId: from, shape, label, edgeLabel, incoming, role: role || undefined }
         : operation === "setNodeLabel" ? { op: operation, targetId: to, label }
         : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label }
+        : operation === "addGroup" ? { op: operation, memberIds: [...members], label }
         : operation === "removeNode" ? { op: operation, targetId: to, incidentEdgeIds: incident.map(edge => edge.id) }
         : { op: operation, targetId: to };
       const proposal = await editor.prepareStructure(edit, controller.signal);
@@ -94,6 +101,8 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
   const canPreview = operation === "addNode" ? !!label
     : operation === "addNext" ? !!label && !!from
     : operation === "setNodeLabel" ? !!label && !!to
+    : operation === "addGroup" ? !!label && members.size > 0
+    : operation === "removeGroup" ? !!to
     : operation === "removeEdge" ? !!to
     : operation === "removeNode" ? !!to && !unidentified.length : !!from && !!to;
   const nodeOptions = nodes.map(node => <option value={node.id} key={node.id}>{node.label}</option>);
@@ -109,14 +118,18 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
             setRole("");
             setFrom("");
             setTo("");
+            setMembers(new Set());
             resetPreview();
           }}>
-            <option value="addNode">Add node</option>
-            <option value="addNext" disabled={!nodes.length}>Add next</option>
-            <option value="setNodeLabel" disabled={!nodes.length}>Rename node</option>
-            <option value="addEdge" disabled={!nodes.length}>Connect nodes</option>
-            <option value="removeEdge" disabled={!edges.some(edge => edge.explicit)}>Delete connection</option>
-            <option value="removeNode" disabled={nodes.length < 2}>Delete node</option>
+            {group ? <option value="removeGroup">Ungroup</option> : <>
+              <option value="addNode">Add node</option>
+              <option value="addNext" disabled={!nodes.length}>Add next</option>
+              <option value="setNodeLabel" disabled={!nodes.length}>Rename node</option>
+              <option value="addEdge" disabled={!nodes.length}>Connect nodes</option>
+              <option value="addGroup" disabled={!nodes.length}>Create group</option>
+              <option value="removeEdge" disabled={!edges.some(edge => edge.explicit)}>Delete connection</option>
+              <option value="removeNode" disabled={nodes.length < 2}>Delete node</option>
+            </>}
           </select>
         </label>
         {(operation === "addNode" || operation === "addNext") && <label>Shape
@@ -145,9 +158,23 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
           </select>
         </label>}
         {!!unidentified.length && <p role="status">Each incident connection needs an explicit source ID before this node can be deleted.</p>}
-        {operation !== "removeEdge" && !removingNode && <label>{operation === "addEdge" ? "Connection label (optional)" : "Node label"}
+        {operation !== "removeEdge" && !removingNode && !ungrouping && <label>{operation === "addEdge" ? "Connection label (optional)" : grouping ? "Group label" : "Node label"}
           <input value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
         </label>}
+        {grouping && <fieldset className="guided-process-fieldset" disabled={busy}>
+          <legend>Group members</legend>
+          <p>Choose consecutive node declarations. Ungroup returns the nodes to the top level.</p>
+          {nodes.map(node => <label key={node.id} className="check-label">
+            <input type="checkbox" checked={members.has(node.id)} onChange={event => {
+              const next = new Set(members);
+              if (event.target.checked) next.add(node.id);
+              else next.delete(node.id);
+              setMembers(next);
+              resetPreview();
+            }} /> {node.label}
+          </label>)}
+        </fieldset>}
+        {ungrouping && <p>Ungroup {group?.label}. The member nodes and all connections will stay in the diagram.</p>}
         {operation === "addNext" && <>
           <label>Connection direction<select value={incoming ? "incoming" : "outgoing"} disabled={busy}
             onChange={event => { setIncoming(event.target.value === "incoming"); resetPreview(); }}>
@@ -169,8 +196,8 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
           </div>
         )}
         {preview?.impact && <section aria-label="Deletion impact">
-          <h3>{removingNode ? "Node to remove" : "Connection to remove"}</h3>
-          <p>{(removingNode ? nodes : edges).find(item => item.id === to)?.label}</p>
+          <h3>{ungrouping ? "Group container to remove" : removingNode ? "Node to remove" : "Connection to remove"}</h3>
+          <p>{ungrouping ? group?.label : (removingNode ? nodes : edges).find(item => item.id === to)?.label}</p>
           {removingNode && <>
             <h4>Incident connections to remove ({incident.length})</h4>
             {!!incident.length && <ul>{incident.map(edge => <li key={edge.id}>{edge.label}</li>)}</ul>}
@@ -181,6 +208,13 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
           </>}
           {!!preview.impact.styleCount && <p>Appearance settings for {preview.impact.styleCount} removed {preview.impact.styleCount === 1 ? "element" : "elements"} will be kept as unresolved annotations.</p>}
           {!!preview.impact.roleCount && <p>Roles for {preview.impact.roleCount} removed {preview.impact.roleCount === 1 ? "element" : "elements"} will be kept as unresolved annotations.</p>}
+        </section>}
+        {preview && grouping && <section aria-label="Group impact">
+          <h3>Members and external connections</h3>
+          <ul>{nodes.filter(node => members.has(node.id)).map(node => <li key={node.id}>{node.label}</li>)}</ul>
+          {boundary.length > 0 ? <ul aria-label="Connections crossing the group">
+            {boundary.map(edge => <li key={edge.id}>{edge.label}</li>)}
+          </ul> : <p>No connections cross this group.</p>}
         </section>}
         <div className="dialog-actions">
           <button className="button quiet" type="button" onClick={onClose}>Cancel</button>

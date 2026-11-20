@@ -13,6 +13,8 @@ export type NativeFlowchartEdit =
   | { op: 'addNext'; anchorId: string; label: string; shape: Shape; edgeLabel?: string; incoming: boolean; role?: SemanticRole }
   | { op: 'setNodeLabel'; targetId: string; label: string }
   | { op: 'addEdge'; sourceId: string; targetId: string; label?: string }
+  | { op: 'addGroup'; memberIds: readonly string[]; label: string }
+  | { op: 'removeGroup'; targetId: string }
   | { op: 'removeNode'; targetId: string; incidentEdgeIds: readonly string[] }
   | { op: 'removeEdge'; targetId: string };
 
@@ -50,6 +52,16 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
     case 'addEdge':
       intent = { op: 'addEdge', from: nodeSourceId(edit.sourceId), to: nodeSourceId(edit.targetId), label: edit.label };
       break;
+    case 'addGroup':
+      intent = { op: 'addGroup', members: edit.memberIds.map(nodeSourceId), label: edit.label };
+      break;
+    case 'removeGroup': {
+      const group = previousById.get(edit.targetId);
+      if (!group || group.status !== 'resolved' || group.elementKind !== 'group') throw new Error('Choose a current diagram group.');
+      intent = { op: 'removeGroup', sourceId: group.binding.sourceId };
+      removal = [{ id: group.id, legacyKey: `group:${group.binding.sourceId}` }];
+      break;
+    }
     case 'removeEdge': {
       const sourceId = edgeSourceId(edit.targetId);
       intent = { op: 'removeEdge', sourceId };
@@ -86,14 +98,15 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
   const validPrior = previous.every(item => removedIds.has(item.id)
     ? nextById.get(item.id)?.status === 'retired' : nextById.get(item.id) === item);
   const target = added.find(item => item.binding.sourceId === proof.sourceId
-    && item.elementKind === (edit.op === 'addEdge' ? 'edge' : 'node'));
-  const validAdded = edit.op === 'setNodeLabel' || edit.op === 'removeEdge' || edit.op === 'removeNode' ? !added.length
+    && item.elementKind === (edit.op === 'addEdge' ? 'edge' : edit.op === 'addGroup' ? 'group' : 'node'));
+  const noNewIdentity = edit.op === 'setNodeLabel' || edit.op === 'removeEdge' || edit.op === 'removeNode' || edit.op === 'removeGroup';
+  const validAdded = noNewIdentity ? !added.length
     : edit.op === 'addNext' ? added.length === 2 && !!target && added.some(item => item.elementKind === 'edge' && item.binding.sourceId === proof.addedEdgeId)
     : added.length === 1 && !!target;
   if (!validPrior || !validAdded) {
     throw new Error('The edit could not preserve the project’s existing identities.');
   }
-  const elementId = edit.op === 'setNodeLabel' || edit.op === 'removeEdge' || edit.op === 'removeNode' ? edit.targetId : target!.id;
+  const elementId = noNewIdentity ? edit.targetId : target!.id;
   const roles = retired?.roles ?? document.roles;
   const candidate = validateMermaidProject({
     ...document,

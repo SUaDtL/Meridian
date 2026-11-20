@@ -17,6 +17,7 @@ const unsupported = () => new Error('This source uses syntax outside the support
 const id = '[A-Za-z_][A-Za-z_0-9]*';
 const header = /^(?:flowchart|graph)[ \t]+(TB|TD|BT|LR|RL)$/;
 const edge = new RegExp(`^(${id})[ \t]+(?:(${id})@)?-->(?:\\|"[^"]*"\\|)?[ \t]+(${id})$`);
+const subgraph = new RegExp(`^subgraph[ \t]+(${id})[ \t]+\\[(?:"[^"]*"|[A-Za-z0-9 _-]+)\\]$`);
 const node = new RegExp(`^(${id})(\\(\\[|\\[\\(|\\(\\(|\\{\\{|\\[|\\(|\\{)("[^"]*"|[A-Za-z0-9 _-]+)(\\]\\)|\\)\\]|\\)\\)|\\}\\}|\\]|\\)|\\})$`);
 const shapesByOpening = new Map(Object.entries(shapeDelimiters).map(([shape, [open, close]]) => [open, { shape: shape as Shape, close }]));
 const reserved = new Set(['end', 'subgraph', 'flowchart', 'graph', 'class', 'classDef', 'style', 'click', 'linkStyle', 'direction']);
@@ -116,7 +117,7 @@ function readSubset(source: string) {
       throw unsupported();
     }
   }
-  return { heading: first, direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles };
+  return { heading: first, records, direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles };
 }
 
 /** Only the source editor may handle undeclared nodes, groups or opaque directives. */
@@ -196,6 +197,75 @@ export function planAddNext(source: string, anchor: string, label: string, shape
   const to = incoming ? anchor : sourceId;
   return { sourceId, edgeId, from, to, patches: [appendStatements(source,
     writeNodeDeclaration(sourceId, label, shape), writeEdgeDeclaration(edgeId, from, to, edgeLabel))] };
+}
+
+/** Wrap a consecutive set of declarations without moving the existing source bytes. */
+export function planGroupCreation(source: string, members: readonly string[], title: string) {
+  const { nodes, edges, edgeIds, records } = readSubset(source);
+  const selected = new Set(members);
+  if (!members.length || selected.size !== members.length || members.some(member => !nodes.has(member))) {
+    throw new Error('Choose current node declarations to include in the group.');
+  }
+  if (nodes.size > authoringLimits.graphNodes || edges.length > authoringLimits.graphEdges) {
+    throw new Error('The diagram is too large for a generated group edit.');
+  }
+  const declarations = new Set([...nodes].filter(([key]) => selected.has(key)).map(([, record]) => record.declaration));
+  const ordered = [...declarations];
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
+  if (records.some(record => record.start >= first.start && record.end <= last.end && !declarations.has(record))) {
+    throw new Error('Choose consecutive node declarations without other statements between them.');
+  }
+  const lineStart = source.lastIndexOf('\n', first.start - 1) + 1;
+  const indentation = source.slice(lineStart, first.start);
+  const lastSeparator = source.indexOf('\n', last.end);
+  const insertion = lastSeparator === -1 ? source.length : lastSeparator + 1;
+  const trailing = source.slice(last.end, lastSeparator === -1 ? source.length : lastSeparator).trim();
+  if (!/^[ \t]*$/.test(indentation) || !/^(?:;[ \t]*)?(?:%%[^\r\n]*)?$/.test(trailing)) {
+    throw new Error('Choose consecutive declarations with the first and last declarations on their own lines.');
+  }
+  const newline = source.match(/\r?\n/)?.[0] ?? '\n';
+  const sourceId = allocateSourceId('m_g', nodes, edgeIds);
+  return { sourceId, patches: [
+    { from: first.start, to: first.start, expectedText: '', replacement: `subgraph ${sourceId} [${encodeMermaidLabel(title)}]${newline}${indentation}` },
+    { from: insertion, to: insertion, expectedText: '', replacement: `${lastSeparator === -1 ? newline : ''}${indentation}end${newline}` },
+  ] };
+}
+
+function groupRemovalPlan(source: string) {
+  const records = scanRecords(source);
+  const openings = records.flatMap((record, position) => {
+    const group = subgraph.exec(record.text);
+    return group ? [{ sourceId: group[1], record, position }] : [];
+  });
+  const endings = records.flatMap((record, position) => record.text === 'end' ? [{ record, position }] : []);
+  const [opening] = openings;
+  const [ending] = endings;
+  if (openings.length !== 1 || endings.length !== 1 || ending.position <= opening.position + 1) throw unsupported();
+  const memberIds = records.slice(opening.position + 1, ending.position).map(record => node.exec(record.text)?.[1]);
+  if (memberIds.some(member => !member)) throw unsupported();
+  const patches = [opening.record, ending.record].map(record => {
+    const from = source.lastIndexOf('\n', record.start - 1) + 1;
+    const separator = source.indexOf('\n', record.end);
+    const to = separator === -1 ? source.length : separator + 1;
+    if (!/^[ \t]*$/.test(source.slice(from, record.start)) || source.slice(record.end, to).trim()) throw unsupported();
+    return { from, to, expectedText: source.slice(from, to), replacement: '' };
+  });
+  const flat = readSubset(applySourcePatches(source, patches));
+  if (flat.nodes.has(opening.sourceId) || flat.edgeIds.has(opening.sourceId)) throw unsupported();
+  return { sourceId: opening.sourceId, patches, memberIds: memberIds as string[] };
+}
+
+export function supportedUngroupSourceId(source: string) {
+  try { return groupRemovalPlan(source).sourceId; }
+  catch { return undefined; }
+}
+
+/** Remove only a single, explicit top-level group's wrappers and verify all remaining statements. */
+export function planGroupRemoval(source: string, sourceId: string) {
+  const plan = groupRemovalPlan(source);
+  if (plan.sourceId !== sourceId) throw unsupported();
+  return plan;
 }
 
 /** Plan an exact label replacement for the explicit-declaration spike. The caller still needs the Mermaid oracle. */
