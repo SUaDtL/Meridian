@@ -1,25 +1,41 @@
 import type { StoryboardController, StoryboardPlayerOptions, StoryboardState, StoryScene } from '../types/storyboard';
 
+type PlayableStoryboard = Omit<StoryboardState, 'version'> & { version: 1 | 2 };
+
 /**
  * This factory is embedded verbatim in portable HTML. All of its runtime
  * dependencies must live inside it or be browser globals. The studio and
  * exported player therefore use exactly the same scene and timing rules.
  */
 export function createStoryboardRuntime() {
-  function createTimeline(storyboard: StoryboardState, elementKeys: readonly string[]) {
+  function createTimeline(storyboard: PlayableStoryboard, elementKeys: readonly string[], targetTable?: StoryboardPlayerOptions['targetTable']) {
     const available = new Set(elementKeys);
+    const typed = targetTable && new Map(targetTable.targets.map(target => [target.id, target]));
     let duration = 0;
     let previousVisible: Set<string> | null = new Set();
     const scenes = storyboard.scenes.map((scene, index) => {
       const start = duration;
       duration += scene.duration;
-      const visible = scene.visible === null ? null : new Set(scene.visible);
-      const enteringKeys = (scene.visible ?? elementKeys).filter(key => available.has(key) && (index === 0 || (previousVisible !== null && !previousVisible.has(key))));
+      const visible = scene.visible === null ? null : new Set(scene.visible.filter(key => !typed || available.has(key)));
+      if (typed && visible) {
+        for (const key of visible) {
+          const parent = typed.get(key)?.parentId;
+          if (parent && available.has(parent)) visible.add(parent);
+        }
+      }
+      const enteringKeys = (visible && typed ? [...visible] : scene.visible ?? elementKeys)
+        .filter(key => available.has(key) && (index === 0 || (previousVisible !== null && !previousVisible.has(key))));
       const step = scene.reveal === 'sequence' && enteringKeys.length > 1
         ? Math.min(scene.transition || 0.35, Math.max(0, (scene.duration - scene.transition) / (enteringKeys.length - 1))) : 0;
       const entering = new Map(enteringKeys.map((key, order) => [key, { delay: order * step, anchor: index === 0 && order === 0 }]));
       previousVisible = visible;
-      return { scene, start, end: duration, visible, entering, highlight: new Set(scene.highlight), flow: new Set(scene.flow) };
+      const flow = new Set(scene.flow.filter(key => {
+        if (!typed) return true;
+        const edge = typed.get(key);
+        return available.has(key) && edge?.elementKind === 'edge' && (edge.direction === 'forward' || edge.direction === 'both')
+          && edge.sourceId && edge.targetId && (visible ?? available).has(edge.sourceId) && (visible ?? available).has(edge.targetId);
+      }));
+      return { scene, start, end: duration, visible, entering, highlight: new Set(scene.highlight), flow };
     });
     const indexAt = (seconds: number) => {
       for (let index = scenes.length - 1; index >= 0; index--) if (seconds >= scenes[index].start) return index;
@@ -28,7 +44,7 @@ export function createStoryboardRuntime() {
     return { scenes, duration, indexAt };
   }
 
-  function createPlayer(root: SVGSVGElement, storyboard: StoryboardState, options: StoryboardPlayerOptions = {}): StoryboardController {
+  function createPlayer(root: SVGSVGElement, storyboard: PlayableStoryboard, options: StoryboardPlayerOptions = {}): StoryboardController {
     const namespace = 'http://www.w3.org/2000/svg';
     let playing = false;
     let destroyed = false;
@@ -43,27 +59,31 @@ export function createStoryboardRuntime() {
     const originalStory = root.getAttribute('data-story-playing');
     const originalScene = root.getAttribute('data-story-scene');
     const originalPreview = root.getAttribute('data-story-preview');
-    const targets = Array.from(root.querySelectorAll<SVGGraphicsElement>('[data-element-key], [data-element-owner]')).map(element => {
+    const typed = options.targetTable && new Map(options.targetTable.targets.map(target => [target.id, target]));
+    const targets = Array.from(root.querySelectorAll<SVGGraphicsElement>('[data-element-key], [data-element-owner]')).flatMap(element => {
+      const key = element.getAttribute('data-element-key') || element.getAttribute('data-element-owner') || '';
+      if (typed && !typed.has(key)) return [];
       const parsedOpacity = Number.parseFloat(getComputedStyle(element).opacity);
-      return {
-        element, key: element.getAttribute('data-element-key') || element.getAttribute('data-element-owner') || '',
+      return [{
+        element, key,
         attributes: ['style', 'aria-hidden', 'tabindex', 'role', 'aria-pressed'].map(name => [name, element.getAttribute(name)] as const),
         opacity: Number.isFinite(parsedOpacity) ? parsedOpacity : 1,
         lastOpacity: '', lastHidden: '', lastMotion: '', initialized: false,
-      };
+      }];
     });
     const primary = new Map<string, SVGGraphicsElement>();
     for (const target of targets) if (target.element.hasAttribute('data-element-key') && !primary.has(target.key)) primary.set(target.key, target.element);
-    const timeline = createTimeline(storyboard, [...primary.keys()]);
+    const timeline = createTimeline(storyboard, [...primary.keys()], options.targetTable);
     const duration = timeline.duration;
     let time = Math.max(0, Math.min(duration, Number.isFinite(options.initialTime) ? options.initialTime! : 0));
     let previewIndex = typeof options.initialPreview === 'number' && timeline.scenes[options.initialPreview] ? options.initialPreview : null;
     if (previewIndex !== null) time = timeline.scenes[previewIndex].start;
     const baseMotion = Array.from(root.querySelectorAll<SVGElement>('[data-studio-motion]')).map(element => ({ element, style: element.getAttribute('style') }));
     for (const item of baseMotion) item.element.style.setProperty('display', 'none', 'important');
-    const flowPaths: Array<{ key: string; path: SVGPathElement; display: boolean; opacity: string; offset: string }> = [];
+    const flowPaths: Array<{ key: string; path: SVGPathElement; display: boolean; opacity: string; offset: string; direction: number }> = [];
     for (const [key, element] of primary) {
-      if (element.getAttribute('data-element-kind') !== 'edge') continue;
+      const target = typed?.get(key);
+      if ((target?.elementKind ?? element.getAttribute('data-element-kind')) !== 'edge' || target?.direction === 'none') continue;
       const edge = element.localName === 'path' ? element as SVGPathElement : element.querySelector<SVGPathElement>('path:not([data-studio-motion])');
       if (!edge?.getAttribute('d')) continue;
       const path = document.createElementNS(namespace, 'path');
@@ -83,7 +103,12 @@ export function createStoryboardRuntime() {
       path.style.setProperty('fill', 'none', 'important');
       path.style.setProperty('display', 'none');
       edge.after(path);
-      flowPaths.push({ key, path, display: false, opacity: '', offset: '' });
+      flowPaths.push({ key, path, display: false, opacity: '', offset: '', direction: 1 });
+      if (target?.direction === 'both') {
+        const reverse = path.cloneNode() as SVGPathElement;
+        path.after(reverse);
+        flowPaths.push({ key, path: reverse, display: false, opacity: '', offset: '', direction: -1 });
+      }
     }
     // All membership and entrance-order work happens once, not on every frame.
     const plans = timeline.scenes.map(plan => {
@@ -108,14 +133,19 @@ export function createStoryboardRuntime() {
       if (force || now - lastReported >= 80) { lastReported = now; options.onUpdate?.(getState()); }
     };
     const bounds = new Map<string, number[]>();
+    const diagramRoot = typed && (root.getAttribute('data-meridian') === 'diagram'
+      ? root : root.querySelector<SVGSVGElement>('svg[data-meridian="diagram"]'));
     const measureBounds = () => {
       try {
         const inverse = root.getScreenCTM()?.inverse();
-        if (inverse) for (const [key, element] of primary) {
+        if (!inverse) return;
+        const diagramMatrix = diagramRoot && diagramRoot.getScreenCTM();
+        if (typed && !diagramMatrix) return;
+        for (const [key, element] of primary) {
           try {
-            const box = element.getBBox();
-            const matrix = element.getScreenCTM();
-            if (!matrix || (!box.width && !box.height)) continue;
+            const box = typed ? typed.get(key)?.bounds : element.getBBox();
+            const matrix = typed ? diagramMatrix : element.getScreenCTM();
+            if (!box || !matrix || (!box.width && !box.height)) continue;
             const points = [[box.x, box.y], [box.x + box.width, box.y], [box.x, box.y + box.height], [box.x + box.width, box.y + box.height]].map(([x, y]) => {
               const point = root.createSVGPoint(); point.x = x; point.y = y;
               return point.matrixTransform(matrix).matrixTransform(inverse);
@@ -129,9 +159,10 @@ export function createStoryboardRuntime() {
       } catch { /* A hidden canvas is measured when its panel becomes visible. */ }
     };
     measureBounds();
-    const cameraFor = (scene: StoryScene): number[] => {
+    const cameraFor = (scene: StoryScene, visible: Set<string> | null): number[] => {
       if (scene.camera.mode !== 'elements') return fullBox;
-      const boxes = scene.camera.keys.map(key => bounds.get(key)).filter((box): box is number[] => Boolean(box));
+      const boxes = scene.camera.keys.filter(key => !typed || visible === null || visible.has(key))
+        .map(key => bounds.get(key)).filter((box): box is number[] => Boolean(box));
       if (!boxes.length) return fullBox;
       const pad = scene.camera.padding;
       let left = Math.min(...boxes.map(box => box[0])) - pad;
@@ -143,7 +174,7 @@ export function createStoryboardRuntime() {
       else { const target = width / aspect; top -= (target - height) / 2; height = target; }
       return [left, top, Math.max(40, width), Math.max(40, height)];
     };
-    let cameraBoxes = plans.map(plan => cameraFor(plan.scene));
+    let cameraBoxes = plans.map(plan => cameraFor(plan.scene, plan.visible));
     let lastBox = '';
     const alphaFor = (state: { shown: boolean; emphasis: number; delay: number; anchor: boolean }, scene: StoryScene, index: number, elapsed: number) => {
       if (!state.shown) return 0;
@@ -187,7 +218,8 @@ export function createStoryboardRuntime() {
         if (shown) {
           const opacity = String(alpha);
           if (opacity !== flow.opacity) { flow.path.style.setProperty('opacity', opacity); flow.opacity = opacity; }
-          const offset = String(Math.round((-(elapsed * 26) % 100) * 1000) / 1000);
+          const position = flow.direction === 1 ? -(elapsed * 26) : elapsed * 26 + 10;
+          const offset = String(Math.round((position % 100) * 1000) / 1000);
           if (offset !== flow.offset) { flow.path.setAttribute('stroke-dashoffset', offset); flow.offset = offset; }
         }
       });
@@ -246,7 +278,7 @@ export function createStoryboardRuntime() {
     if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(() => {
         if (destroyed) return;
-        measureBounds(); cameraBoxes = plans.map(plan => cameraFor(plan.scene)); paint();
+        measureBounds(); cameraBoxes = plans.map(plan => cameraFor(plan.scene, plan.visible)); paint();
       });
       resizeObserver.observe(root);
     }

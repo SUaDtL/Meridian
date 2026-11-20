@@ -1,3 +1,5 @@
+import type { RenderTargetTable } from '../lib/authoring/project-render';
+
 export type StoryEasing = 'linear' | 'ease-in-out' | 'ease-out';
 
 export interface StoryScene {
@@ -51,4 +53,5 @@ export interface StoryboardPlayerOptions {
   initialTime?: number;
   initialPreview?: number;
   accent?: string;
+  targetTable?: RenderTargetTable;
 }

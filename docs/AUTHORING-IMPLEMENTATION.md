@@ -127,3 +127,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The v3 flowchart renderer matches authored UUIDs to the detached Mermaid model before layout, then applies recipe styles and manual overrides. The result contains a `meridian-targets/v1` table with IDs, explicit kinds, group relationships, connector endpoints and direction, SVG-space bounds, the snapshot token and the render fingerprint.
 - Primary and owned SVG targets carry the same IDs as the measured table. Unresolved bindings do not gain interactive IDs. Contradictory group relationships, unresolved endpoints and missing geometry prevent an authoritative target table.
 - In Chromium, a migrated project with a styled node, a group and an authored connector yields matching target IDs, measured geometry and the migrated style. One Mermaid layout suffices. A heading-only edit advances the table's base token and reuses the measured render. This advances G02. Studio and offline storyboard playback still need to consume the same table and prove parity.
+
+## Milestone 0 v3 storyboard playback and export
+
+[PR #14](https://github.com/SUaDtL/Meridian/pull/14) merged measured v3 render targets as [`5e34ea2`](https://github.com/SUaDtL/Meridian/commit/5e34ea207f5191564363b4d6012004ff07ed0bf7).
+
+- The same playback engine reads measured UUID targets in the studio fixture and in standalone HTML. It includes required ancestor containers without expanding their contents. Flow uses the explicit edge direction and is available only when both endpoints are visible. Camera bounds are transformed from the measured diagram coordinates into the framed SVG.
+- The v3 presentation exporter compares all four base-token fields before embedding the typed table and hashed playback script. The Chromium fixture rejects an old render after a heading edit, then compares scene visibility, camera and bidirectional flow with network access disabled.
+- This advances G02 and the playback/export foundation for F05. Public canvas wiring, migration recovery controls and the automatic story generator remain open.
