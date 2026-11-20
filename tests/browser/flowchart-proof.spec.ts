@@ -64,3 +64,28 @@ test('the pinned renderer proves indexed parallel-edge removal and refuses inexa
   await expect(prove(page, original, { op: 'setNodeLabel', sourceId: 'A', label: 'A|B' })).rejects.toThrow('could not display that label exactly');
   await expect(prove(page, original + '  subgraph Group\r\n  end\r\n', { op: 'removeEdge', sourceId: 'first' })).rejects.toThrow('outside the supported editing subset');
 });
+
+test('migrates source and scene targets using the actual pinned flowchart model', async ({ page }) => {
+  const { createDocument } = await import('../../src/lib/storage');
+  const { createScene } = await import('../../src/lib/storyboard');
+  const source = '\uFEFFflowchart LR\r\n  subgraph G\r\n    A[Start]\r\n    B[Finish]\r\n  end\r\n  A direct@--> B\r\n';
+  const document = {
+    ...createDocument(), source, nodeAccents: { A: '#159' },
+    storyboard: {
+      version: 1 as const, loop: false,
+      scenes: [{ ...createScene(), visible: ['group:G'], highlight: ['node:A'], flow: ['edge:id:direct'] }],
+    },
+  };
+  const result = await page.evaluate(input => window.migrateLegacyFixture(input), document);
+  expect(result.status).toBe('migrated');
+  if (result.status !== 'migrated') throw new Error(result.reason);
+  expect(result.document.source).toBe(source);
+  const ids = Object.fromEntries(result.document.identity.elements.map(record => [record.binding.sourceId, record.id]));
+  expect(result.document.storyboard.scenes[0]).toMatchObject({
+    visible: [ids.G], highlight: [ids.A], flow: [ids.direct],
+  });
+  expect(result.document.design.elements[ids.A]).toEqual({ fill: '#115599' });
+  expect(result.document.identity.orphans).toEqual([]);
+  await expect(page.evaluate(input => window.migrateLegacyFixture(input), { ...document, source: 'flowchart LR\nA[' }))
+    .resolves.toMatchObject({ status: 'recovery', reason: 'source' });
+});

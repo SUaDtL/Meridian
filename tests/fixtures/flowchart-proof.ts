@@ -14,3 +14,16 @@ declare global {
 }
 
 window.proveFlowchartFixture = prove;
+
+type LegacyFixtureProject = ReturnType<typeof createDocument>;
+
+declare global {
+  interface Window {
+    migrateLegacyFixture: (document: LegacyFixtureProject) => ReturnType<typeof import('../../src/lib/authoring/migrate-legacy-project').inspectLegacyProject>;
+  }
+}
+
+window.migrateLegacyFixture = async document => {
+  const { inspectLegacyProject } = await import('../../src/lib/authoring/migrate-legacy-project');
+  return inspectLegacyProject(document);
+};
