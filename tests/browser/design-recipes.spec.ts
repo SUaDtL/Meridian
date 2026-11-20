@@ -54,3 +54,89 @@ test('compares a design recipe, preserves source and overrides, and undoes the a
   expect(restored.settings).toEqual(original.settings);
   expect(restored.design).toEqual(original.design);
 });
+
+test('reviews a filtered selection recipe and keeps protected overrides and global settings', async ({ page }, info) => {
+  const source = 'flowchart LR\n A[Client]\n B[Service]\n C[Warehouse]\n A route@--> B\n';
+  const project = { ...createDocument(), title: 'Scoped recipe', source };
+  project.design.elements['node:A'] = { fill: '#abcdef' };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Scoped recipe' }).click();
+  const live = page.getByRole('dialog', { name: 'Scoped recipe' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Scoped recipe' })).toBeVisible();
+  const before = await downloadProject(page, live);
+  const ids = new Map(before.identity.elements.map((item: { binding: { sourceId: string }; id: string }) => [item.binding.sourceId, item.id]));
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^Client/ }).click();
+  await outline.getByRole('treeitem', { name: /^Service/ }).click({ modifiers: ['Shift'] });
+  await outline.getByRole('textbox', { name: 'Find an element' }).fill('Client');
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 1 hidden');
+  await outline.getByRole('button', { name: 'Explore designs for selection' }).click();
+  const design = page.getByRole('dialog', { name: 'Explore designs' });
+  await expect(design.getByRole('combobox', { name: 'Design scope' })).toHaveValue('selection');
+  await expect(design.getByText('2 selected · 1 hidden in the outline')).toBeVisible();
+  await design.getByRole('group', { name: 'Design recipes' }).getByRole('button', { name: /Technical/ }).click();
+  await design.getByRole('button', { name: 'Preview Technical' }).click();
+  await expect(design.getByRole('img', { name: 'Proposed Technical design' })).toBeVisible();
+  const review = design.getByRole('region', { name: 'Reviewed design scope' });
+  await expect(review).toContainText('Applies to 2 of 2 elements. 1 protected paint field.');
+  await expect(review).toContainText('frame');
+  await page.screenshot({ path: info.outputPath('scoped-recipe-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('scoped-recipe-mobile.png') });
+  await design.getByRole('button', { name: 'Apply Technical' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const after = await downloadProject(page, live);
+  const recipe = { id: 'technical', version: '1.0.0' };
+  expect(after).toEqual({
+    ...before, revision: before.revision + 1, updatedAt: after.updatedAt,
+    design: { ...before.design, recipeElements: {
+      [ids.get('A') as string]: { recipe, style: { color: '#e0f2fe', stroke: '#38bdf8' } },
+      [ids.get('B') as string]: { recipe, style: { fill: '#13212d', color: '#e0f2fe', stroke: '#38bdf8' } },
+    } },
+  });
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const undone = await downloadProject(page, live);
+  expect(undone).toEqual({ ...before, revision: after.revision + 1, updatedAt: undone.updatedAt });
+});
+
+test('applies the reviewed paint recipe only to nodes of one explicit role', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Systems and relationships' }).click();
+  await page.getByRole('button', { name: 'Enter systems manually' }).click();
+  const systems = page.getByRole('dialog', { name: 'Build a systems diagram' });
+  await systems.getByLabel('Project title').fill('Role recipe');
+  for (const [index, label, role] of [[1, 'Service instance', 'service'], [2, 'Store', 'database']] as const) {
+    await systems.getByRole('button', { name: 'Add system', exact: true }).click();
+    const row = systems.getByRole('group', { name: `System ${index}` });
+    await row.getByRole('textbox', { name: 'Label' }).fill(label);
+    await row.getByRole('combobox', { name: 'Role' }).selectOption(role);
+  }
+  await systems.getByRole('button', { name: 'Review relationships' }).click();
+  await systems.getByRole('button', { name: 'Preview systems diagram' }).click();
+  await systems.getByRole('button', { name: 'Create systems project' }).click();
+  const live = page.getByRole('dialog', { name: 'Role recipe' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Role recipe' })).toBeVisible();
+  const before = await downloadProject(page, live);
+  const database = before.roles.find((item: { role: string }) => item.role === 'database');
+  await live.getByRole('button', { name: 'Explore designs', exact: true }).click();
+  const design = page.getByRole('dialog', { name: 'Explore designs' });
+  await design.getByRole('combobox', { name: 'Design scope' }).selectOption('role');
+  await design.getByRole('combobox', { name: 'Role', exact: true }).selectOption('database');
+  await design.getByRole('button', { name: 'Preview Clear', exact: true }).click();
+  await expect(design.getByRole('region', { name: 'Reviewed design scope' })).toContainText('Applies to 1 of 1 elements');
+  await design.getByRole('button', { name: 'Apply Clear', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const after = await downloadProject(page, live);
+  expect(Object.keys(after.design.recipeElements)).toEqual([database.elementId]);
+  expect(after.settings).toEqual(before.settings);
+  expect(after.roles).toEqual(before.roles);
+  expect(after.source).toBe(before.source);
+});
