@@ -1,6 +1,6 @@
 import { edgeIdentities, type FlowModel } from '../design';
 import { canonicalDigest } from './base-token';
-import type { SourceIdentity } from './identities';
+import { MAX_LIVE_IDENTITIES, type SourceIdentity } from './identities';
 
 export type ObservedIdentity = SourceIdentity & { legacyKey: string };
 
@@ -12,7 +12,7 @@ export async function observeFlowchartIdentities(model: FlowModel): Promise<Obse
   const nodes = Array.from(model.vertices.values(), ({ id }): ObservedIdentity | null =>
     groupIds.has(id) ? null : ({ elementKind: 'node', binding: { type: 'source-id', sourceId: id }, legacyKey: `node:${id}` }))
     .filter((node): node is ObservedIdentity => node !== null);
-  if (nodes.length + groups.length + model.edges.length > 2_000) throw new Error('The flowchart has too many identity targets.');
+  if (nodes.length + groups.length + model.edges.length > MAX_LIVE_IDENTITIES) throw new Error('The flowchart has too many identity targets.');
 
   const legacyKeys = edgeIdentities(model.edges);
   const occurrences = new Map<string, number>();

@@ -11,7 +11,8 @@ export const LEGACY_STORAGE_KEY = 'meridian:v1';
 export const MAX_PROJECT_FILE_BYTES = 2_000_000;
 const MAX_PROJECTS = 50;
 const MAX_SOURCE = 100_000;
-const MAX_WORKSPACE_BYTES = 8_000_000;
+// A compatibility boundary for the previously stored v1/v2 workspace strings.
+export const MAX_LEGACY_WORKSPACE_CODE_UNITS = 8_000_000;
 const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const DOCUMENT_KEYS = new Set(['schema', 'id', 'title', 'subtitle', 'source', 'settings', 'nodeAccents', 'design', 'storyboard', 'updatedAt']);
 const SETTING_KEYS = new Set([
@@ -87,7 +88,7 @@ function validateSettings(value: unknown): StudioSettings {
   };
 }
 
-function validateDocument(value: unknown): StudioDocument {
+export function validateDocument(value: unknown): StudioDocument {
   const doc = record(value, 'Project');
   checkKeys(doc, DOCUMENT_KEYS, 'Project');
   if (doc.schema !== 'meridian/v1' && doc.schema !== 'meridian/v2') {
@@ -162,28 +163,33 @@ export function parseProject(text: string): StudioDocument {
   return validateDocument(parsed);
 }
 
+export function decodeLegacyWorkspace(raw: string, decode: (text: string) => unknown = JSON.parse): { documents: unknown[]; activeId: string | null } {
+  if (raw.length > MAX_LEGACY_WORKSPACE_CODE_UNITS) throw new Error('The stored workspace is larger than supported.');
+  const workspace = record(decode(raw), 'Workspace');
+  checkKeys(workspace, new Set(['version', 'documents', 'activeId']), 'Workspace');
+  if (workspace.version !== 1 && workspace.version !== 2) throw new Error('This browser contains an unsupported workspace version.');
+  if (!Array.isArray(workspace.documents) || workspace.documents.length > MAX_PROJECTS) {
+    throw new Error('The stored project list is invalid.');
+  }
+  if (workspace.activeId !== null && typeof workspace.activeId !== 'string') {
+    throw new Error('The stored active project is invalid.');
+  }
+  return { documents: workspace.documents, activeId: workspace.activeId };
+}
+
 export function loadWorkspace(): { documents: StudioDocument[]; activeId: string | null; warning?: string } {
   try {
     // Leave the old workspace untouched so the previous app can still open it.
     // Once v2 has saved, it always takes precedence over the legacy copy.
     const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
     if (raw === null) return { documents: [], activeId: null };
-    if (raw.length > MAX_WORKSPACE_BYTES) throw new Error('The stored workspace is larger than supported.');
-    const workspace = record(JSON.parse(raw), 'Workspace');
-    checkKeys(workspace, new Set(['version', 'documents', 'activeId']), 'Workspace');
-    if (workspace.version !== 1 && workspace.version !== 2) throw new Error('This browser contains an unsupported workspace version.');
-    if (!Array.isArray(workspace.documents) || workspace.documents.length > MAX_PROJECTS) {
-      throw new Error('The stored project list is invalid.');
-    }
-    const documents = workspace.documents.map(validateDocument);
+    const { documents: candidates, activeId: storedActiveId } = decodeLegacyWorkspace(raw);
+    const documents = candidates.map(validateDocument);
     if (new Set(documents.map(doc => doc.id)).size !== documents.length) {
       throw new Error('The stored project list contains duplicate IDs.');
     }
-    if (workspace.activeId !== null && typeof workspace.activeId !== 'string') {
-      throw new Error('The stored active project is invalid.');
-    }
-    const activeId = documents.some(doc => doc.id === workspace.activeId)
-      ? workspace.activeId as string
+    const activeId = documents.some(doc => doc.id === storedActiveId)
+      ? storedActiveId
       : documents[0]?.id ?? null;
     return { documents, activeId };
   } catch (error) {
@@ -203,7 +209,7 @@ export function saveWorkspace(documents: StudioDocument[], activeId: string | nu
     if (new Set(checked.map(doc => doc.id)).size !== checked.length) throw new Error('Project IDs must be unique.');
     if (checked.length && !checked.some(doc => doc.id === activeId)) throw new Error('The active project does not exist.');
     const serialized = JSON.stringify({ version: 2, documents: checked, activeId: checked.length ? activeId : null });
-    if (serialized.length > MAX_WORKSPACE_BYTES) throw new Error('The workspace is too large for browser storage. Export projects before removing any.');
+    if (serialized.length > MAX_LEGACY_WORKSPACE_CODE_UNITS) throw new Error('The workspace is too large for browser storage. Export projects before removing any.');
     localStorage.setItem(STORAGE_KEY, serialized);
     return { ok: true };
   } catch (error) {

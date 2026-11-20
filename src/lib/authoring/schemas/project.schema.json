@@ -1,0 +1,361 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.meridian.invalid/project.schema.json",
+  "title": "Meridian portable project families",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+        },
+        "documentKind": {
+          "const": "mermaid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "schema": {
+          "const": "meridian/v3"
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "settings": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Settings"
+        },
+        "design": {
+          "type": "object",
+          "properties": {
+            "preset": {
+              "enum": [
+                "custom",
+                "executive",
+                "infrastructure",
+                "cyberpunk",
+                "minimal",
+                "technical-blueprint"
+              ]
+            },
+            "elements": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "additionalProperties": {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ElementStyle"
+              },
+              "maxProperties": 2000
+            },
+            "recipe": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 80
+                    },
+                    "version": {
+                      "type": "string",
+                      "maxLength": 40
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "version"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "applyRoleShapes": {
+              "type": "boolean"
+            },
+            "recipeElements": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "recipe": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "version": {
+                        "type": "string",
+                        "maxLength": 40
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "version"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "style": {
+                    "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ElementStyle"
+                  }
+                },
+                "required": [
+                  "recipe",
+                  "style"
+                ],
+                "additionalProperties": false
+              },
+              "maxProperties": 2000
+            }
+          },
+          "required": [
+            "preset",
+            "elements",
+            "recipe",
+            "applyRoleShapes",
+            "recipeElements"
+          ],
+          "additionalProperties": false
+        },
+        "identity": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "elements": {
+              "type": "array",
+              "items": {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/IdentityRecord"
+              },
+              "maxItems": 2500,
+              "minItems": 0
+            },
+            "orphans": {
+              "type": "array",
+              "items": {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/OrphanAnnotation"
+              },
+              "maxItems": 500,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "version",
+            "elements",
+            "orphans"
+          ],
+          "additionalProperties": false
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "elementId": {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+              },
+              "role": {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Role"
+              }
+            },
+            "required": [
+              "elementId",
+              "role"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 2000,
+          "minItems": 0
+        },
+        "storyboard": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Storyboard"
+        },
+        "componentInstances": {
+          "type": "array",
+          "items": {
+            "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ComponentInstance"
+          },
+          "maxItems": 100,
+          "minItems": 0
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "elementId": {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+              },
+              "adapter": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "adapterVersion": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "virtualPath": {
+                "type": "string",
+                "maxLength": 240
+              },
+              "pointer": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "relationship": {
+                "type": "string",
+                "maxLength": 80
+              }
+            },
+            "required": [
+              "elementId",
+              "adapter",
+              "adapterVersion",
+              "virtualPath",
+              "pointer",
+              "relationship"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 2000,
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "documentKind",
+        "revision",
+        "title",
+        "subtitle",
+        "updatedAt",
+        "schema",
+        "source",
+        "settings",
+        "design",
+        "identity",
+        "roles",
+        "storyboard",
+        "componentInstances",
+        "provenance"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+        },
+        "documentKind": {
+          "const": "chart"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "schema": {
+          "const": "meridian-chart/v1"
+        },
+        "dataset": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Dataset"
+        },
+        "chartSpec": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ChartSpec"
+        },
+        "frame": {
+          "type": "object",
+          "properties": {
+            "theme": {
+              "enum": [
+                "obsidian",
+                "porcelain",
+                "blueprint",
+                "ember",
+                "dusk",
+                "moss"
+              ]
+            },
+            "frame": {
+              "enum": [
+                "auto",
+                "16:9",
+                "4:3",
+                "1:1"
+              ]
+            },
+            "padding": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 240
+            },
+            "showTitle": {
+              "type": "boolean"
+            },
+            "showBrand": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "theme",
+            "frame",
+            "padding",
+            "showTitle",
+            "showBrand"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "documentKind",
+        "revision",
+        "title",
+        "subtitle",
+        "updatedAt",
+        "schema",
+        "dataset",
+        "chartSpec",
+        "frame"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$comment": "Reject any fully materialized envelope above 2000000 UTF8 bytes. Validate references, scalar values, limits and family semantics after JSON Schema. Schema is not a replacement for these gates."
+}
