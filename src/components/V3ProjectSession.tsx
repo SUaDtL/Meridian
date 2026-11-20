@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import HeadingEditor from "./HeadingEditor";
 import CommandPalette from "./CommandPalette";
 import Modal from "./Modal";
+import V3ProjectOutline from "./V3ProjectOutline";
 import V3StructureEditor from "./V3StructureEditor";
 import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
+import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
 import { flowchartSubsetTopology } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
@@ -32,7 +34,12 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const [editHeading, setEditHeading] = useState(false);
   const [editFlowchart, setEditFlowchart] = useState<NativeFlowchartEdit["op"]>();
   const [commandsOpen, setCommandsOpen] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
+  const [renameTarget, setRenameTarget] = useState<string>();
+  const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
   const sourceDetails = useRef<HTMLDetailsElement>(null);
+  const sourceMark = useRef<HTMLElement>(null);
   const [outcome, setOutcome] = useState<ProposalOutcome>();
   const [confirmReload, setConfirmReload] = useState(false);
 
@@ -144,6 +151,10 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     }
   }, [source]);
   const targetTable = currentFrame?.rendered.targetTable;
+  const outlineAvailable = !!targetTable?.targets.length;
+  const outline = useMemo(() => outlineOpen && project && targetTable ? projectOutline(project, targetTable) : undefined,
+    [outlineOpen, project, targetTable]);
+  const highlighted = highlight?.source === source ? highlight : undefined;
   const identities = project?.identity.elements;
   const nodes = useMemo(() => {
     const ids = new Map(identities?.map(record => [record.id, record.binding.sourceId]));
@@ -155,7 +166,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || editHeading || editFlowchart) return;
+    if (!project || busy || commandsOpen || outlineOpen || editHeading || editFlowchart) return;
     const openCommands = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
         || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -164,13 +175,26 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, editHeading, editFlowchart]);
+  }, [project, busy, commandsOpen, outlineOpen, editHeading, editFlowchart]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function showSource() {
     if (!sourceDetails.current) return;
     sourceDetails.current.open = true;
     requestAnimationFrame(() => sourceDetails.current?.querySelector("summary")?.focus());
+  }
+  function jumpToSource(location: OutlineSourceLocation) {
+    if (!source || !sourceDetails.current) return;
+    setOutlineOpen(false);
+    setHighlight({ ...location, source });
+    sourceDetails.current.open = true;
+    requestAnimationFrame(() => sourceMark.current?.focus());
+  }
+  function renameFromOutline(id: string) {
+    if (editingUnavailable || !nodes.some(node => node.id === id)) return;
+    setOutlineOpen(false);
+    setRenameTarget(id);
+    setEditFlowchart("setNodeLabel");
   }
   function changeHistory(direction: "undo" | "redo") {
     void run(async () => {
@@ -191,6 +215,8 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const commands: WorkspaceCommand[] = [
     { id: "edit-heading", title: "Edit heading", category: "Project", synonyms: ["title", "rename project"], run: openHeading },
     { id: "show-source", title: "Show Mermaid source", category: "Project", synonyms: ["open source", "code"], run: showSource },
+    { id: "find-element", title: "Find element", category: "Diagram", synonyms: ["outline", "relationships"],
+      unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to show its elements.", run: () => setOutlineOpen(true) },
     { id: "add-node", title: "Add node", category: "Diagram", unavailable: editingUnavailable, run: () => setEditFlowchart("addNode") },
     { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
     { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
@@ -211,7 +237,11 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
               {currentFrame && <img src={currentFrame.url} alt={`Diagram preview for ${title}`} />}
               {!currentFrame && !renderError && <p role="status">Rendering the current diagram…</p>}
               {renderError && <p role="alert">{renderError}</p>}
-              <details ref={sourceDetails}><summary>Mermaid source</summary><pre>{project.source}</pre></details>
+              <details ref={sourceDetails}><summary>Mermaid source</summary>
+                <pre>{highlighted ? <>{project.source.slice(0, highlighted.from)}
+                  <mark ref={sourceMark} tabIndex={-1} aria-label={`Source line ${highlighted.line}`}>{project.source.slice(highlighted.from, highlighted.to)}</mark>
+                  {project.source.slice(highlighted.to)}</> : project.source}</pre>
+              </details>
             </div>
             <p role="status">{save?.phase === "saved" ? "Saved in this browser."
               : needsRecovery ? "Changes are only in this session."
@@ -222,6 +252,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
             )}
             <div className="recovery-actions">
               <button className="button secondary" disabled={busy} aria-keyshortcuts="Control+K Meta+K" onClick={() => setCommandsOpen(true)}>Commands</button>
+              {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setOutlineOpen(true)}>Outline</button>}
               <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
               {targetTable && flatFlowchart && (
                 <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
@@ -268,13 +299,17 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
         </div>
       </Modal>
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
+      {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
+        canRename={!editingUnavailable} onClose={() => setOutlineOpen(false)}
+        onRename={renameFromOutline} onSource={jumpToSource} />}
       {project && editHeading && (
         <HeadingEditor document={project} field="title" revision={project.revision} outcome={outcome}
           prepare={(_base, envelope) => editor.current!.prepareHeading(envelope)}
           onApply={applyHeading} onClose={() => setEditHeading(false)} />
       )}
       {editFlowchart && editor.current && (
-        <V3StructureEditor editor={editor.current} nodes={nodes} initialOperation={editFlowchart} onClose={() => setEditFlowchart(undefined)}
+        <V3StructureEditor editor={editor.current} nodes={nodes} initialOperation={editFlowchart} initialTarget={renameTarget}
+          onClose={() => { setEditFlowchart(undefined); setRenameTarget(undefined); }}
           onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);

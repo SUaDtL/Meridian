@@ -12,10 +12,11 @@ type Operation = NativeFlowchartEdit["op"];
 type NodeChoice = { id: string; label: string };
 type Preview = { proposal: ReadyProposal; url: string };
 
-export default function V3StructureEditor({ editor, nodes, initialOperation = "addNode", onApply, onClose }: {
+export default function V3StructureEditor({ editor, nodes, initialOperation = "addNode", initialTarget = "", onApply, onClose }: {
   editor: Editor;
   nodes: NodeChoice[];
   initialOperation?: Operation;
+  initialTarget?: string;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
   onClose: () => void;
 }) {
@@ -23,7 +24,7 @@ export default function V3StructureEditor({ editor, nodes, initialOperation = "a
   const [shape, setShape] = useState<Shape>("rect");
   const [label, setLabel] = useState("");
   const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [to, setTo] = useState(initialTarget);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Preview>();
