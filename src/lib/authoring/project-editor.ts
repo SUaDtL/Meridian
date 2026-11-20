@@ -3,9 +3,10 @@ import { readWorkspaceProject, writeWorkspaceProject } from '../persistence/work
 import { serializeProject } from '../storage';
 import { canonicalJson } from './base-token';
 import { buildDesignRecipeCandidate, readDesignRecipe, type DesignRecipeId } from './design-recipes';
+import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
 import type { MermaidProjectV3 } from './mermaid-project';
 import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-flowchart';
-import { renderMermaidProject } from './project-render';
+import { renderMermaidProject, type RenderTargetTable } from './project-render';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
 import { validateMermaidProject } from './validate-mermaid-project';
 
@@ -42,6 +43,13 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     base: MermaidProjectV3;
     dependency: string;
     candidate: ReturnType<typeof buildDesignRecipeCandidate>;
+    rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
+  }>();
+  const layouts = new WeakMap<ReadyProposal, {
+    base: MermaidProjectV3;
+    dependency: string;
+    candidate: ReturnType<typeof buildLayoutCandidate>;
+    current: Awaited<ReturnType<typeof renderMermaidProject>>;
     rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
   }>();
   let closed = false;
@@ -106,6 +114,47 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return commit(change.candidate.document);
   }
 
+  function verifiedTopology(table: RenderTargetTable) {
+    const topology = table.targets.map(({ id, elementKind, label, parentId, members, sourceId, targetId, direction }) =>
+      ({ id, elementKind, label, parentId, members: [...members].sort(), sourceId, targetId, direction }));
+    return canonicalJson(topology.sort((a, b) => a.id.localeCompare(b.id)));
+  }
+
+  async function prepareLayout(intent: LayoutIntent, signal?: AbortSignal) {
+    if (closed) throw new Error('The project is closed.');
+    signal?.throwIfAborted();
+    const base = current.document;
+    const { id, direction } = intent;
+    const candidate = buildLayoutCandidate(base, { id, direction });
+    const accepted = await renderMermaidProject(base, signal);
+    if (!accepted.targetTable) throw new Error('A verified flowchart is needed to compare layouts.');
+    if (closed || current.document !== base) throw new Error('The project changed. Refresh the layout preview.');
+    const rendered = candidate.document === base ? accepted : await renderMermaidProject(candidate.document, signal);
+    signal?.throwIfAborted();
+    if (!rendered.targetTable || verifiedTopology(accepted.targetTable) !== verifiedTopology(rendered.targetTable)) {
+      throw new Error('The proposed layout did not preserve the verified diagram relationships.');
+    }
+    const expectedDirection = direction === 'keep' ? accepted.flowDirection : direction;
+    if (rendered.flowDirection !== expectedDirection) throw new Error('The renderer did not honor the requested direction.');
+    if (closed || current.document !== base) throw new Error('The project changed. Refresh the layout preview.');
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    layouts.set(proposal, { base, candidate: freezeSnapshot(candidate), current: accepted, rendered, dependency: canonicalJson(candidate.option) });
+    return proposal;
+  }
+
+  function readLayoutPreview(proposal: ReadyProposal) {
+    const change = layouts.get(proposal);
+    if (closed || !change || change.base !== current.document) return undefined;
+    return { ...change.candidate, current: change.current, rendered: change.rendered };
+  }
+
+  function applyLayout(proposal: ReadyProposal) {
+    const change = layouts.get(proposal);
+    if (closed || !change) return 'invalid';
+    if (change.base !== current.document || change.dependency !== canonicalJson(readLayoutAlternative(change.candidate.option.id))) return 'stale';
+    return commit(change.candidate.document);
+  }
+
   function commit(document: MermaidProjectV3) {
     if (document === current.document) return 'unchanged';
     const next = historyEntry(document);
@@ -145,6 +194,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareDesign,
     readDesignPreview,
     applyDesign,
+    prepareLayout,
+    readLayoutPreview,
+    applyLayout,
     undo: () => restore(past, future),
     redo: () => restore(future, past),
     canUndo: () => past.length > 0,
