@@ -1,0 +1,1099 @@
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  ArrowDownToLine,
+  BookOpen,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  Clapperboard,
+  Code2,
+  Copy,
+  FilePlus2,
+  FolderOpen,
+  GalleryHorizontalEnd,
+  HelpCircle,
+  Home as HomeIcon,
+  LoaderCircle,
+  Maximize2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pause,
+  Pencil,
+  Play,
+  Redo2,
+  RefreshCw,
+  RotateCcw,
+  Scan,
+  Settings2,
+  ShieldCheck,
+  SkipBack,
+  SkipForward,
+  Square,
+  Undo2,
+  Upload,
+  X,
+} from "lucide-react";
+import Brand from "./components/Brand";
+import DiagramStage from "./components/DiagramStage";
+import Inspector from "./components/Inspector";
+import Storyboard from "./components/Storyboard";
+import HeadingEditor from "./components/HeadingEditor";
+import { useDiagram } from "./hooks/useDiagram";
+import { createDesign } from "./lib/design";
+import { DEFAULT_SETTINGS } from "./lib/themes";
+import { storyboardDuration } from "./lib/storyboard";
+import type { Workspace } from "./hooks/useWorkspace";
+import type { StudioDocument } from "./types";
+import type { DesignState, ElementStyle } from "./types/design";
+import type {
+  StoryboardController,
+  StoryboardState,
+  StoryPlaybackAction,
+  StoryPlaybackState,
+} from "./types/storyboard";
+import type { DocumentPatch } from "./lib/workspace";
+import type { Notify } from "./App";
+
+const SourceEditor = lazy(() => import("./components/SourceEditor"));
+const ExportDialog = lazy(() => import("./components/ExportDialog"));
+const MemoInspector = memo(Inspector);
+type WorkspaceTab = "canvas" | "source" | "style" | "story";
+interface Props {
+  document: StudioDocument;
+  workspace: Workspace;
+  notify: Notify;
+  onHome: () => void;
+  onNew: () => void;
+  onExamples: () => void;
+  onProjects: () => void;
+  onGuide: () => void;
+  onImport: () => void;
+  onDownload: () => void;
+}
+function applyStoryAction(
+  controller: StoryboardController,
+  action: StoryPlaybackAction,
+  value?: number,
+) {
+  if (action === "seek") {
+    controller.pause();
+    controller.seek(value ?? 0);
+  } else if (action === "preview") controller.preview(value ?? 0);
+  else if (action !== "stop") controller[action]();
+}
+
+export default function Studio({
+  document: doc,
+  workspace,
+  notify,
+  onHome,
+  onNew,
+  onExamples,
+  onProjects,
+  onGuide,
+  onImport,
+  onDownload,
+}: Props) {
+  const diagram = useDiagram(doc);
+  const {
+    result,
+    error,
+    rendering,
+    stale,
+    blank,
+    fingerprint,
+    stageDocument,
+    live,
+    setLive,
+    renderNow,
+  } = diagram;
+  const { patch, settings, undo, redo, undoLabel, redoLabel } = workspace;
+  const [tab, setTab] = useState<WorkspaceTab>("canvas");
+  const [present, setPresent] = useState(false);
+  const [sourceVisible, setSourceVisible] = useState(true);
+  const [focusRequest, setFocusRequest] = useState(0);
+  const [inspectorVisible, setInspectorVisible] = useState(true);
+  const [inspectorMode, setInspectorMode] = useState<"design" | "story">(
+    "design",
+  );
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+  const [storyPreview, setStoryPreview] = useState(false);
+  const [storyPlayback, setStoryPlayback] = useState<StoryPlaybackState | null>(
+    null,
+  );
+  const [heading, setHeading] = useState<"title" | "subtitle" | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [replayKey, setReplayKey] = useState(0);
+  const [fitRequest, setFitRequest] = useState(0);
+  const [motionPaused, setMotionPaused] = useState(false);
+  const [compact, setCompact] = useState(
+    () => window.matchMedia("(max-width: 800px)").matches,
+  );
+  const [reducedMotion, setReducedMotion] = useState(
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const storyController = useRef<StoryboardController | null>(null);
+  const pendingStoryAction = useRef<{
+    action: StoryPlaybackAction;
+    value?: number;
+  } | null>(null);
+  const current = useRef({ doc, result, stale, error, storyPlayback });
+  current.current = { doc, result, stale, error, storyPlayback };
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReducedMotion(media.matches);
+    const narrow = window.matchMedia("(max-width: 800px)");
+    const resize = () => setCompact(narrow.matches);
+    media.addEventListener("change", update);
+    narrow.addEventListener("change", resize);
+    return () => {
+      media.removeEventListener("change", update);
+      narrow.removeEventListener("change", resize);
+    };
+  }, []);
+  useEffect(() => {
+    if (
+      selectedKey &&
+      !(result?.elements || []).some((element) => element.key === selectedKey)
+    )
+      setSelectedKey(null);
+  }, [result, selectedKey]);
+  const stopStory = useCallback(() => {
+    pendingStoryAction.current = null;
+    storyController.current?.pause();
+    setStoryPreview(false);
+    setStoryPlayback(null);
+  }, []);
+  useEffect(stopStory, [fingerprint, stopStory]);
+  const receiveStoryController = useCallback(
+    (controller: StoryboardController | null) => {
+      storyController.current = controller;
+      if (controller && pendingStoryAction.current) {
+        const pending = pendingStoryAction.current;
+        pendingStoryAction.current = null;
+        applyStoryAction(controller, pending.action, pending.value);
+      }
+    },
+    [],
+  );
+  const playbackAction = useCallback(
+    (action: StoryPlaybackAction, value?: number) => {
+      if (action === "stop") {
+        stopStory();
+        return;
+      }
+      const state = current.current;
+      if (
+        !state.doc.storyboard?.scenes.length ||
+        !state.result ||
+        state.stale ||
+        state.error
+      )
+        return;
+      if (storyController.current)
+        applyStoryAction(storyController.current, action, value);
+      else {
+        pendingStoryAction.current = { action, value };
+        setStoryPreview(true);
+      }
+    },
+    [stopStory],
+  );
+  const beginPresentation = useCallback(() => {
+    const state = current.current;
+    if (!state.result || state.stale || state.error) {
+      notify("Render a valid diagram before presenting.", "error");
+      return;
+    }
+    setPresent(true);
+    setFitRequest((value) => value + 1);
+    setSelectedKey(null);
+    if (state.doc.storyboard?.scenes.length) playbackAction("restart");
+  }, [playbackAction, notify]);
+  const leavePresentation = useCallback(() => {
+    setPresent(false);
+    stopStory();
+  }, [stopStory]);
+  const showCanvas = useCallback(() => setTab("canvas"), []);
+  const showSource = useCallback(() => {
+    setSourceVisible(true);
+    setTab("source");
+    setFocusRequest((value) => value + 1);
+  }, []);
+  const openStoryboard = useCallback(() => {
+    setInspectorMode("story");
+    setInspectorVisible(true);
+    setTab("story");
+  }, []);
+  const selectElement = useCallback(
+    (key: string | null) => {
+      setSelectedKey(key);
+      if (key) {
+        setInspectorVisible(true);
+        if (window.innerWidth <= 800)
+          setTab(inspectorMode === "story" ? "story" : "style");
+      }
+    },
+    [inspectorMode],
+  );
+  const clearSelection = useCallback(() => setSelectedKey(null), []);
+  const replay = useCallback(() => setReplayKey((value) => value + 1), []);
+  const editHeading = useCallback(
+    (field: "title" | "subtitle" = "title") => setHeading(field),
+    [],
+  );
+  const editTitle = useCallback(() => setHeading("title"), []);
+  const applyHeading = useCallback(
+    (value: DocumentPatch) => patch(value, "Edit heading"),
+    [patch],
+  );
+  const changeSource = useCallback(
+    (source: string) => {
+      if (source.length <= 100_000) patch({ source }, "Edit source", "source");
+      else notify("Source is limited to 100,000 characters.", "error");
+    },
+    [patch, notify],
+  );
+  const changeDesign = useCallback(
+    (design: DesignState) => {
+      const previous = current.current.doc.design;
+      const changed = [
+        ...new Set([
+          ...Object.keys(previous.elements),
+          ...Object.keys(design.elements),
+        ]),
+      ].filter((key) => previous.elements[key] !== design.elements[key]);
+      let group: string | undefined;
+      if (changed.length === 1) {
+        const key = changed[0],
+          before = previous.elements[key] || {},
+          after = design.elements[key] || {};
+        const properties = [
+          ...new Set([...Object.keys(before), ...Object.keys(after)]),
+        ]
+          .filter(
+            (property) =>
+              before[property as keyof ElementStyle] !==
+              after[property as keyof ElementStyle],
+          )
+          .sort();
+        group = `design:${key}:${properties.join(",")}`;
+      }
+      patch({ design }, "Style an element", group);
+    },
+    [patch],
+  );
+  const changeDocument = useCallback(
+    (value: DocumentPatch) => patch(value, "Apply design"),
+    [patch],
+  );
+  const changeStoryboard = useCallback(
+    (storyboard: StoryboardState) => {
+      const previous =
+        current.current.doc.storyboard?.scenes
+          .map((scene) => scene.id)
+          .join("|") ?? "";
+      const next = storyboard.scenes.map((scene) => scene.id).join("|");
+      patch(
+        { storyboard },
+        "Edit storyboard",
+        previous === next ? "storyboard" : undefined,
+      );
+    },
+    [patch],
+  );
+  const elementIndex = useMemo(
+    () =>
+      new Map(
+        (result?.elements || []).map((element) => [element.key, element]),
+      ),
+    [result],
+  );
+  const nodeIndex = useMemo(
+    () => new Map((result?.nodes || []).map((node) => [node.key, node])),
+    [result],
+  );
+  const selectedElement = selectedKey
+    ? (elementIndex.get(selectedKey) ?? null)
+    : null;
+  const selectedNode =
+    selectedElement?.kind === "node"
+      ? (nodeIndex.get(selectedElement.sourceId) ?? null)
+      : null;
+  const changeAccent = useCallback(
+    (color: string | null) => {
+      if (!selectedNode) return;
+      const nodeAccents = { ...current.current.doc.nodeAccents };
+      if (color) nodeAccents[selectedNode.key] = color;
+      else delete nodeAccents[selectedNode.key];
+      patch({ nodeAccents }, "Change node accent");
+    },
+    [selectedNode, patch],
+  );
+  const copySource = async () => {
+    try {
+      await navigator.clipboard.writeText(doc.source);
+      notify("Mermaid source copied.");
+    } catch {
+      notify(
+        "Clipboard access is unavailable. Select the source to copy it, or export Mermaid.",
+        "error",
+      );
+    }
+  };
+  const resetStyle = () => {
+    patch(
+      {
+        settings: { ...DEFAULT_SETTINGS },
+        nodeAccents: {},
+        design: createDesign(),
+      },
+      "Reset styling",
+    );
+    notify("Style reset. Use Undo to restore your previous appearance.");
+  };
+
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (globalThis.document.querySelector("dialog[open]")) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const editing = !!target?.closest(
+        'input,textarea,select,[contenteditable="true"]',
+      );
+      const command = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+      if (command && key === "s") {
+        event.preventDefault();
+        onDownload();
+        return;
+      }
+      if (command && event.key === "Enter") {
+        event.preventDefault();
+        renderNow();
+        return;
+      }
+      if (command && !editing && (key === "z" || key === "y")) {
+        event.preventDefault();
+        if (key === "y" || event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (event.key === "Escape") {
+        if (present) leavePresentation();
+        else if (storyPreview) stopStory();
+        else clearSelection();
+        return;
+      }
+      if (editing || command || event.altKey) return;
+      if (key === "f") {
+        event.preventDefault();
+        setFitRequest((value) => value + 1);
+      }
+      if (key === "p") {
+        event.preventDefault();
+        if (present) leavePresentation();
+        else beginPresentation();
+      }
+      if (present && current.current.doc.storyboard?.scenes.length) {
+        if (event.code === "Space" && !target?.closest("button")) {
+          event.preventDefault();
+          playbackAction(
+            current.current.storyPlayback?.playing ? "pause" : "play",
+          );
+        }
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          playbackAction("next");
+        }
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          playbackAction("previous");
+        }
+      }
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [
+    present,
+    storyPreview,
+    onDownload,
+    renderNow,
+    undo,
+    redo,
+    leavePresentation,
+    stopStory,
+    clearSelection,
+    beginPresentation,
+    playbackAction,
+  ]);
+
+  const sourceLines = useMemo(
+    () => doc.source.split("\n").length,
+    [doc.source],
+  );
+  const disabledReason = blank
+    ? "Add a diagram before previewing scenes."
+    : error
+      ? "Correct the source to preview scenes."
+      : stale
+        ? "Render the current diagram to preview scenes."
+        : undefined;
+  return (
+    <div
+      className={`studio ${present ? "is-presenting" : ""} ${sourceVisible ? "" : "source-hidden"} ${inspectorVisible ? "" : "inspector-hidden"}`}
+    >
+      {!present && (
+        <>
+          <header className="app-bar">
+            <Brand />
+            <span className="bar-divider" />
+            <nav
+              className="workspace-navigation"
+              aria-label="Project navigation"
+            >
+              <button
+                className="button quiet"
+                onClick={onHome}
+                aria-label="Home"
+              >
+                <HomeIcon size={16} />
+                <span>Home</span>
+              </button>
+              <button
+                className="button quiet"
+                onClick={onProjects}
+                aria-label="Open projects"
+              >
+                <FolderOpen size={16} />
+                <span>Projects</span>
+                <ChevronDown size={12} />
+              </button>
+            </nav>
+            <div
+              className="saved-state"
+              title="Saved in this browser. Download a project for a portable backup."
+              aria-live="polite"
+            >
+              {workspace.saveState === "saving" ? (
+                <LoaderCircle className="spin" size={12} />
+              ) : workspace.saveState === "error" || !workspace.autosave ? (
+                <CircleAlert size={13} />
+              ) : (
+                <Check size={13} />
+              )}
+              <span>
+                {!workspace.autosave
+                  ? "Autosave paused"
+                  : workspace.saveState === "saving"
+                    ? "Saving"
+                    : workspace.saveState === "error"
+                      ? "Save unavailable"
+                      : "Saved locally"}
+              </span>
+            </div>
+            <div className="app-actions">
+              <button
+                className="button quiet new-top"
+                onClick={onNew}
+                aria-label="New diagram"
+              >
+                <FilePlus2 size={16} />
+                <span>New</span>
+              </button>
+              <button
+                className="button quiet examples-top"
+                onClick={onExamples}
+                aria-label="Examples"
+              >
+                <GalleryHorizontalEnd size={16} />
+                <span>Examples</span>
+              </button>
+              <button
+                className="button quiet present-top"
+                onClick={beginPresentation}
+                disabled={!result || stale || !!error}
+                aria-label="Present"
+                title={
+                  !result || stale || error
+                    ? "Render your diagram before presenting"
+                    : "Present (P)"
+                }
+              >
+                <Play size={15} />
+                <span>Present</span>
+              </button>
+              <button
+                className="button primary export-top"
+                onClick={() => setExportOpen(true)}
+              >
+                <ArrowDownToLine size={16} />
+                <span>Export</span>
+              </button>
+            </div>
+          </header>
+          <div className="workspace-toolbar">
+            <div className="workspace-path">
+              <button
+                className="icon-button desktop-only"
+                aria-label={
+                  sourceVisible ? "Hide source panel" : "Show source panel"
+                }
+                title={sourceVisible ? "Hide source" : "Show source"}
+                onClick={() => setSourceVisible((value) => !value)}
+              >
+                {sourceVisible ? (
+                  <PanelLeftClose size={16} />
+                ) : (
+                  <PanelLeftOpen size={16} />
+                )}
+              </button>
+              <button
+                className="heading-button"
+                onClick={editTitle}
+                aria-label="Edit heading"
+                title="Edit title and subtitle"
+              >
+                <strong>{doc.title || "Untitled diagram"}</strong>
+                <Pencil size={13} />
+              </button>
+            </div>
+            <div className="workspace-tools">
+              <div
+                className="history-controls"
+                role="group"
+                aria-label="Project history"
+              >
+                <button
+                  className="icon-button"
+                  aria-label="Undo"
+                  title={
+                    undoLabel
+                      ? `Undo: ${undoLabel} (Ctrl/⌘ Z)`
+                      : "Nothing to undo"
+                  }
+                  disabled={!undoLabel}
+                  onClick={undo}
+                >
+                  <Undo2 size={16} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Redo"
+                  title={
+                    redoLabel
+                      ? `Redo: ${redoLabel} (Ctrl/⌘ Shift Z)`
+                      : "Nothing to redo"
+                  }
+                  disabled={!redoLabel}
+                  onClick={redo}
+                >
+                  <Redo2 size={16} />
+                </button>
+              </div>
+              <button
+                className="icon-button"
+                onClick={onGuide}
+                aria-label="Open guide"
+                title="Guide & shortcuts"
+              >
+                <HelpCircle size={17} />
+              </button>
+              <button
+                className={`icon-button desktop-only ${inspectorVisible ? "active" : ""}`}
+                onClick={() => setInspectorVisible((value) => !value)}
+                aria-label={
+                  inspectorVisible ? "Hide style panel" : "Show style panel"
+                }
+                title="Design & storyboard panel"
+              >
+                <Settings2 size={17} />
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+      <main className={`workspace mobile-${tab}`}>
+        {!present && (
+          <aside
+            className="source-panel"
+            aria-label="Source editor"
+            inert={compact ? tab !== "source" : !sourceVisible}
+          >
+            <div className="panel-heading">
+              <div>
+                <Code2 size={16} />
+                <strong>Source</strong>
+                <span className="language-badge">.mmd</span>
+              </div>
+              <button
+                className={`live-button ${live ? "on" : ""}`}
+                onClick={() => setLive((value) => !value)}
+                aria-pressed={live}
+                title="Toggle live rendering"
+              >
+                <span />
+                {live ? "Live" : "Paused"}
+              </button>
+            </div>
+            <div className="source-intro">
+              <p>
+                {blank
+                  ? "Paste Mermaid here to begin."
+                  : "Your source. Your diagram."}
+              </p>
+              <button onClick={onGuide}>
+                Syntax guide
+                <BookOpen size={12} />
+              </button>
+            </div>
+            <div className="editor-wrap">
+              <Suspense
+                fallback={
+                  <p className="editor-loading" role="status">
+                    Loading source editor…
+                  </p>
+                }
+              >
+                <SourceEditor
+                  source={doc.source}
+                  onChange={changeSource}
+                  focusRequest={focusRequest}
+                />
+              </Suspense>
+            </div>
+            {error && (
+              <section className="source-error" role="alert">
+                <div>
+                  <CircleAlert size={16} />
+                  <strong>Check your syntax</strong>
+                </div>
+                <pre>{error}</pre>
+                <p>
+                  {result
+                    ? "Your last valid diagram stays on the canvas."
+                    : "Your source is safe. Fix the error to render it."}
+                </p>
+              </section>
+            )}
+            <div className="source-actions">
+              <button
+                className="button quiet"
+                onClick={copySource}
+                disabled={blank}
+                title="Copy Mermaid source"
+              >
+                <Copy size={14} />
+                <span>Copy</span>
+              </button>
+              <button
+                className="button quiet"
+                onClick={onImport}
+                title="Import Mermaid or a saved project"
+              >
+                <Upload size={14} />
+                <span>Import</span>
+              </button>
+              <button
+                className="icon-button"
+                aria-label="Render now"
+                title="Render now (Ctrl/⌘ Enter)"
+                disabled={blank}
+                onClick={renderNow}
+              >
+                <RefreshCw size={14} className={rendering ? "spin" : ""} />
+              </button>
+            </div>
+            <div className="source-footer">
+              <span>{sourceLines} lines</span>
+              <span>
+                <kbd>⌘ / Ctrl</kbd> <kbd>↵</kbd> render
+              </span>
+            </div>
+          </aside>
+        )}
+        <section
+          className="canvas-panel"
+          aria-label="Diagram canvas"
+          inert={compact && !present && tab !== "canvas"}
+        >
+          {blank ? (
+            <div className="empty-canvas">
+              <span className="empty-canvas-icon">
+                <FilePlus2 size={28} />
+              </span>
+              <span className="eyebrow">A FRESH START</span>
+              <h1>Your canvas is ready.</h1>
+              <p>
+                Write or paste Mermaid in the source editor.
+                <br />
+                Your diagram will appear here as you work.
+              </p>
+              <div>
+                <button className="button primary" onClick={showSource}>
+                  <Code2 size={16} />
+                  Write Mermaid
+                </button>
+                <button className="button secondary" onClick={onExamples}>
+                  Browse examples
+                </button>
+              </div>
+              <button className="empty-guide" onClick={onGuide}>
+                New to Mermaid? Open the quick guide
+                <BookOpen size={14} />
+              </button>
+            </div>
+          ) : (
+            <>
+              {storyPreview && !present && (
+                <button className="story-preview-banner" onClick={stopStory}>
+                  <Square size={12} />
+                  <span>End scene preview</span>
+                </button>
+              )}
+              <DiagramStage
+                result={result}
+                document={stageDocument}
+                selectedKey={selectedKey}
+                onSelect={selectElement}
+                replayKey={replayKey}
+                present={present}
+                motionPaused={(!storyPreview && motionPaused) || reducedMotion}
+                fitRequest={fitRequest}
+                storyPreview={storyPreview}
+                reducedMotion={reducedMotion}
+                onStoryController={receiveStoryController}
+                onStoryPlayback={setStoryPlayback}
+                onEditHeading={editHeading}
+                loading={rendering}
+                error={error}
+              />
+              {(error || stale || rendering) && (
+                <div
+                  className={`render-status ${error && !rendering ? "error" : ""}`}
+                  role="status"
+                >
+                  {rendering ? (
+                    <>
+                      <LoaderCircle size={14} className="spin" />
+                      Rendering diagram
+                    </>
+                  ) : error ? (
+                    <>
+                      <CircleAlert size={14} />
+                      {result
+                        ? "Showing last valid diagram"
+                        : "Source needs a correction"}
+                      <button onClick={showSource}>Open source</button>
+                    </>
+                  ) : (
+                    <>
+                      <Pause size={14} />
+                      Canvas paused
+                      <button onClick={renderNow}>Render now</button>
+                    </>
+                  )}
+                </div>
+              )}
+              {result?.warnings.length ? (
+                <details className="render-notes">
+                  <summary>
+                    <CircleAlert size={13} />
+                    {result.warnings.length} rendering{" "}
+                    {result.warnings.length === 1 ? "note" : "notes"}
+                  </summary>
+                  <ul>
+                    {result.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </>
+          )}
+        </section>
+        {!present && (
+          <aside
+            className="inspector-panel"
+            aria-label={
+              inspectorMode === "story"
+                ? "Presentation planning"
+                : "Diagram styling"
+            }
+            inert={
+              compact ? tab !== "style" && tab !== "story" : !inspectorVisible
+            }
+          >
+            <div
+              className="inspector-mode"
+              role="group"
+              aria-label="Inspector mode"
+            >
+              <button
+                className={inspectorMode === "design" ? "active" : ""}
+                aria-pressed={inspectorMode === "design"}
+                onClick={() => {
+                  setInspectorMode("design");
+                  setTab("style");
+                }}
+              >
+                <Settings2 size={15} />
+                Design
+              </button>
+              <button
+                className={inspectorMode === "story" ? "active" : ""}
+                aria-pressed={inspectorMode === "story"}
+                onClick={openStoryboard}
+                aria-label="Storyboard"
+              >
+                <Clapperboard size={15} />
+                Storyboard<span>{doc.storyboard?.scenes.length || 0}</span>
+              </button>
+            </div>
+            {inspectorMode === "story" ? (
+              <Storyboard
+                key={doc.id}
+                storyboard={doc.storyboard}
+                elements={result?.elements || EMPTY_ELEMENTS}
+                selectedKey={selectedKey}
+                selectedSceneId={selectedSceneId}
+                onSelectScene={setSelectedSceneId}
+                onChange={changeStoryboard}
+                playback={storyPlayback}
+                onPlayback={playbackAction}
+                disabledReason={disabledReason}
+                onShowCanvas={showCanvas}
+              />
+            ) : (
+              <>
+                <div className="panel-heading">
+                  <div>
+                    <Settings2 size={16} />
+                    <strong>Make it yours</strong>
+                  </div>
+                  <button
+                    className="icon-button"
+                    onClick={resetStyle}
+                    title="Reset all styling (can be undone)"
+                    aria-label="Reset all styling"
+                  >
+                    <RotateCcw size={15} />
+                  </button>
+                </div>
+                <MemoInspector
+                  document={doc}
+                  result={result}
+                  onSettings={settings}
+                  onDocument={changeDocument}
+                  onDesign={changeDesign}
+                  selectedElement={selectedElement}
+                  selectedNode={selectedNode}
+                  onSelectElement={selectElement}
+                  onAccent={changeAccent}
+                  onClearSelection={clearSelection}
+                  onReplay={replay}
+                  reducedMotion={reducedMotion}
+                  onEditHeading={editTitle}
+                />
+              </>
+            )}
+          </aside>
+        )}
+      </main>
+      {!present && (
+        <>
+          <footer className="status-bar">
+            <span>
+              <ShieldCheck size={13} />
+              Saved on this device.
+              <span className="status-sub">
+                {" "}
+                Download a project for a portable backup.
+              </span>
+            </span>
+            <div>
+              {result && (
+                <>
+                  <span>{result.diagramType.replace(/[-_]/g, " ")}</span>
+                  {result.nodes.length > 0 && (
+                    <span>{result.nodes.length} nodes</span>
+                  )}
+                  {result.edgeCount > 0 && (
+                    <span>{result.edgeCount} connections</span>
+                  )}
+                </>
+              )}
+              <button onClick={onGuide}>
+                Guide & shortcuts
+                <BookOpen size={12} />
+              </button>
+            </div>
+          </footer>
+          <nav className="mobile-nav" aria-label="Workspace panels">
+            {(
+              [
+                ["canvas", Scan, "Canvas"],
+                ["source", Code2, "Source"],
+                ["style", Settings2, "Style"],
+                ["story", Clapperboard, "Story"],
+              ] as const
+            ).map(([id, Icon, label]) => (
+              <button
+                key={id}
+                className={tab === id ? "active" : ""}
+                onClick={() => {
+                  setTab(id);
+                  if (id === "story") setInspectorMode("story");
+                  else if (id === "style") setInspectorMode("design");
+                }}
+                aria-current={tab === id ? "page" : undefined}
+              >
+                <Icon size={19} />
+                {label}
+              </button>
+            ))}
+          </nav>
+        </>
+      )}
+      {present && (
+        <div
+          className={`presentation-controls ${doc.storyboard?.scenes.length ? "has-storyboard" : ""}`}
+        >
+          <span className="presentation-label">
+            Meridian{" "}
+            <span>
+              {storyPlayback && doc.storyboard
+                ? doc.storyboard.scenes[storyPlayback.sceneIndex]?.title
+                : "Presentation"}
+            </span>
+          </span>
+          {doc.storyboard?.scenes.length ? (
+            <>
+              <button
+                onClick={() => playbackAction("previous")}
+                disabled={(storyPlayback?.sceneIndex ?? 0) <= 0}
+                aria-label="Previous presentation scene"
+              >
+                <SkipBack size={16} />
+              </button>
+              <button
+                onClick={() =>
+                  playbackAction(storyPlayback?.playing ? "pause" : "play")
+                }
+                aria-label={
+                  storyPlayback?.playing
+                    ? "Pause presentation"
+                    : "Play presentation"
+                }
+              >
+                {storyPlayback?.playing ? (
+                  <Pause size={17} />
+                ) : (
+                  <Play size={17} />
+                )}
+                <span>{storyPlayback?.playing ? "Pause" : "Play"}</span>
+              </button>
+              <button
+                onClick={() => playbackAction("next")}
+                disabled={
+                  (storyPlayback?.sceneIndex ?? 0) >=
+                  doc.storyboard.scenes.length - 1
+                }
+                aria-label="Next presentation scene"
+              >
+                <SkipForward size={16} />
+              </button>
+              <button
+                onClick={() => playbackAction("restart")}
+                aria-label="Restart presentation"
+              >
+                <RotateCcw size={16} />
+              </button>
+              <input
+                type="range"
+                className="presentation-playhead"
+                aria-label="Presentation timeline"
+                min="0"
+                max={storyboardDuration(doc.storyboard) || 1}
+                step="0.05"
+                value={storyPlayback?.time || 0}
+                onChange={(event) =>
+                  playbackAction("seek", Number(event.target.value))
+                }
+              />
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setMotionPaused((value) => !value)}
+                aria-pressed={motionPaused}
+                title={motionPaused ? "Resume animation" : "Pause animation"}
+              >
+                {motionPaused ? <Play size={17} /> : <Pause size={17} />}
+                <span>{motionPaused ? "Play" : "Pause"}</span>
+              </button>
+              <button onClick={replay}>
+                <RotateCcw size={16} />
+                <span>Replay</span>
+              </button>
+            </>
+          )}
+          <button onClick={() => setFitRequest((value) => value + 1)}>
+            <Maximize2 size={16} />
+            <span>Fit</span>
+          </button>
+          <span className="control-separator" />
+          <button onClick={leavePresentation}>
+            <X size={17} />
+            <span>
+              Exit <kbd>Esc</kbd>
+            </span>
+          </button>
+        </div>
+      )}
+      {heading && (
+        <HeadingEditor
+          document={doc}
+          field={heading}
+          onApply={applyHeading}
+          onClose={() => setHeading(null)}
+        />
+      )}
+      {exportOpen && (
+        <Suspense
+          fallback={
+            <div className="dialog-loading" role="status">
+              Opening export…
+            </div>
+          }
+        >
+          <ExportDialog
+            document={doc}
+            result={result}
+            stale={stale}
+            rendering={rendering}
+            renderError={error}
+            onRender={renderNow}
+            onEditSource={showSource}
+            onDownload={onDownload}
+            notify={notify}
+            onClose={() => setExportOpen(false)}
+          />
+        </Suspense>
+      )}
+    </div>
+  );
+}
+
+const EMPTY_ELEMENTS: NonNullable<import("./types").RenderResult["elements"]> =
+  [];

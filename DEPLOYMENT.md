@@ -10,9 +10,9 @@ Publish **SUaDtL/Meridian** only to its own GitHub Pages preview. No `CNAME`, cu
 2. CI installs exact dependencies with `npm ci` and the Node version from `.nvmrc`.
 3. `npm run verify:legacy` reconstructs and checks the archived published bundle. Its original checksum is unchanged.
 4. `npm test` verifies renderer and document boundaries.
-5. `npm run build:pages` builds from React/TypeScript source into the self-contained `site/index.html` artifact and a SHA-256 receipt in `site/build.json`.
-6. `npm run verify:artifact` checks the deployable artifact, including the inline script hash, preview metadata, embedded resources, and repository isolation.
-7. Playwright tests that production artifact and compares its default diagram appearance with the archived application in the same pinned Chromium browser. Browser evidence is retained as a workflow artifact.
+5. `npm run build:pages` builds a split static site from React/TypeScript source into `site/`. `site/build.json` inventories all local assets with SHA-256 and byte counts, including the initial dependency graph.
+6. `npm run verify:artifact` checks every inventoried file, local script/style paths, CSP, preview metadata, and repository isolation. `build:standalone` and `verify:standalone` separately build and check the portable application and its exact inline script hash.
+7. Playwright tests the hosted production artifact and compares its default diagram appearance with the archived application in the same pinned Chromium browser. It also opens the portable application through `file:` with HTTP requests blocked. Browser evidence is retained as a workflow artifact.
 8. After all checks pass, a merge to `main` runs the same verification. The deploy job publishes those exact verified bytes to this repository's Pages environment.
 
 PR checks do not publish. Deployment requires `github.ref == 'refs/heads/main'` and a successful verification job. Only the deploy job receives Pages/OIDC write permissions.
@@ -25,19 +25,21 @@ npm run verify:legacy
 npm test
 npm run build:pages
 npm run verify:artifact
+npm run build:standalone
+npm run verify:standalone
 npx playwright install --with-deps chromium
 npm run test:browser
 ```
 
 The browser configuration starts the candidate at port 4173 and the historical reference at port 4174. `PLAYWRIGHT_CHROMIUM_EXECUTABLE` can select a locally installed browser. CI uses the browser pinned by the Playwright dependency.
 
-For a quick manual inspection, run `python3 -m http.server 8000 --directory site`. The optional standard Vite output in `dist/` is available with `npm run build`, but Pages intentionally publishes the self-contained source build.
+For a quick manual inspection, run `python3 -m http.server 8000 --directory site`. Pages publishes the split Vite build after CSP staging and inventory validation. Copy the complete `site/` folder when hosting it elsewhere; `index.html` alone is not the hosted app. Use `standalone/Meridian.html` when a single offline application file is required.
 
 ## Verify a publication
 
 Use the URL reported by the deploy job, normally `https://suadtl.github.io/Meridian/`. Verify HTTPS, editor/rendering, themes, presentation mode, project import/export, mobile panels, and reduced motion. Compare the retrieved HTML's SHA-256 with `build.json` if verifying exact deployment bytes.
 
-The build receipt names the source commit and artifact hash. An uncommitted local build may include working-copy changes; CI always builds the checked-out commit.
+The build receipt names the source commit and every artifact hash. Its `workingTreeDirty` flag identifies uncommitted local builds; CI builds the checked-out commit and publishes the same verified folder.
 
 ## Rollback
 

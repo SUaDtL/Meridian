@@ -1,6 +1,7 @@
 import type { DiagramTemplate, StudioDocument, StudioSettings } from '../types';
 import { DEFAULT_SETTINGS } from './themes';
-import { TEMPLATES } from './templates';
+import { downloadBlob } from './download';
+export { safeFilename } from './download';
 import { createDesign, validateDesign } from './design';
 import { validateStoryboard } from './storyboard';
 
@@ -126,13 +127,13 @@ function newId(): string {
 }
 
 export function createDocument(template?: DiagramTemplate): StudioDocument {
-  const selected = template ?? TEMPLATES[0];
+  const selected = template;
   return {
     schema: 'meridian/v2',
     id: newId(),
     title: selected?.title ?? 'Untitled diagram',
     subtitle: selected?.subtitle ?? '',
-    source: selected?.source ?? 'flowchart LR\n  A[An idea] --> B[Something worth showing]',
+    source: selected?.source ?? '',
     settings: { ...DEFAULT_SETTINGS, ...(selected ? { theme: selected.theme } : {}) },
     nodeAccents: {},
     design: createDesign(),
@@ -185,7 +186,7 @@ export function loadWorkspace(): { documents: StudioDocument[]; activeId: string
   }
 }
 
-export function saveWorkspace(documents: StudioDocument[], activeId: string): { ok: boolean; error?: string } {
+export function saveWorkspace(documents: StudioDocument[], activeId: string | null): { ok: boolean; error?: string } {
   try {
     if (documents.length > MAX_PROJECTS) throw new Error(`Keep at most ${MAX_PROJECTS} projects in this browser.`);
     const checked = documents.map(validateDocument);
@@ -204,20 +205,7 @@ export function saveWorkspace(documents: StudioDocument[], activeId: string): { 
 }
 
 export function downloadText(content: string, filename: string, type = 'application/json;charset=utf-8'): void {
-  const url = URL.createObjectURL(new Blob([content], { type }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.hidden = true;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
-}
-
-export function safeFilename(title: string): string {
-  return title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100).replace(/-+$/, '') || 'meridian-diagram';
+  downloadBlob(new Blob([content], { type }), filename);
 }
 
 export function normalizeSource(source: string): string {

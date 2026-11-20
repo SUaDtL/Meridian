@@ -2,7 +2,8 @@ import { Check, RotateCcw, X } from 'lucide-react';
 import type { StudioDocument } from '../types';
 import type { DesignState, ElementStyle, RenderElement } from '../types/design';
 import { getTheme } from '../lib/themes';
-import { createDesign } from '../lib/design';
+import { colorToHex, createDesign, patchElementStyle, suggestedNodeFills } from '../lib/design';
+import { InspectorColor, InspectorDisclosure, InspectorRange, InspectorSelect, InspectorSwitch } from './InspectorControls';
 
 interface Props {
   document: StudioDocument;
@@ -10,52 +11,94 @@ interface Props {
   selectedNode: { key: string; label: string } | null;
   onDesign: (design: DesignState) => void;
   onAccent: (color: string | null) => void;
+  onReset: () => void;
   onClear: () => void;
 }
 
-export default function ElementInspector({ document, element, selectedNode, onDesign, onAccent, onClear }: Props) {
+const fontName = (family: string | undefined, fallback: string) => family?.split(',')[0].trim().replace(/^["']|["']$/g, '') || fallback;
+
+export default function ElementInspector({ document, element, selectedNode, onDesign, onAccent, onReset, onClear }: Props) {
   const design = document.design ?? createDesign();
   const style = design.elements[element.key] ?? {};
-  const settings = document.settings, theme = getTheme(settings.theme);
+  const settings = document.settings, theme = getTheme(settings.theme), appearance = element.appearance;
   const selectedAccent = selectedNode ? document.nodeAccents[selectedNode.key] : undefined;
   const supports = (capability: RenderElement['capabilities'][number]) => element.capabilities.includes(capability);
   const patch = (values: Partial<ElementStyle>) => {
-    const next = { ...style, ...values };
-    for (const key of Object.keys(next) as Array<keyof ElementStyle>) if (next[key] === undefined) delete next[key];
-    onDesign({ ...design, elements: { ...design.elements, [element.key]: next } });
+    const next = patchElementStyle(design, element.key, values);
+    if (next !== design) onDesign(next);
   };
-  const reset = () => {
-    const next = { ...design.elements }; delete next[element.key];
-    onDesign({ ...design, elements: next });
-    if (selectedNode) onAccent(null);
-  };
+  const reset = (property: keyof ElementStyle) => style[property] === undefined ? undefined : () => patch({ [property]: undefined });
+  const customCount = Object.keys(style).length + (selectedAccent ? 1 : 0);
+  const isEdge = element.kind === 'edge';
+  const fill = style.fill ?? appearance?.fill ?? (element.kind === 'group' ? theme.cluster : theme.node);
+  const stroke = style.stroke ?? appearance?.stroke ?? (isEdge ? theme.edge : theme.border);
+  const color = style.color ?? appearance?.color ?? theme.text;
+  const inheritedFont = fontName(appearance?.fontFamily, settings.font === 'mono' ? 'Monospace' : 'Sans serif');
+  const weight = Number(appearance?.fontWeight);
+  const inheritedWeight = weight >= 700 ? 'Bold' : weight >= 600 ? 'Semibold' : 'Regular';
+  const inheritedLine = appearance?.lineStyle ?? 'solid';
+
   return <section className="mi-element-editor" aria-label="Selected element properties">
-    <div className="mi-element-heading"><span className="mi-element-kind">{element.kind}</span><button type="button" className="mi-icon-button" aria-label="Clear element selection" onClick={onClear}><X size={14}/></button></div>
-    <h3 className="mi-element-title">{element.label}</h3><code className="mi-element-id">{element.sourceId}</code>
-    <p className="mi-note">Overrides belong to this project. Your Mermaid source stays unchanged.</p>
-    <button className="mi-text-button" type="button" onClick={reset} disabled={!Object.keys(style).length && !selectedAccent}><RotateCcw size={12}/>Reset element styling</button>
-    <section className="mi-section"><h3>Color</h3><div className="mi-color-grid">
-      {supports('fill') && <label className="mi-color-field"><span>Fill</span><input aria-label="Element fill" type="color" value={style.fill ?? (element.kind === 'group' ? theme.cluster : theme.node)} onChange={event => patch({ fill: event.target.value })}/></label>}
-      {supports('stroke') && <label className="mi-color-field"><span>{element.kind === 'edge' ? 'Line' : 'Border'}</span><input aria-label="Element stroke" type="color" value={style.stroke ?? (element.kind === 'edge' ? theme.edge : theme.border)} onChange={event => patch({ stroke: event.target.value })}/></label>}
-      {supports('text') && <label className="mi-color-field"><span>Text</span><input aria-label="Element text color" type="color" value={style.color ?? theme.text} onChange={event => patch({ color: event.target.value })}/></label>}
-    </div>
-    {selectedNode && <><span className="mi-label">Node accent</span><div className="mi-accent-palette" role="group" aria-label="Node accent color">{theme.palette.map(color => <button key={color} type="button" className={`mi-accent${selectedAccent === color ? ' is-active' : ''}`} style={{ backgroundColor: color }} aria-label={`Set node accent to ${color}`} aria-pressed={selectedAccent === color} title={color} onClick={() => onAccent(color)}>{selectedAccent === color && <Check size={12}/>}</button>)}<label className="mi-custom-accent" title="Choose a custom node accent"><span aria-hidden="true">+</span><input type="color" aria-label="Custom node accent" value={selectedAccent ?? theme.accent} onChange={event => onAccent(event.target.value)}/></label></div><button type="button" className="mi-text-button" onClick={() => onAccent(null)} disabled={!selectedAccent}><RotateCcw size={12}/>Reset node color</button></>}
+    <div className="mi-element-heading"><span className="mi-element-kind">{isEdge ? 'Connector' : element.kind}</span><button type="button" className="mi-icon-button" aria-label="Clear element selection" onClick={onClear}><X size={15}/></button></div>
+    <h3 className="mi-element-title">{element.label}</h3>
+    <p className="mi-note mi-selection-note">{customCount ? `${customCount} custom ${customCount === 1 ? 'property' : 'properties'}` : 'Using source and diagram styles'} · Source stays unchanged.</p>
+
+    {supports('shape') && <section className="mi-section mi-element-shape"><InspectorSelect label="Node shape" value={style.shape ?? ''} onChange={value => patch({ shape: value ? value as ElementStyle['shape'] : undefined })} onReset={reset('shape')} options={[
+      { value: '', label: 'Inherited from source' }, { value: 'rect', label: 'Rectangle' }, { value: 'rounded', label: 'Rounded rectangle' },
+      { value: 'stadium', label: 'Pill' }, { value: 'diamond', label: 'Decision' }, { value: 'circle', label: 'Circle' },
+      { value: 'cylinder', label: 'Database' }, { value: 'hexagon', label: 'Hexagon' },
+    ]}/></section>}
+
+    <section className="mi-section mi-element-colors"><h3>Colors</h3>
+      {supports('fill') && <InspectorColor label="Fill" accessibleLabel="Element fill" value={fill} inherited={style.fill === undefined} inheritedKind={appearance?.fillKind} onChange={value => patch({ fill: value })} onReset={reset('fill')}/>}
+      {supports('stroke') && <InspectorColor label={isEdge ? 'Line' : 'Border'} accessibleLabel="Element stroke" value={stroke} inherited={style.stroke === undefined} onChange={value => patch({ stroke: value })} onReset={reset('stroke')}/>}
+      {supports('text') && <InspectorColor label="Text" accessibleLabel="Element text color" value={color} inherited={style.color === undefined} onChange={value => patch({ color: value })} onReset={reset('color')}/>}
+      {supports('fill') && <div className="mi-fill-palette" role="group" aria-label="Quick fill colors"><span>Quick fill</span>{suggestedNodeFills(theme).map(value => <button key={value} type="button" className="mi-fill-swatch" style={{ backgroundColor: value }} aria-label={`Set fill to ${value}`} aria-pressed={colorToHex(fill) === colorToHex(value)} title={value} onClick={() => patch({ fill: value })}>{colorToHex(fill) === colorToHex(value) && <Check size={12}/>}</button>)}</div>}
+      {selectedAccent && <div className="mi-coordinated-color"><span>Coordinated node color is active.</span><button type="button" className="mi-text-button" onClick={() => onAccent(null)}><RotateCcw size={12}/>Reset node color</button></div>}
     </section>
-    {supports('typography') && <section className="mi-section"><h3>Typography</h3>
-      <div className="mi-field"><label className="mi-label" htmlFor="element-font">Font</label><select id="element-font" value={style.font ?? ''} onChange={event => patch({ font: event.target.value ? event.target.value as ElementStyle['font'] : undefined })}><option value="">From diagram</option><option value="sans">Sans serif</option><option value="mono">Monospace</option><option value="serif">Serif</option></select></div>
-      <div className="mi-field mi-range-field"><div className="mi-field-heading"><label className="mi-label" htmlFor="element-font-size">Element font size</label><output htmlFor="element-font-size">{style.fontSize ?? 16} px</output></div><input id="element-font-size" type="range" min={10} max={40} step={1} value={style.fontSize ?? 16} onChange={event => patch({ fontSize: Number(event.target.value) })}/></div>
-      <div className="mi-field"><label className="mi-label" htmlFor="element-font-weight">Font weight</label><select id="element-font-weight" value={style.fontWeight ?? ''} onChange={event => patch({ fontWeight: event.target.value ? event.target.value as ElementStyle['fontWeight'] : undefined })}><option value="">From source</option><option value="normal">Regular</option><option value="bold">Bold</option></select></div>
-    </section>}
-    {supports('shape') && <section className="mi-section"><h3>Shape</h3><div className="mi-field"><label className="mi-label" htmlFor="element-shape">Node shape</label><select id="element-shape" value={style.shape ?? ''} onChange={event => patch({ shape: event.target.value ? event.target.value as ElementStyle['shape'] : undefined })}><option value="">From source</option><option value="rect">Rectangle</option><option value="rounded">Rounded rectangle</option><option value="stadium">Pill</option><option value="diamond">Decision</option><option value="circle">Circle</option><option value="cylinder">Database</option><option value="hexagon">Hexagon</option></select></div><p className="mi-note">The diagram lays out again around the new shape and label size.</p></section>}
-    {supports('stroke') && <section className="mi-section"><h3>{element.kind === 'edge' ? 'Connector' : 'Border'}</h3>
-      <div className="mi-field mi-range-field"><div className="mi-field-heading"><label className="mi-label" htmlFor="element-line-weight">Element line weight</label><output htmlFor="element-line-weight">{style.strokeWidth ?? settings.edgeWidth} px</output></div><input id="element-line-weight" type="range" min={.5} max={6} step={.5} value={style.strokeWidth ?? settings.edgeWidth} onChange={event => patch({ strokeWidth: Number(event.target.value) })}/></div>
-      <div className="mi-field"><label className="mi-label" htmlFor="element-line-style">Element line style</label><select id="element-line-style" value={style.lineStyle ?? ''} onChange={event => patch({ lineStyle: event.target.value ? event.target.value as ElementStyle['lineStyle'] : undefined })}><option value="">From source</option><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></div>
-      {supports('arrowhead') && <div className="mi-field"><label className="mi-label" htmlFor="element-arrowhead">Arrowheads</label><select id="element-arrowhead" value={style.arrowhead ?? 'source'} onChange={event => patch({ arrowhead: event.target.value as ElementStyle['arrowhead'] })}><option value="source">From source</option><option value="none">None</option><option value="arrow">End arrow</option><option value="both">Both ends</option><option value="circle">End circle</option><option value="diamond">End diamond</option></select></div>}
-      {element.kind === 'edge' && <><div className="mi-field"><label className="mi-label" htmlFor="element-routing">Route shape</label><select id="element-routing" disabled={!supports('routing')} value={style.routing ?? ''} onChange={event => patch({ routing: event.target.value ? event.target.value as ElementStyle['routing'] : undefined })}><option value="">From diagram</option><option value="smooth">Smooth</option><option value="direct">Direct</option><option value="orthogonal">Right angles</option></select></div>{!supports('routing') && <p className="mi-note">ELK routes around nodes automatically. Choose Dagre in Look to set individual route shapes.</p>}</>}
-    </section>}
-    <section className="mi-section"><h3>Emphasis</h3><div className="mi-field"><label className="mi-label" htmlFor="element-emphasis">Element emphasis</label><select id="element-emphasis" value={style.emphasis ?? 'normal'} onChange={event => patch({ emphasis: event.target.value as ElementStyle['emphasis'] })}><option value="normal">Normal</option><option value="muted">Muted</option><option value="highlight">Highlight</option></select></div>
-      {supports('effects') && <><label className="mi-switch-row"><span className="mi-switch-copy">Element shadow</span><span className="mi-switch"><input type="checkbox" checked={style.shadow ?? settings.shadow} onChange={event => patch({ shadow: event.target.checked })}/><span className="mi-switch-track" aria-hidden="true"><span/></span></span></label><label className="mi-switch-row"><span className="mi-switch-copy">Element glow</span><span className="mi-switch"><input type="checkbox" checked={style.glow ?? settings.glow} onChange={event => patch({ glow: event.target.checked })}/><span className="mi-switch-track" aria-hidden="true"><span/></span></span></label></>}
-    </section>
-    {!supports('typography') && <p className="mi-note">This element supports color and effects. Shape and measured typography editing are available for standard flowchart IDs.</p>}
+
+    {supports('typography') && <InspectorDisclosure title="Typography" hint="Font, size, and weight" defaultOpen={Boolean(style.font || style.fontSize || style.fontWeight)}>
+      <InspectorSelect label="Font" value={style.font ?? ''} onChange={value => patch({ font: value ? value as ElementStyle['font'] : undefined })} onReset={reset('font')} options={[
+        { value: '', label: `Inherited · ${inheritedFont}` }, { value: 'sans', label: 'Sans serif' }, { value: 'mono', label: 'Monospace' }, { value: 'serif', label: 'Serif' },
+      ]}/>
+      <InspectorRange label="Element font size" min={10} max={40} step={.1} value={style.fontSize ?? appearance?.fontSize ?? (isEdge ? 13 : element.kind === 'group' ? 14 : 16)} unit="px" inherited={style.fontSize === undefined} onChange={value => patch({ fontSize: value })} onReset={reset('fontSize')}/>
+      <InspectorSelect label="Font weight" value={style.fontWeight ?? ''} onChange={value => patch({ fontWeight: value ? value as ElementStyle['fontWeight'] : undefined })} onReset={reset('fontWeight')} options={[
+        { value: '', label: `Inherited · ${inheritedWeight}` }, { value: 'normal', label: 'Regular' }, { value: 'bold', label: 'Bold' },
+      ]}/>
+      <p className="mi-note">The layout adjusts to fit the new label size.</p>
+    </InspectorDisclosure>}
+
+    {supports('stroke') && <InspectorDisclosure title={isEdge ? 'Connector' : 'Border'} hint={isEdge ? 'Arrowheads, weight, and route' : 'Weight and line style'} defaultOpen={isEdge || style.strokeWidth !== undefined || style.lineStyle !== undefined}>
+      {supports('arrowhead') && <InspectorSelect label="Arrowheads" value={style.arrowhead ?? 'source'} onChange={value => patch({ arrowhead: value as ElementStyle['arrowhead'] })} onReset={reset('arrowhead')} options={[
+        { value: 'source', label: 'Inherited from source' }, { value: 'none', label: 'None' }, { value: 'arrow', label: 'End arrow' },
+        { value: 'both', label: 'Both ends' }, { value: 'circle', label: 'End circle' }, { value: 'diamond', label: 'End diamond' },
+      ]}/>}
+      <InspectorRange label="Element line weight" min={.5} max={6} step={.1} value={style.strokeWidth ?? appearance?.strokeWidth ?? (isEdge ? settings.edgeWidth : 1)} unit="px" inherited={style.strokeWidth === undefined} onChange={value => patch({ strokeWidth: value })} onReset={reset('strokeWidth')}/>
+      <InspectorSelect label="Element line style" value={style.lineStyle ?? ''} onChange={value => patch({ lineStyle: value ? value as ElementStyle['lineStyle'] : undefined })} onReset={reset('lineStyle')} options={[
+        { value: '', label: `Inherited · ${inheritedLine[0].toUpperCase()}${inheritedLine.slice(1)}` }, { value: 'solid', label: 'Solid' }, { value: 'dashed', label: 'Dashed' }, { value: 'dotted', label: 'Dotted' },
+      ]}/>
+      {isEdge && <InspectorSelect label="Route shape" value={style.routing ?? ''} disabled={!supports('routing')} onChange={value => patch({ routing: value ? value as ElementStyle['routing'] : undefined })} onReset={reset('routing')} hint={!supports('routing') ? 'ELK routes around nodes automatically. Choose Dagre in Diagram → Connections & layout to set a route.' : undefined} options={[
+        { value: '', label: 'Inherited from diagram' }, { value: 'smooth', label: 'Smooth' }, { value: 'direct', label: 'Direct' }, { value: 'orthogonal', label: 'Right angles' },
+      ]}/>}
+    </InspectorDisclosure>}
+
+    <InspectorDisclosure title="Emphasis & effects" hint="Highlight, mute, shadow, and glow" defaultOpen={Boolean(style.emphasis || style.shadow !== undefined || style.glow !== undefined)}>
+      <InspectorSelect label="Element emphasis" value={style.emphasis ?? 'normal'} onChange={value => patch({ emphasis: value as ElementStyle['emphasis'] })} onReset={reset('emphasis')} options={[
+        { value: 'normal', label: 'Normal' }, { value: 'muted', label: 'Muted' }, { value: 'highlight', label: 'Highlight' },
+      ]}/>
+      {supports('effects') && <>
+        <InspectorSwitch label="Element shadow" checked={style.shadow ?? (element.kind === 'node' && settings.shadow)} inherited={style.shadow === undefined} onChange={value => patch({ shadow: value })} onReset={reset('shadow')}/>
+        <InspectorSwitch label="Element glow" checked={style.glow ?? (style.emphasis === 'highlight' || (element.kind === 'node' && settings.glow))} inherited={style.glow === undefined} onChange={value => patch({ glow: value })} onReset={reset('glow')}/>
+      </>}
+    </InspectorDisclosure>
+
+    {isEdge && !supports('text') && <p className="mi-note">Add a connector label in the source to style its text.</p>}
+    {!isEdge && !supports('typography') && <p className="mi-note">This diagram uses native shapes and typography. Colors and effects remain editable.</p>}
+    <div className="mi-element-actions"><button className="mi-text-button" type="button" onClick={onReset} disabled={!customCount}><RotateCcw size={13}/>Reset element styling</button><span>Restores source and diagram styles.</span></div>
+    <InspectorDisclosure title="Element information" hint="Source identity and group membership">
+      <span className="mi-label">Source ID</span><code className="mi-element-id">{element.sourceId}</code>
+      {element.kind === 'group' && <p className="mi-note">{element.members?.length ?? 0} contained elements. Group styles apply to its boundary and label.</p>}
+      {element.parentKey && <p className="mi-note">Inside {element.parentKey.slice(6)}.</p>}
+    </InspectorDisclosure>
   </section>;
 }

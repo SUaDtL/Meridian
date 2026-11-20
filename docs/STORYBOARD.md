@@ -7,9 +7,9 @@ document throughout.
 
 ## Build the first sequence
 
-1. Render your diagram successfully, then open **Storyboard** in the toolbar.
+1. Render your diagram successfully, then open **Storyboard** in the side panel.
    On a small screen, open **Story** in the bottom navigation. **Design** and
-   **Scenes** switch the right-hand panel between visual styling and presentation
+   **Storyboard** switch the right-hand panel between visual styling and presentation
    editing.
 2. Choose **Create first scene** and give it a clear title, such as “Introduce
    the networks.” The first scene initially shows the full diagram.
@@ -30,7 +30,7 @@ document throughout.
 
 A storyboard supports up to 50 scenes. Scenes can be named, duplicated, removed,
 and reordered. Existing scene targets remain saved when their elements are
-temporarily absent from the source.
+temporarily absent from the source. Explicit missing-target cleanup and scene deletion offer Undo. Target lists support search and show 40 results at a time before expansion.
 
 ## Timing and playback
 
@@ -41,13 +41,15 @@ temporarily absent from the source.
 | Movement | Steady pace, smooth start and finish, or quick start with a gentle finish |
 | Reveal together | New elements appear together; elements already visible in the preceding scene remain in place |
 | Reveal one by one | New elements enter in their saved selection order, distributed within the scene's available time |
-| Preview this scene | Pauses at a useful point after the scene's entrance so the composition can be inspected |
-| Play / Pause | Runs or holds the timeline at its current position |
-| Previous / Next | Moves to the start of the adjacent scene and retains the current playing/paused state |
+| Preview this scene / select a scene | Pauses on its complete composition and final camera region; explicit Preview opens Canvas on mobile |
+| Play / Pause | Runs or holds the timeline; Play from a settled preview starts that scene's entrance |
+| Previous / Next | Shows the adjacent scene's settled composition while paused, or begins its entrance while playing |
 | Replay | Returns to the beginning and plays |
 | Playhead | Scrubs to a precise time and pauses playback |
 | Loop | Repeats the sequence when it reaches the end |
 | End preview | Restores the full diagram and ordinary editing interactions |
+
+Timing inputs commit on blur or Enter and cancel with Escape. The editor identifies Preview, Paused, and Playing states and offers Pause to edit while playback is active.
 
 The first scene shown with **Reveal together** is immediately visible. Subsequent
 new elements use the configured entrance transition. Elements omitted from a
@@ -104,7 +106,7 @@ Transport controls, scene selectors, checkboxes, and sliders support keyboard
 use. While previewing, diagram targets are removed from the tab order; editing
 interactions return when preview ends. Scene titles and playback state are
 available in the presentation controls. Mobile users can switch between Story
-editing and the Canvas without losing their scene settings or playhead.
+editing and the Canvas without losing their scene settings or playhead. Starting Present from Story returns to Story on exit; the editing camera is restored. Inactive mobile panels are inert and do not retain keyboard targets.
 
 ## Save and export
 
