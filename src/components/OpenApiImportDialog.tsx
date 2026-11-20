@@ -11,8 +11,8 @@ const rowLimit = 50;
 type Review = Awaited<ReturnType<typeof prepareOpenApiProject>> & { url: string };
 const countLabel = (count: number, singular: string) => `${count} ${singular}${count === 1 ? "" : "s"}`;
 
-export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerraform }: {
-  onBack: () => void; onClose: () => void; onCreated: (id: string) => void; onTerraform: () => void;
+export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerraform, onSchema }: {
+  onBack: () => void; onClose: () => void; onCreated: (id: string) => void; onTerraform: () => void; onSchema: () => void;
 }) {
   const [file, setFile] = useState<File>();
   const [path, setPath] = useState("");
@@ -127,6 +127,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
       <div className="dialog-actions">
         <button type="button" className="button quiet" disabled={!!busy} onClick={onBack}>Back</button>
         <button type="button" className="button secondary" disabled={!!busy} onClick={onTerraform}>Import Terraform JSON</button>
+        <button type="button" className="button secondary" disabled={!!busy} onClick={onSchema}>Import JSON Schema</button>
         <button type="submit" className="button primary" disabled={!file || !path || !!busy}>Read operation facts</button>
       </div>
     </form>}

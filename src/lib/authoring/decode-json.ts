@@ -17,7 +17,12 @@ export class JsonInputError extends Error {
 }
 
 /** Check object keys and bounds before JSON.parse can discard repeated keys. */
-export function decodeJson(text: string, entryLimit = maxEntries, numericTokens: 'number' | 'text' = 'number'): unknown {
+export function decodeJson(
+  text: string,
+  entryLimit = maxEntries,
+  numericTokens: 'number' | 'text' | 'skip' = 'number',
+  onEntries?: (count: number) => void,
+): unknown {
   const scalar = /(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/y;
   let offset = 0;
   let entries = 0;
@@ -85,8 +90,8 @@ export function decodeJson(text: string, entryLimit = maxEntries, numericTokens:
     const token = scalar.exec(text)?.[0];
     if (!token) throw syntax();
     if (start === '-' || (start >= '0' && start <= '9')) {
-      if (numericTokens === 'text') {
-        preserved.push(text.slice(copyFrom, offset), `"${token}"`);
+      if (numericTokens !== 'number') {
+        preserved.push(text.slice(copyFrom, offset), numericTokens === 'text' ? `"${token}"` : 'null');
         copyFrom = scalar.lastIndex;
       } else {
         const value = Number(token);
@@ -101,6 +106,7 @@ export function decodeJson(text: string, entryLimit = maxEntries, numericTokens:
   visit(0);
   skipWhitespace();
   if (offset !== text.length) throw syntax();
+  onEntries?.(entries);
   try {
     const input = preserved.length ? preserved.join('') + text.slice(copyFrom) : text;
     return JSON.parse(input) as unknown;
