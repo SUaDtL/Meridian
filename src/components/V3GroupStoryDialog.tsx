@@ -8,7 +8,7 @@ import { buildExportFrame } from "../lib/export";
 import { createStoryboardPlayer } from "../lib/storyboard-runtime";
 import { getTheme } from "../lib/themes";
 import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
-import { isCurrentStoryDraft, listStoryCheckpoints, resumeStoryCheckpoint, saveStoryCheckpoint,
+import { emptyPathDraft, isCurrentStoryDraft, listStoryCheckpoints, resumeStoryCheckpoint, saveStoryCheckpoint,
   type PathDraft, type StoryCheckpoint, type StoryDraft } from "../lib/persistence/story-drafts";
 import type { StoryboardController, StoryPlaybackState, StoryScene } from "../types/storyboard";
 import Modal from "./Modal";
@@ -18,7 +18,7 @@ type StoryPreview = NonNullable<ReturnType<Editor["readStoryPreview"]>>;
 type GroupStoryDraft = StoryDraft;
 export const initialGroupStoryDraft: GroupStoryDraft = {
   groups: [], overview: true, ungrouped: false, animate: false, duration: 5, destination: "append",
-  strategy: "groups", path: { startId: "", steps: [], includeContext: false, title: "" },
+  strategy: "groups", paths: [emptyPathDraft()],
 };
 const count = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`;
 
@@ -32,6 +32,7 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
   onOpenCopy: (id: string) => void;
   onClose: () => void;
 }) {
+  const [activePathId, setActivePathId] = useState<string>();
   const [prepared, setPrepared] = useState<{ proposal: ReadyProposal; result: StoryPreview; svg: string }>();
   const [busy, setBusy] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
@@ -52,12 +53,14 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
   const groups = table.targets.filter(target => target.elementKind === "group");
   const canIncludeUngrouped = table.targets.some(target => target.elementKind === "node" && target.parentId === null);
   const total = draft.groups.length + Number(draft.overview) + Number(draft.ungrouped);
-  const path = useMemo(() => {
-    if (!draft.path.startId) return undefined;
-    try { return resolveStoryPath(table, draft.path.startId, draft.path.steps); }
+  const pathChoices = useMemo(() => draft.paths.map(choice => {
+    try { return choice.startId ? resolveStoryPath(table, choice.startId, choice.steps) : undefined; }
     catch { return undefined; }
-  }, [table, draft.path.startId, draft.path.steps]);
-  const sceneCount = draft.strategy === "path" ? Number(!!path) : total;
+  }), [table, draft.paths]);
+  const currentPathIndex = Math.max(0, draft.paths.findIndex(choice => choice.id === activePathId));
+  const currentPath = draft.paths[currentPathIndex];
+  const sceneCount = draft.strategy === "path" ? draft.paths.length : total;
+  const scopeReady = sceneCount > 0 && (draft.strategy !== "path" || pathChoices.every(Boolean));
   const working = busy || draftWriting;
   useEffect(() => () => pending.current?.abort(), []);
   useEffect(() => {
@@ -88,17 +91,38 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
     });
   }
 
+  function editPath(id: string, change: Partial<PathDraft>) {
+    setError("");
+    onDraft(current => ({ ...current, paths: current.paths.map(choice => choice.id === id ? { ...choice, ...change } : choice) }));
+  }
+
+  function movePath(index: number, offset: -1 | 1) {
+    onDraft(current => {
+      const next = [...current.paths];
+      const neighbor = index + offset;
+      [next[index], next[neighbor]] = [next[neighbor], next[index]];
+      return { ...current, paths: next };
+    });
+  }
+
+  function addPath(startId: string) {
+    const id = `path-${crypto.randomUUID()}`;
+    const created = { ...emptyPathDraft(), id, startId };
+    onDraft(current => current.paths.length < 20 ? { ...current, paths: [...current.paths, created] } : current);
+    setActivePathId(id);
+  }
+
   async function prepare() {
-    if (!sceneCount || pending.current || writing.current) return;
+    if (!scopeReady || pending.current || writing.current) return;
     const controller = new AbortController();
     pending.current = controller;
     setBusy(true);
     setError("");
     setPreviewReady(false);
     try {
-      const { destination, strategy, path: selection, ...options } = draft;
+      const { destination, strategy, paths, ...options } = draft;
       const proposal = await editor.prepareStory(strategy === "groups" ? { strategy, options }
-        : { strategy, options: { ...selection, animate: options.animate, duration: options.duration } }, destination, controller.signal);
+        : { strategy, options: paths.map(path => ({ ...path, animate: options.animate, duration: options.duration })) }, destination, controller.signal);
       const result = editor.readStoryPreview(proposal);
       if (!result?.rendered.targetTable) throw new Error("The project changed. Prepare the story preview again.");
       const { svg } = buildExportFrame(result.rendered.result, result.next, { animated: true });
@@ -167,6 +191,7 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
     const restored = resumeStoryCheckpoint(saved);
     savedSelection.current = restored;
     setCheckpoint(saved);
+    setActivePathId(undefined);
     setError("");
     setPrepared(undefined);
     onDraft(restored);
@@ -200,7 +225,7 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
       pending.current.abort();
       setBusy(false);
     }
-    if (sceneCount && Number.isFinite(draft.duration) && JSON.stringify(draft) !== JSON.stringify(savedSelection.current)) void persist(true);
+    if (scopeReady && Number.isFinite(draft.duration) && JSON.stringify(draft) !== JSON.stringify(savedSelection.current)) void persist(true);
     else onClose();
   }
 
@@ -249,10 +274,27 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
             </div>
           </fieldset></li>;
         })}</ol>}
-        </> : <PathChoices table={table} sourceIds={sourceIds} draft={draft.path} resolved={path} disabled={working} onChange={change => {
-          setError("");
-          onDraft(current => ({ ...current, path: { ...current.path, ...change } }));
-        }} />}
+        </> : <>
+          {draft.paths.length > 1 && <ol aria-label="Path scene order" className="guided-process-connections">
+            {draft.paths.map((choice, index) => <li key={choice.id}>
+              <div className="recovery-actions">
+                <button className="button secondary" type="button" aria-pressed={currentPathIndex === index} disabled={working}
+                  onClick={() => setActivePathId(choice.id)}>{choice.title || pathChoices[index]?.start.label || `Path scene ${index + 1}`}</button>
+                <button className="button quiet" type="button" disabled={working || index === 0}
+                  aria-label={`Move path scene ${index + 1} earlier`} onClick={() => movePath(index, -1)}>Move earlier</button>
+                <button className="button quiet" type="button" disabled={working || index === draft.paths.length - 1}
+                  aria-label={`Move path scene ${index + 1} later`} onClick={() => movePath(index, 1)}>Move later</button>
+                <button className="button quiet" type="button" disabled={working} aria-label={`Remove path scene ${index + 1}`}
+                  onClick={() => onDraft(current => ({ ...current, paths: current.paths.filter(item => item.id !== choice.id) }))}>Remove</button>
+              </div>
+            </li>)}
+          </ol>}
+          <PathChoices key={currentPath.id} table={table} sourceIds={sourceIds} draft={currentPath}
+            resolved={pathChoices[currentPathIndex]} disabled={working} onChange={change => editPath(currentPath.id, change)}
+            onBranch={draft.paths.length < 20 ? addPath : undefined} />
+          {draft.paths.length > 1 && !scopeReady && <p>Review the current start and connections for every path scene before previewing.</p>}
+          {draft.paths.length === 20 && <p>Use up to 20 path scenes. Remove a scene before adding another.</p>}
+        </>}
         <label>Scene duration in seconds<input type="number" min={0.5} max={120} step={0.5} value={Number.isFinite(draft.duration) ? draft.duration : ""} disabled={working}
           onChange={event => onDraft(current => ({ ...current, duration: event.target.valueAsNumber }))} /></label>
         <label className="check-label"><input type="checkbox" checked={draft.animate} disabled={working}
@@ -268,8 +310,8 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
         {draft.destination === "duplicate" && <p>The suggested scenes will appear in a new project. The original keeps its {count(existing.length, "scene")}.</p>}
         {draft.destination === "replace" && existing.length > 0 && <p>Replace {existing.length} current scenes: {existing.map(scene => scene.title || "Untitled scene").join(", ")}</p>}
         <div className="dialog-actions">
-          <button className="button secondary" disabled={working || sceneCount === 0} onClick={() => void persist()}>Save story draft</button>
-          <button className="button primary" disabled={working || sceneCount === 0} onClick={() => void prepare()}>Preview {sceneCount} {sceneCount === 1 ? "scene" : "scenes"}</button>
+          <button className="button secondary" disabled={working || !scopeReady} onClick={() => void persist()}>Save story draft</button>
+          <button className="button primary" disabled={working || !scopeReady} onClick={() => void prepare()}>Preview {sceneCount} {sceneCount === 1 ? "scene" : "scenes"}</button>
         </div>
       </div>}
       {busy && <p role="status">Checking the current diagram and preparing scenes…</p>}
@@ -295,15 +337,17 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
   );
 }
 
-function PathChoices({ table, sourceIds, draft, resolved, disabled, onChange }: {
+function PathChoices({ table, sourceIds, draft, resolved, disabled, onChange, onBranch }: {
   table: RenderTargetTable;
   sourceIds: ReadonlyMap<string, string>;
   draft: PathDraft;
   resolved: ReturnType<typeof resolveStoryPath> | undefined;
   disabled: boolean;
   onChange: (change: Partial<PathDraft>) => void;
+  onBranch?: (startId: string) => void;
 }) {
   const [selection, setSelection] = useState("");
+  const [branchPivot, setBranchPivot] = useState("");
   const next = resolved?.following[Number(selection)];
   const ids = table.targets.filter(target => target.elementKind === "node");
   const label = (id?: string | null) => (id && resolved?.byId.get(id)?.label) || "Unnamed node";
@@ -315,9 +359,10 @@ function PathChoices({ table, sourceIds, draft, resolved, disabled, onChange }: 
     <legend>Path choices</legend>
     <label>Start node<select value={draft.startId} onChange={event => {
       setSelection("");
+      setBranchPivot("");
       onChange({ startId: event.target.value, steps: [] });
     }}>
-      <option value="">Choose a node</option>
+      <option value="" disabled={!!draft.startId}>Choose a node</option>
       {ids.map(node => <option key={node.id} value={node.id}>{node.label || "Unnamed node"}{sourceIds.has(node.id) && ` (${sourceIds.get(node.id)})`}</option>)}
     </select></label>
     {draft.startId && !resolved && <p role="alert">The diagram no longer matches this path. Choose the start and connections again.</p>}
@@ -348,6 +393,14 @@ function PathChoices({ table, sourceIds, draft, resolved, disabled, onChange }: 
           onChange({ steps: [...draft.steps, { edgeId: next.edge.id, traversal: next.traversal }] });
         }}>Add connection to path</button>
       </>}
+      {onBranch && <div className="heading-form">
+        <label>Branch starts at<select value={resolved.nodes.has(branchPivot) ? branchPivot : ""} onChange={event => setBranchPivot(event.target.value)}>
+          <option value="">Choose a node on this path</option>
+          {[...resolved.nodes].map(nodeId => <option key={nodeId} value={nodeId}>{label(nodeId)}{sourceIds.has(nodeId) && ` (${sourceIds.get(nodeId)})`}</option>)}
+        </select></label>
+        <button type="button" className="button secondary" disabled={!resolved.nodes.has(branchPivot)}
+          onClick={() => onBranch(branchPivot)}>Add branch scene</button>
+      </div>}
       {!!draft.steps.length && <button type="button" className="button quiet" onClick={() => {
         setSelection("");
         onChange({ steps: draft.steps.slice(0, -1) });

@@ -236,7 +236,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   }
 
   async function prepareStory(
-    intent: { strategy: 'groups'; options: GroupStoryOptions } | { strategy: 'path'; options: PathStoryOptions },
+    intent: { strategy: 'groups'; options: GroupStoryOptions } | { strategy: 'path'; options: readonly PathStoryOptions[] },
     destination: StoryDestination,
     signal?: AbortSignal,
   ) {
@@ -251,8 +251,12 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     signal?.throwIfAborted();
     if (!rendered.targetTable) throw new Error('Render a verified flowchart before suggesting scenes.');
     if (closed || current.document !== base) throw new Error('The project changed. Prepare the story preview again.');
+    if (choices.strategy === 'path' && (!choices.options.length || choices.options.length > 20)) {
+      throw new Error('Choose between 1 and 20 path scenes.');
+    }
+    const table = rendered.targetTable;
     const suggestions = choices.strategy === 'groups'
-      ? suggestGroupScenes(rendered.targetTable, choices.options) : suggestPathScene(rendered.targetTable, choices.options);
+      ? suggestGroupScenes(table, choices.options) : choices.options.flatMap(path => suggestPathScene(table, path));
     const existing = destination === 'append' ? base.storyboard.scenes : [];
     if (existing.length + suggestions.length > 50) throw new Error('Choose fewer scenes or review Replace. A story can contain at most 50 scenes.');
     const orphans = destination === 'append' ? base.identity.orphans : base.identity.orphans.flatMap(orphan => {

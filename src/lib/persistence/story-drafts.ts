@@ -1,20 +1,20 @@
 import { sameBaseToken, type BaseToken } from '../authoring/base-token';
 import type { GroupStoryOptions } from '../authoring/group-story';
 import { elementUuidPattern } from '../authoring/identities';
-import type { PathStoryOptions } from '../authoring/path-story';
+import { pathStepLimit, type PathStoryOptions } from '../authoring/path-story';
 import type { StoryDestination } from '../authoring/project-editor';
 import common from '../authoring/schemas/common.schema.json';
 import { matchesBundledContract } from '../authoring/validate-mermaid-project';
 import { draftBytes, draftWeek, listGuidedCheckpoints, maxDraftBytes, sameCheckpoint, saveGuidedCheckpoint } from './guided-drafts';
 
-export type PathDraft = Omit<PathStoryOptions, 'animate' | 'duration'>;
+export type PathDraft = Omit<PathStoryOptions, 'animate' | 'duration'> & { id: string };
 export type StoryDraft = GroupStoryOptions & {
   destination: StoryDestination;
   strategy: 'groups' | 'path';
-  path: PathDraft;
+  paths: PathDraft[];
 };
-const pathKey = 'selected-path';
-const defaultPath: PathDraft = { startId: '', steps: [], includeContext: false, title: '' };
+const pathKeyPattern = /^[A-Za-z][A-Za-z0-9_-]{0,79}$/;
+export const emptyPathDraft = (): PathDraft => ({ id: 'selected-path', startId: '', steps: [], includeContext: false, title: '' });
 const unicodeTitle = /[\u0000-\u001f\u007f\uD800-\uDFFF]/u;
 
 function checkTitle(value: unknown, overrides: Record<string, { title: string }>, key: string) {
@@ -43,16 +43,19 @@ function storyCheckpoint(draft: StoryDraft, baseToken: BaseToken, id: string, no
   });
   if (new Set(groups.map(group => group.groupId)).size !== groups.length
     || groups.length + Number(draft.overview) + Number(draft.ungrouped) > 20) throw new Error('Choose at most 20 distinct group scenes.');
-  const paths = [];
-  if (isPath) {
-    const { startId, steps, includeContext, title } = draft.path;
-    if (!elementUuidPattern.test(startId) || typeof includeContext !== 'boolean' || steps.length > 100) throw new Error('Choose a start node and up to 100 path connections.');
+  const paths = isPath ? draft.paths.map(({ id, startId, steps, includeContext, title }) => {
+    if (typeof id !== 'string' || !pathKeyPattern.test(id) || !elementUuidPattern.test(startId) || typeof includeContext !== 'boolean' || steps.length > pathStepLimit) {
+      throw new Error(`Choose a start node and up to ${pathStepLimit} connections for each path.`);
+    }
     const checked = steps.map(({ edgeId, traversal }) => {
       if (!elementUuidPattern.test(edgeId) || (traversal !== 'forward' && traversal !== 'reverse')) throw new Error('A chosen path connection is invalid.');
       return { edgeId, traverse: traversal };
     });
-    checkTitle(title, overrides, `path:${pathKey}`);
-    paths.push({ id: pathKey, startId, steps: checked, includeContext });
+    checkTitle(title, overrides, `path:${id}`);
+    return { id, startId, steps: checked, includeContext };
+  }) : [];
+  if (isPath && (!paths.length || paths.length > 20 || new Set(paths.map(path => path.id)).size !== paths.length)) {
+    throw new Error('Choose up to 20 distinct path scenes.');
   }
   return {
     schema: 'meridian-draft/v1' as const, feature: 'story' as const, id, baseToken,
@@ -70,13 +73,14 @@ function storyCheckpoint(draft: StoryDraft, baseToken: BaseToken, id: string, no
 export type StoryCheckpoint = ReturnType<typeof storyCheckpoint>;
 
 export function resumeStoryCheckpoint({ payload }: StoryCheckpoint): StoryDraft {
-  const [path] = payload.paths;
   return {
     strategy: payload.strategy === 'paths' ? 'path' : 'groups',
     groups: payload.groups.map(({ groupId, depth, includeBoundary }) =>
       ({ id: groupId, depth, boundary: includeBoundary, title: payload.sceneOverrides[`group:${groupId}`]?.title })),
-    path: path ? { startId: path.startId, steps: path.steps.map(({ edgeId, traverse }) => ({ edgeId, traversal: traverse })),
-      includeContext: path.includeContext, title: payload.sceneOverrides[`path:${pathKey}`]?.title || '' } : { ...defaultPath, steps: [] },
+    paths: payload.paths.length ? payload.paths.map(path => ({
+      id: path.id, startId: path.startId, steps: path.steps.map(({ edgeId, traverse }) => ({ edgeId, traversal: traverse })),
+      includeContext: path.includeContext, title: payload.sceneOverrides[`path:${path.id}`]?.title || '',
+    })) : [emptyPathDraft()],
     overview: payload.overview,
     ungrouped: payload.includeUngrouped,
     duration: payload.pacing.duration,
