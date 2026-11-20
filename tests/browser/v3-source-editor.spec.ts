@@ -1,0 +1,64 @@
+import { readFile } from 'node:fs/promises';
+import { expect, test, type Locator, type Page } from '@playwright/test';
+import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
+
+async function download(page: Page, live: Locator) {
+  const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+  const path = await file.path();
+  if (!path) throw new Error('Missing source edit project download.');
+  return JSON.parse(await readFile(path, 'utf8'));
+}
+
+test('keeps an invalid source draft, previews binding-preserving changes, and restores the exact source with Undo', async ({ page }, info) => {
+  const source = '\uFEFFflowchart LR\r\n  %% Authored comment\r\n  A[First]\r\n  B[Second]\r\n  A first@--> B\r\n';
+  const project = { ...createDocument(), title: 'Reviewed source edit', source };
+  project.design.elements['node:A'] = { fill: '#abcd12' };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Reviewed source edit' }).click();
+  const live = page.getByRole('dialog', { name: 'Reviewed source edit' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Reviewed source edit' })).toBeVisible();
+  const original = await download(page, live);
+  const open = () => live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  await open();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const input = editor.getByRole('textbox', { name: 'Mermaid source' });
+  const invalid = 'flowchart LR\n A["unclosed';
+  await input.fill(invalid);
+  await editor.getByRole('button', { name: 'Preview source' }).click();
+  await expect(editor.getByRole('alert')).toBeVisible();
+  await expect(editor.getByRole('button', { name: 'Apply source' })).toBeDisabled();
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
+  expect(await download(page, live)).toEqual(original);
+  await open();
+  await expect(input).toHaveValue(invalid);
+  const revised = source.replace('A[First]', 'A[Gateway]') + '  C[Archive]\r\n  B second@--> C\r\n';
+  await input.fill(revised.replace(/\r\n/g, '\n'));
+  await editor.getByRole('button', { name: 'Preview source' }).click();
+  await expect(editor.getByRole('region', { name: 'Proposed source edit' })).toContainText('3 existing bindings preserved · 2 new bindings');
+  await page.screenshot({ path: info.outputPath('v3-source-preview-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('v3-source-preview-mobile.png') });
+  await editor.getByRole('button', { name: 'Apply source' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const accepted = await download(page, live);
+  expect(accepted.source).toBe(revised);
+  expect(accepted.identity.elements).toEqual(expect.arrayContaining(original.identity.elements));
+  expect(accepted.design).toEqual(original.design);
+  await open();
+  await input.fill('flowchart LR\nA[Gateway]\n');
+  await editor.getByRole('button', { name: 'Preview source' }).click();
+  await expect(editor.getByRole('alert')).toContainText('would lose an existing diagram binding');
+  await editor.getByRole('button', { name: 'Discard draft' }).click();
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await download(page, live);
+  expect(restored.source).toBe(source);
+  expect(restored.identity).toEqual(original.identity);
+  expect(restored.design).toEqual(original.design);
+});

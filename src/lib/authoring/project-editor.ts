@@ -6,6 +6,7 @@ import { buildContrastCandidate, measureTargetContrast } from './contrast-fix';
 import { buildDesignRecipeCandidate, readDesignRecipe, type DesignRecipeId } from './design-recipes';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
+import { prepareManualSource } from './manual-source';
 import type { MermaidProjectV3 } from './mermaid-project';
 import { suggestPathScene, type PathStoryOptions } from './path-story';
 import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-flowchart';
@@ -43,7 +44,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     writeWorkspaceProject(db, document, anchor), notify);
   const past: (typeof current)[] = [];
   const future: (typeof current)[] = [];
-  const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId: string; impact?: ElementRemovalImpact }>();
+  const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId?: string; impact?: ElementRemovalImpact }>();
   const designs = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3;
     dependency: string;
@@ -85,6 +86,16 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     structure.set(proposal, { base, next: freezeSnapshot(document), elementId, impact: freezeSnapshot(impact) });
     return proposal;
+  }
+
+  async function prepareSource(source: string, expected: MermaidProjectV3, signal?: AbortSignal) {
+    const base = current.document;
+    if (closed || base !== expected) throw new Error('The project changed. Reopen the source editor to review the current revision.');
+    const { document, added, preserved } = await prepareManualSource(base, source, signal);
+    if (closed || current.document !== base) throw new Error('The project changed. Reopen the source editor to review the current revision.');
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    structure.set(proposal, { base, next: freezeSnapshot(document) });
+    return { proposal, added, preserved };
   }
 
   function applyStructure(proposal: ReadyProposal) {
@@ -284,6 +295,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareHeading,
     applyHeading,
     prepareStructure,
+    prepareSource,
     readStructurePreview,
     readStructureImpact,
     applyStructure,
