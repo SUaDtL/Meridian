@@ -11,7 +11,7 @@ import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
-import { flowchartSubsetTopology } from "../lib/authoring/source-patches";
+import { flowchartSubsetTopology, supportedUngroupSourceId } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
@@ -161,6 +161,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     }
   }, [source]);
   const targetTable = currentFrame?.rendered.targetTable;
+  const ungroupSourceId = useMemo(() => source && !flatFlowchart ? supportedUngroupSourceId(source) : undefined, [source, flatFlowchart]);
   const outlineAvailable = !!targetTable?.targets.length;
   const outline = useMemo(() => outlineOpen && project && targetTable ? projectOutline(project, targetTable) : undefined,
     [outlineOpen, project, targetTable]);
@@ -188,6 +189,12 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
       ? [{ id: item.id, label: ids.has(item.id) ? `${item.label} (${ids.get(item.id)})` : item.label,
         sourceId: item.sourceId, targetId: item.targetId, explicit: ids.has(item.id) }] : []) ?? [];
   }, [identities, targetTable]);
+  const removableGroup = useMemo(() => {
+    const identity = identities?.find(record => record.status === "resolved" && record.elementKind === "group"
+      && record.binding.sourceId === ungroupSourceId);
+    const target = targetTable?.targets.find(item => item.id === identity?.id && item.elementKind === "group");
+    return target ? { id: target.id, label: target.label || "Diagram group" } : undefined;
+  }, [identities, targetTable, ungroupSourceId]);
   const needsRecovery = save?.phase === "conflict" || save?.phase === "error";
   const editingUnavailable = busy ? "Wait for the current action to finish."
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
@@ -264,6 +271,11 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
     { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("addEdge") },
+    { id: "create-group", title: "Create group", category: "Diagram", synonyms: ["group nodes", "add subgraph"],
+      unavailable: editingUnavailable ?? (!nodes.length ? "Choose current node declarations." : undefined), run: () => setEditFlowchart("addGroup") },
+    { id: "ungroup", title: "Ungroup", category: "Diagram", synonyms: ["remove container", "keep group members"],
+      unavailable: busy ? "Wait for the current action to finish." : removableGroup ? undefined : "Open a rendered flowchart with one supported top-level group.",
+      run: () => setEditFlowchart("removeGroup") },
     { id: "remove-connection", title: "Delete connection", category: "Diagram", synonyms: ["remove edge", "delete edge"],
       unavailable: editingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined), run: () => setEditFlowchart("removeEdge") },
     { id: "remove-node", title: "Delete node", category: "Diagram", synonyms: ["remove step", "delete step"],
@@ -295,7 +307,8 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
               : "Saving changes…"}</p>
             {needsRecovery && <p role="alert">{save?.message}</p>}
             {targetTable && !flatFlowchart && (
-              <p className="muted-note">Visual edits support flat flowcharts with explicit node declarations.</p>
+              <p className="muted-note">{removableGroup ? "Ungroup is available for this diagram. Other visual edits need a flat flowchart."
+                : "Visual edits support flat flowcharts with explicit node declarations."}</p>
             )}
             <div className="recovery-actions">
               <button className="button secondary" disabled={busy} aria-keyshortcuts="Control+K Meta+K" onClick={() => setCommandsOpen(true)}>Commands</button>
@@ -308,6 +321,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
               {targetTable && flatFlowchart && (
                 <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
               )}
+              {removableGroup && <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("removeGroup")}>Ungroup</button>}
               <button className="button quiet" disabled={busy || !editor.current?.canUndo()} onClick={() => changeHistory("undo")}>Undo</button>
               <button className="button quiet" disabled={busy || !editor.current?.canRedo()} onClick={() => changeHistory("redo")}>Redo</button>
               <button className="button secondary" disabled={busy} onClick={downloadProject}>
@@ -379,7 +393,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
           onApply={applyHeading} onClose={() => setEditHeading(false)} />
       )}
       {editFlowchart && editor.current && (
-        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} initialOperation={editFlowchart} initialTarget={renameTarget}
+        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} initialOperation={editFlowchart} initialTarget={renameTarget}
           onClose={() => { setEditFlowchart(undefined); setRenameTarget(undefined); }}
           onApply={proposal => {
             const current = editor.current!;
