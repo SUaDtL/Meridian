@@ -1,9 +1,9 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, MousePointer2, Palette, Pencil, RotateCcw, Sparkles } from 'lucide-react';
 import { getTheme, THEMES } from '../lib/themes';
 import type { RenderResult, StudioDocument, StudioSettings } from '../types';
 import type { DesignState, RenderElement } from '../types/design';
-import { applyDesignPreset, createDesign, DESIGN_PRESETS, suggestedLayout } from '../lib/design';
+import { applyDesignPreset, createDesign, DESIGN_PRESETS, matchesDesignPreset, suggestedLayout } from '../lib/design';
 import ElementInspector from './ElementInspector';
 import { InspectorChoice as Choice, InspectorDisclosure as Disclosure, InspectorRange as Range, InspectorSelect as Select, InspectorSwitch as Switch } from './InspectorControls';
 import '../inspector.css';
@@ -27,10 +27,12 @@ export interface InspectorProps {
 export function Inspector({ document, result, selectedElement, onDesign, onSelectElement, onSettings, onDocument, onEditHeading, selectedNode, onAccent, onClearSelection, onReplay, reducedMotion }: InspectorProps) {
   const [scope, setScope] = useState<'diagram' | 'selected'>('diagram');
   const [filter, setFilter] = useState('');
+  const scrollArea = useRef<HTMLDivElement>(null);
   const pickerId = useId();
   const settings = document.settings, design = document.design ?? createDesign();
   const elements = result?.elements;
   const preset = DESIGN_PRESETS.find(item => item.id === design.preset);
+  const presetModified = Boolean(preset && !matchesDesignPreset(settings, preset.id));
   const flowchart = Boolean(result?.diagramType.startsWith('flowchart'));
   const hasConnectors = Boolean(elements?.some(item => item.kind === 'edge'));
   const matches = useMemo(() => {
@@ -42,6 +44,7 @@ export function Inspector({ document, result, selectedElement, onDesign, onSelec
     setScope(selectedElement ? 'selected' : 'diagram');
   }, [selectedElement?.key]);
   useEffect(() => { setFilter(''); }, [document.id]);
+  useLayoutEffect(() => { if (scrollArea.current) scrollArea.current.scrollTop = 0; }, [scope, selectedElement?.key]);
   const resetSelected = () => {
     if (!selectedElement) return;
     const next = { ...design.elements }; delete next[selectedElement.key];
@@ -55,7 +58,7 @@ export function Inspector({ document, result, selectedElement, onDesign, onSelec
       <button type="button" aria-pressed={scope === 'diagram'} className={scope === 'diagram' ? 'is-active' : ''} onClick={() => setScope('diagram')}><Palette size={15} aria-hidden="true"/>Diagram</button>
       <button type="button" disabled={!selectedElement} aria-pressed={scope === 'selected'} className={scope === 'selected' ? 'is-active' : ''} onClick={() => setScope('selected')} title={selectedElement ? `Style ${selectedElement.label}` : 'Select a node, connector, or group on the canvas'}><MousePointer2 size={15} aria-hidden="true"/>Selected</button>
     </div>
-    <div className="mi-inspector-scroll">
+    <div className="mi-inspector-scroll" ref={scrollArea}>
       {!!elements?.length && <section className="mi-element-picker" aria-label="Element selection">
         <label className="mi-label" htmlFor={pickerId}>Inspect an element</label>
         {elements.length > 12 && <input type="search" aria-label="Find an element" placeholder="Find by label or source ID" value={filter} onChange={event => setFilter(event.target.value)}/>}
@@ -66,9 +69,9 @@ export function Inspector({ document, result, selectedElement, onDesign, onSelec
       </section>}
 
       {scope === 'selected' && selectedElement ? <ElementInspector key={selectedElement.key} document={document} element={selectedElement} selectedNode={selectedNode} onDesign={value => onDesign?.(value)} onAccent={onAccent} onReset={resetSelected} onClear={onClearSelection}/> : <>
-        <Disclosure title="Design presets" hint={preset ? `${preset.name} · choose a coordinated style` : 'Choose a coordinated starting point'} className="mi-presets">
-          <div className="mi-preset-list">{DESIGN_PRESETS.map(item => <button key={item.id} type="button" className={`mi-preset${design.preset === item.id ? ' is-active' : ''}`} aria-pressed={design.preset === item.id} onClick={() => onDocument(applyDesignPreset(document, item.id))}>
-            <span className="mi-preset-swatch" style={{ background: getTheme(item.settings.theme ?? 'obsidian').canvas, color: getTheme(item.settings.theme ?? 'obsidian').accent }} aria-hidden="true"><span/><i/><span/></span><span><strong>{item.name}</strong><small>{item.description}</small></span>{design.preset === item.id && <Check size={13}/>}
+        <Disclosure title="Design presets" hint={preset ? `${preset.name}${presetModified ? ' · modified' : ' · coordinated style'}` : 'Choose a coordinated starting point'} className="mi-presets">
+          <div className="mi-preset-list">{DESIGN_PRESETS.map(item => <button key={item.id} type="button" className={`mi-preset${design.preset === item.id && !presetModified ? ' is-active' : ''}`} aria-pressed={design.preset === item.id && !presetModified} onClick={() => onDocument(applyDesignPreset(document, item.id))}>
+            <span className="mi-preset-swatch" style={{ background: getTheme(item.settings.theme ?? 'obsidian').canvas, color: getTheme(item.settings.theme ?? 'obsidian').accent }} aria-hidden="true"><span/><i/><span/></span><span><strong>{item.name}</strong><small>{design.preset === item.id && presetModified ? 'Base preset · reapply to restore its settings.' : item.description}</small></span>{design.preset === item.id && !presetModified && <Check size={13}/>}
           </button>)}</div>
           <p className="mi-note">Presets coordinate theme, layout, and effects. Your heading and individual element overrides stay in place.</p>
         </Disclosure>

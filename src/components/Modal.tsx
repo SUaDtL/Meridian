@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useContext, useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { NoticeContext, NoticeMessage } from "./Notice";
 
 export default function Modal({
   title,
@@ -20,6 +21,8 @@ export default function Modal({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const { notice, dismiss, registerModal } = useContext(NoticeContext);
+  useEffect(registerModal, [registerModal]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     ref.current?.showModal();
@@ -67,6 +70,7 @@ export default function Modal({
         </button>
       </header>
       <div className="modal-body">{children}</div>
+      <NoticeMessage notice={notice} onDismiss={dismiss} inline />
     </dialog>
   );
 }

@@ -499,10 +499,39 @@
   margin: 7px 0 11px;
   line-height: 1.6;
 }
+.toast:not(.notice-inline) {
+  bottom: calc(150px + env(safe-area-inset-bottom));
+}
 .toast.toast-error {
   background: #f0d0c1;
   border-color: #f7e2d8;
   color: #633b2c;
+}
+.modal[open] {
+  display: flex;
+  flex-direction: column;
+}
+.modal-header {
+  flex-shrink: 0;
+}
+.modal-body {
+  min-height: 0;
+}
+.toast.notice-inline {
+  position: static;
+  transform: none;
+  max-width: none;
+  margin: 0 20px 20px;
+  flex-shrink: 0;
+  box-shadow: none;
+}
+.toast > span {
+  flex: 1;
+  min-width: 0;
+}
+.toast > svg,
+.toast-action {
+  flex-shrink: 0;
 }
 .toast-action {
   border: 1px solid currentColor;

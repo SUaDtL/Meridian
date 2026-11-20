@@ -57,6 +57,17 @@ test('framing skips the renderer; motion reuses layout; returning to a style use
   if (await flow.getAttribute('aria-pressed') !== 'true') { await flow.click(); await ready(page); }
   const baseline = await work(page);
   const originalId = await page.locator(DRAWING).getAttribute('id');
+  const accessibility = await page.context().newCDPSession(page);
+  try {
+    await expect.poll(async () => {
+      const tree = await accessibility.send('Accessibility.getFullAXTree');
+      return tree.nodes.filter(node => !node.ignored && node.role?.value === 'button').map(node => node.name?.value);
+    }).toEqual(expect.arrayContaining(['Edit diagram title', 'Edit diagram subtitle']));
+    const tree = await accessibility.send('Accessibility.getFullAXTree');
+    const nodeLabel = await page.locator(`${DRAWING} [data-element-key][role="button"]`).first().getAttribute('aria-label');
+    expect(nodeLabel).toBeTruthy();
+    expect(tree.nodes.some(node => !node.ignored && node.role?.value === 'button' && node.name?.value === nodeLabel)).toBe(true);
+  } finally { await accessibility.detach(); }
 
   await page.getByRole('button', { name: 'Edit diagram title', exact: true }).click();
   const heading = page.getByRole('dialog', { name: 'Edit heading', exact: true });

@@ -11,7 +11,9 @@ async function source(page: Page, value: string) {
   await ready(page);
 }
 async function choose(page: Page, key: string) {
+  expect(key, 'Choose an actual source element, not a decorative hit path').toBeTruthy();
   await page.getByLabel('Inspect an element', { exact: true }).selectOption(key);
+  await expect(page.getByLabel('Inspect an element', { exact: true })).toHaveValue(key);
   await expect(page.getByRole('region', { name: 'Selected element properties' })).toBeVisible();
 }
 
@@ -154,8 +156,11 @@ test('group typography preserves authored borders and unlabeled connectors expla
   await expect(group.locator(':scope > rect')).toHaveCSS('stroke', 'rgb(170, 187, 204)');
   await expect(group.locator(':scope > rect')).toHaveCSS('stroke-width', '2.3px');
   await expect(group.locator('text').first()).toHaveCSS('font-size', '22px');
-  const unlabeled = await page.locator(`${DRAWING} path[data-element-kind="edge"]`).nth(1).getAttribute('data-element-key');
+  await expect(page.locator(`${DRAWING} path[data-element-kind="edge"]`)).toHaveCount(2);
+  await expect(page.locator(`${DRAWING} [data-edge-hit][data-element-kind]`)).toHaveCount(0);
+  const unlabeled = await page.locator(`${DRAWING} path[data-element-kind="edge"][data-element-key]`).nth(1).getAttribute('data-element-key');
   await choose(page, unlabeled!);
+  await expect.poll(() => page.locator('.mi-inspector-scroll').evaluate(element => element.scrollTop)).toBe(0);
   await expect(page.getByLabel('Element text color', { exact: true })).toHaveCount(0);
   await expect(page.locator('.mi-inspector summary').getByText('Typography', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Add a connector label in the source to style its text.', { exact: true })).toBeVisible();

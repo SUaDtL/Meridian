@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { createDocument } from "./storage";
 import { workspaceReducer, workspaceState } from "./workspace";
+import { layoutFingerprint, renderFingerprint } from "./render";
 
 describe("workspace editing and recovery", () => {
+  it("keeps the chosen base routing when only the frame or animation changes", () => {
+    const original = createDocument();
+    const project = { ...original, source: 'flowchart LR\nA --> B',
+      settings: { ...original.settings, layout: 'elk' as const },
+      design: { preset: 'infrastructure' as const, elements: {} } };
+    const start = workspaceState([project], project.id);
+    const framed = workspaceReducer(start, { type: 'settings', patch: { padding: 80 }, at: 1000 }).documents[0];
+    expect(framed.design).toBe(project.design);
+    expect(renderFingerprint(framed.source, framed.settings, framed.nodeAccents, framed.design))
+      .toBe(renderFingerprint(project.source, project.settings, project.nodeAccents, project.design));
+    const animated = workspaceReducer(start, { type: 'settings', patch: { motion: 'none' }, at: 1100 }).documents[0];
+    expect(layoutFingerprint(animated.source, animated.settings, animated.design))
+      .toBe(layoutFingerprint(project.source, project.settings, project.design));
+  });
   it("starts genuinely empty and does not invent another project after the last deletion", () => {
     const project = createDocument();
     expect(project.title).toBe("Untitled diagram");

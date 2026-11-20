@@ -16,7 +16,7 @@ The toolbar exposes Undo and Redo for the current project editing session. Whole
 
 Workspace state, persistence, and diagram rendering are separate modules. Autosave runs only when the workspace changes and flushes dirty state when the page is hidden. Opening the welcome screen does not write fabricated projects. Save failures are shown as failures. An unreadable saved workspace is retained, with options to download its original bytes, import a backup, or explicitly use the current in-memory workspace. Changes from another tab pause autosave and offer a controlled reload.
 
-If an editing tool fails to load, the application keeps the workspace available and provides project download, Home, and Reload actions. Error notifications use an error treatment rather than a success checkmark.
+If an editing tool fails to load, the application keeps the workspace available and provides project download, Home, and Reload actions. Error notifications use an error treatment rather than a success checkmark. Notifications and Undo actions stay inside an open dialog's focus boundary; outside dialogs, notifications sit above the canvas controls.
 
 ## Design controls
 
@@ -24,7 +24,7 @@ The inspector has two scopes: **Diagram** and **Selected**. The element picker s
 
 Selected-element fields read the actual rendered appearance when no override exists. This fixes misleading inherited font sizes and decimal line weights. Each property can return to inheritance independently. Numeric fields retain a draft while typing and commit valid values; hexadecimal color fields validate before applying. Quick fills and the main fill control share one style operation. Existing node accents remain readable and resettable without a competing new accent workflow. Unlabeled connections explain why text styling is unavailable.
 
-Presets, layout refinement, and selected-style resets apply as one document update. Source-authored group borders survive typography changes. Supported source and diagram capabilities still determine which controls are shown.
+Presets, layout refinement, and selected-style resets apply as one document update. Source-authored group borders survive typography changes. Frame and effects edits preserve the Infrastructure preset's routing mode; the inspector identifies modified preset settings. Supported source and diagram capabilities still determine which controls are shown.
 
 ## Storyboard and presentation
 

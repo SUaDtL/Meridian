@@ -7,10 +7,11 @@ import {
   useState,
   type ChangeEvent,
 } from "react";
-import { Check, CircleAlert, LoaderCircle, X } from "lucide-react";
+import { CircleAlert, LoaderCircle } from "lucide-react";
 import Home, { StartChoices } from "./components/Home";
 import Modal from "./components/Modal";
 import WorkspaceBoundary from "./components/WorkspaceBoundary";
+import { NoticeContext, NoticeMessage, type Notice } from "./components/Notice";
 import { useWorkspace } from "./hooks/useWorkspace";
 import {
   createDocument,
@@ -33,17 +34,18 @@ export type Notify = (
   tone?: "success" | "error",
   action?: { label: string; run: () => void },
 ) => void;
-type Notice = {
-  message: string;
-  tone: "success" | "error";
-  action?: { label: string; run: () => void };
-};
 
 export default function App() {
   const workspace = useWorkspace();
   const [screen, setScreen] = useState<"home" | "studio">("home");
   const [dialog, setDialog] = useState<Dialog>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [openModals, setOpenModals] = useState(0);
+  const dismissNotice = useCallback(() => setNotice(null), []);
+  const registerModal = useCallback(() => {
+    setOpenModals((count) => count + 1);
+    return () => setOpenModals((count) => Math.max(0, count - 1));
+  }, []);
   const [importing, setImporting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef(workspace);
@@ -222,198 +224,180 @@ export default function App() {
     onImport: importClick,
   };
   return (
-    <WorkspaceBoundary
-      resetKey={`${screen}:${dialog}`}
-      onHome={goHome}
-      onDownload={downloadProject}
-      hasProject={!!workspace.document}
+    <NoticeContext.Provider
+      value={{ notice, dismiss: dismissNotice, registerModal }}
     >
-      <div className="application">
-        <input
-          ref={fileInput}
-          type="file"
-          accept=".json,.mmd,.mermaid,.md,.txt"
-          onChange={importFile}
-          aria-label="Import project file"
-          hidden
-        />
-        {workspace.warning && (
-          <div className="storage-banner" role="alert">
-            <CircleAlert size={17} />
-            <span>{workspace.warning}</span>
-            {workspace.document && (
-              <button onClick={downloadProject}>
-                Download current project
-              </button>
-            )}
-            {!workspace.autosave && (
-              <button
-                onClick={
-                  workspace.externalChange
-                    ? () => {
-                        if (workspace.reload()) {
-                          setScreen("home");
-                          setDialog(null);
-                        }
-                      }
-                    : () => setDialog("recovery")
-                }
-              >
-                {workspace.externalChange
-                  ? "Reload workspace"
-                  : "Recovery options"}
-              </button>
-            )}
-          </div>
-        )}
-        {screen === "studio" && workspace.document ? (
-          <Suspense
-            fallback={
-              <div className="app-loading" role="status">
-                <LoaderCircle size={24} className="spin" />
-                <h1>Opening your studio…</h1>
-                <p>Your project is ready. Loading the editing tools.</p>
-                <button className="button quiet" onClick={goHome}>
-                  Back to home
-                </button>
-              </div>
-            }
-          >
-            <Studio
-              key={workspace.document.id}
-              document={workspace.document}
-              workspace={workspace}
-              notify={notify}
-              onHome={goHome}
-              onNew={showNew}
-              onExamples={showExamples}
-              onProjects={showProjects}
-              onGuide={showGuide}
-              onImport={importClick}
-              onDownload={downloadProject}
-            />
-          </Suspense>
-        ) : (
-          <Home
-            documents={workspace.documents}
-            activeId={workspace.activeId}
-            onOpen={open}
-            onManage={showProjects}
-            onGuide={showGuide}
-            {...actions}
+      <WorkspaceBoundary
+        resetKey={`${screen}:${dialog}`}
+        onHome={goHome}
+        onDownload={downloadProject}
+        hasProject={!!workspace.document}
+      >
+        <div className="application">
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,.mmd,.mermaid,.md,.txt"
+            onChange={importFile}
+            aria-label="Import project file"
+            hidden
           />
-        )}
-        <Suspense
-          fallback={
-            <div className="dialog-loading" role="status">
-              <LoaderCircle className="spin" size={18} />
-              Opening…
+          {workspace.warning && (
+            <div className="storage-banner" role="alert">
+              <CircleAlert size={17} />
+              <span>{workspace.warning}</span>
+              {workspace.document && (
+                <button onClick={downloadProject}>
+                  Download current project
+                </button>
+              )}
+              {!workspace.autosave && (
+                <button
+                  onClick={
+                    workspace.externalChange
+                      ? () => {
+                          if (workspace.reload()) {
+                            setScreen("home");
+                            setDialog(null);
+                          }
+                        }
+                      : () => setDialog("recovery")
+                  }
+                >
+                  {workspace.externalChange
+                    ? "Reload workspace"
+                    : "Recovery options"}
+                </button>
+              )}
             </div>
-          }
-        >
-          {dialog === "examples" && (
-            <ExampleGallery onChoose={createProject} onClose={closeDialog} />
           )}
-          {dialog === "projects" && (
-            <ProjectManager
+          {screen === "studio" && workspace.document ? (
+            <Suspense
+              fallback={
+                <div className="app-loading" role="status">
+                  <LoaderCircle size={24} className="spin" />
+                  <h1>Opening your studio…</h1>
+                  <p>Your project is ready. Loading the editing tools.</p>
+                  <button className="button quiet" onClick={goHome}>
+                    Back to home
+                  </button>
+                </div>
+              }
+            >
+              <Studio
+                key={workspace.document.id}
+                document={workspace.document}
+                workspace={workspace}
+                notify={notify}
+                onHome={goHome}
+                onNew={showNew}
+                onExamples={showExamples}
+                onProjects={showProjects}
+                onGuide={showGuide}
+                onImport={importClick}
+                onDownload={downloadProject}
+              />
+            </Suspense>
+          ) : (
+            <Home
               documents={workspace.documents}
               activeId={workspace.activeId}
               onOpen={open}
-              onNew={showNew}
-              onImport={importClick}
-              onDuplicate={duplicate}
-              onDownload={downloadProject}
-              onRemove={remove}
-              onClose={closeDialog}
+              onManage={showProjects}
+              onGuide={showGuide}
+              {...actions}
             />
           )}
-          {dialog === "guide" && <Guide onClose={closeDialog} />}
-        </Suspense>
-        {dialog === "new" && (
-          <Modal
-            title="How would you like to start?"
-            eyebrow="NEW PROJECT"
-            wide
-            onClose={closeDialog}
+          <Suspense
+            fallback={
+              <div className="dialog-loading" role="status">
+                <LoaderCircle className="spin" size={18} />
+                Opening…
+              </div>
+            }
           >
-            <p className="modal-intro">
-              Create a separate project. Your current work stays saved.
-            </p>
-            <StartChoices {...actions} />
-          </Modal>
-        )}
-        {dialog === "recovery" && (
-          <Modal
-            title="Protect your saved work."
-            eyebrow="WORKSPACE RECOVERY"
-            onClose={closeDialog}
-          >
-            <p className="modal-intro">
-              The original data in this browser has been left untouched. You can
-              download it for recovery, or import a previously saved Meridian
-              project.
-            </p>
-            <div className="recovery-actions">
-              <button className="button secondary" onClick={backupWorkspace}>
-                Download original browser data
-              </button>
-              <button className="button secondary" onClick={importClick}>
-                Import a saved project
-              </button>
-            </div>
-            <p className="muted-note">
-              If you choose to use the current workspace, it will replace the
-              unreadable browser data. Download the original first if you need
-              it.
-            </p>
-            <div className="dialog-actions">
-              <button className="button quiet" onClick={closeDialog}>
-                Keep original data
-              </button>
-              <button
-                className="button primary"
-                onClick={() => {
-                  workspace.resume();
-                  closeDialog();
-                }}
-              >
-                Use current workspace
-              </button>
-            </div>
-          </Modal>
-        )}
-        {importing && (
-          <div className="import-progress" role="status">
-            <LoaderCircle className="spin" size={17} />
-            Importing your file…
-          </div>
-        )}
-        {notice && (
-          <div
-            className={`toast ${notice.tone === "error" ? "toast-error" : ""}`}
-            role={notice.tone === "error" ? "alert" : "status"}
-          >
-            {notice.tone === "error" ? (
-              <CircleAlert size={17} />
-            ) : (
-              <Check size={17} />
+            {dialog === "examples" && (
+              <ExampleGallery onChoose={createProject} onClose={closeDialog} />
             )}
-            <span>{notice.message}</span>
-            {notice.action && (
-              <button className="toast-action" onClick={notice.action.run}>
-                {notice.action.label}
-              </button>
+            {dialog === "projects" && (
+              <ProjectManager
+                documents={workspace.documents}
+                activeId={workspace.activeId}
+                onOpen={open}
+                onNew={showNew}
+                onImport={importClick}
+                onDuplicate={duplicate}
+                onDownload={downloadProject}
+                onRemove={remove}
+                onClose={closeDialog}
+              />
             )}
-            <button
-              className="icon-button"
-              aria-label="Dismiss notification"
-              onClick={() => setNotice(null)}
+            {dialog === "guide" && <Guide onClose={closeDialog} />}
+          </Suspense>
+          {dialog === "new" && (
+            <Modal
+              title="How would you like to start?"
+              eyebrow="NEW PROJECT"
+              wide
+              onClose={closeDialog}
             >
-              <X size={14} />
-            </button>
-          </div>
-        )}
-      </div>
-    </WorkspaceBoundary>
+              <p className="modal-intro">
+                Create a separate project. Your current work stays saved.
+              </p>
+              <StartChoices {...actions} />
+            </Modal>
+          )}
+          {dialog === "recovery" && (
+            <Modal
+              title="Protect your saved work."
+              eyebrow="WORKSPACE RECOVERY"
+              onClose={closeDialog}
+            >
+              <p className="modal-intro">
+                The original data in this browser has been left untouched. You
+                can download it for recovery, or import a previously saved
+                Meridian project.
+              </p>
+              <div className="recovery-actions">
+                <button className="button secondary" onClick={backupWorkspace}>
+                  Download original browser data
+                </button>
+                <button className="button secondary" onClick={importClick}>
+                  Import a saved project
+                </button>
+              </div>
+              <p className="muted-note">
+                If you choose to use the current workspace, it will replace the
+                unreadable browser data. Download the original first if you need
+                it.
+              </p>
+              <div className="dialog-actions">
+                <button className="button quiet" onClick={closeDialog}>
+                  Keep original data
+                </button>
+                <button
+                  className="button primary"
+                  onClick={() => {
+                    workspace.resume();
+                    closeDialog();
+                  }}
+                >
+                  Use current workspace
+                </button>
+              </div>
+            </Modal>
+          )}
+          {importing && (
+            <div className="import-progress" role="status">
+              <LoaderCircle className="spin" size={17} />
+              Importing your file…
+            </div>
+          )}
+          {openModals === 0 && (
+            <NoticeMessage notice={notice} onDismiss={dismissNotice} />
+          )}
+        </div>
+      </WorkspaceBoundary>
+    </NoticeContext.Provider>
   );
 }

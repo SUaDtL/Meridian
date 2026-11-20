@@ -188,7 +188,6 @@ export function workspaceReducer(
       return state;
     patch = {
       settings: { ...current.settings, ...action.patch },
-      design: { ...current.design, preset: "custom" },
     };
     label = "Change appearance";
     group = `settings:${Object.keys(action.patch).sort().join(",")}`;

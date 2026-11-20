@@ -14,13 +14,26 @@ The preceding release, commit
 Every visit downloaded all diagram renderers, the code editor, application code,
 styles, and dependency notices in that HTML file.
 
-The integrated hosted build after the split measured 335,861 uncompressed
-bytes in its welcome dependency graph, including HTML, CSS, JavaScript, and the
-favicon. That is approximately 95.1% fewer initial bytes than the preceding
-single-file release. The earlier build with the same loading boundaries measured
-279,297 initial JavaScript bytes out of 5,990,927 JavaScript bytes in the complete
-site: approximately 4.7%. These are local build measurements, not browser timing
-claims; the release's exact values are recorded in its generated `build.json`.
+The [initial production CI measurement](https://github.com/SUaDtL/Meridian/actions/runs/44677231584)
+for PR head `db45fbe06c18070b2e92d1d48a573ab6417c3409` measured 335,861
+uncompressed bytes in the welcome dependency graph, including HTML, CSS,
+JavaScript, and the favicon. That is 95.09% fewer initial bytes than the preceding
+single-file release. The complete split site contained 106 verified files and
+6,845,005 bytes; splitting defers work rather than claiming to remove every
+diagram capability from the application.
+
+The browser actually loaded three JavaScript files whose published uncompressed
+sizes totaled **281,368 bytes**, out of **5,994,358 JavaScript bytes** in the full
+site: **4.69%**. The welcome page initialized neither Mermaid layout nor the code
+editor. The browser's requested asset paths were matched to the verified build
+inventory; these numbers describe uncompressed asset content, not compressed
+network transfer size, elapsed loading time, or end-user frame rate.
+
+A subsequent local build with notification refinements measured 336,880 initial
+bytes, retaining approximately the same 95.1% reduction. The release's exact
+values are recorded in its generated `build.json`; measurements in this document
+identify their build rather than presenting a development snapshot as final
+deployed bytes.
 
 The hosted build and the portable build serve different purposes:
 
@@ -113,6 +126,41 @@ Each performance test attaches its counters or payload inventory to the browser
 report. The existing six-theme and ten-example comparisons still compare the
 production artifact with the immutable published reference in the same browser.
 
+### Observed production-browser work
+
+All four performance tests and both visual comparison suites passed in the
+initial CI measurement above. Its attached `render-work-counts` and
+`storyboard-work-counts` record the following work. Counts in the last three
+columns are additional work caused by that action, not cumulative totals.
+
+| Browser action | New Mermaid layouts | New decoration passes | New SVG parses |
+| --- | ---: | ---: | ---: |
+| Initial example render | 1 | Included in the layout pass | 2 |
+| Edit title and subtitle on the stage | 0 | 0 | 1 |
+| Change frame ratio | 0 | 0 | 1 |
+| Change connector effect from Flow to Pulse | 0 | 1 | 2 |
+| Return from Pulse to the cached Flow result | 0 | 0 | 1 |
+| Edit storyboard scene metadata and play/pause | 0 | 0 | 0 |
+
+Heading and framing changes still prepare a new frame. Motion changes still
+apply decoration and prepare that frame. The evidence demonstrates that those
+actions avoid expensive Mermaid layout; it does not describe them as doing no
+work. Storyboard editing and playback kept the exact same diagram DOM element,
+with cumulative counts unchanged at one layout, zero separate decoration passes,
+and two SVG parses. The same browser test verified that presentation restored a
+manually panned editing camera.
+
+The offline application test opened `standalone/Meridian.html` through a `file:`
+URL and rendered an example with all HTTP requests blocked. All six theme
+comparisons and all ten example comparisons stayed within the existing 0.2%
+changed-pixel limit against the archived reference, using the same browser and
+fonts for each pair.
+
+These are specific passed checks, not an assertion that the initial workflow was
+ready to release: that run passed 25 of 29 browser tests, with four design and
+storyboard functional checks requiring follow-up. The full workflow must be green before
+merging and deploying.
+
 Run the gates with:
 
 ```sh
@@ -126,9 +174,9 @@ npm run test:browser
 ```
 
 Local unit, hosted-build, portable-build, and static integrity gates passed during
-implementation. This managed workspace cannot launch Chromium: it fails before
-page creation with `socket() failed: Operation not permitted` in Chromium's
-process singleton. Browser assertions, pixel comparisons, and their attached
-work counters must therefore pass in the GitHub workflow before release. CI
-installs the browser pinned by Playwright; it deploys the exact verified `site/`
-artifact without rebuilding it.
+implementation. The measured CI run also passed all 81 unit tests. This managed
+workspace cannot launch Chromium: it fails before page creation with
+`socket() failed: Operation not permitted` in Chromium's process singleton, so
+the browser measurements above came from GitHub CI. CI installs the browser
+pinned by Playwright and deploys the exact verified `site/` artifact without
+rebuilding it after the complete workflow passes.

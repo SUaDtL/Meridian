@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyDesignPreset, colorToHex, createDesign, designRenderSource, DESIGN_PRESETS, edgeIdentities, patchElementStyle, suggestedLayout, suggestedNodeFills, validateDesign, type FlowModel } from './design';
+import { applyDesignPreset, colorToHex, createDesign, designRenderSource, DESIGN_PRESETS, edgeIdentities, matchesDesignPreset, patchElementStyle, suggestedLayout, suggestedNodeFills, validateDesign, type FlowModel } from './design';
 import { DEFAULT_SETTINGS, THEMES } from './themes';
 import type { RenderElement } from '../types/design';
 
@@ -28,6 +28,16 @@ describe('persistent design model', () => {
   it('preserves heading visibility, signature, and chosen playback speed when applying a preset', () => {
     const result = applyDesignPreset({ design: createDesign(), settings: { ...DEFAULT_SETTINGS, showTitle: false, showBrand: true, speed: 2.5 } }, 'minimal');
     expect(result.settings).toMatchObject({ showTitle: false, showBrand: true, speed: 2.5, theme: 'porcelain', shadow: false });
+  });
+  it('marks a retained base preset as modified only when one of its controlled settings differs', () => {
+    const { settings, design } = applyDesignPreset({ design: createDesign() }, 'infrastructure');
+    expect(matchesDesignPreset(settings, design.preset)).toBe(true);
+    expect(matchesDesignPreset({ ...settings, frame: '16:9' }, design.preset)).toBe(false);
+    expect(matchesDesignPreset({ ...settings, motion: 'none' }, design.preset)).toBe(false);
+    expect(matchesDesignPreset({ ...settings, theme: 'porcelain' }, design.preset)).toBe(false);
+    expect(matchesDesignPreset({ ...settings, showTitle: false, showBrand: true, speed: 2 }, design.preset)).toBe(true);
+    expect(design.preset).toBe('infrastructure');
+    expect(matchesDesignPreset(settings, 'custom')).toBe(false);
   });
   it('resets one property independently and removes the final empty style entry', () => {
     const original = createDesign();

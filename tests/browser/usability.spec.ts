@@ -19,12 +19,10 @@ test("welcome offers explicit choices and scratch starts with no established flo
   expect(
     await page.evaluate(() => localStorage.getItem("meridian:v2")),
   ).toBeNull();
-  await test
-    .info()
-    .attach("welcome-desktop", {
-      body: await page.screenshot(),
-      contentType: "image/png",
-    });
+  await test.info().attach("welcome-desktop", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
   await page
     .getByRole("button", { name: "Start from scratch", exact: true })
     .click();
@@ -108,12 +106,10 @@ test("canvas heading edits are keyboard accessible, reversible, and preserved in
   await expect(
     page.getByRole("button", { name: "Edit heading", exact: true }),
   ).toBeFocused();
-  await test
-    .info()
-    .attach("studio-desktop", {
-      body: await page.screenshot(),
-      contentType: "image/png",
-    });
+  await test.info().attach("studio-desktop", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
   await expect(page.locator(".saved-state")).toHaveText("Saved locally");
   await page.reload();
   await continueProject(page);
@@ -147,6 +143,21 @@ test("new project choices preserve existing work and deleting the final project 
     .getByRole("button", { name: "Remove project", exact: true })
     .click();
   await expect(page.locator(".project-row")).toHaveCount(1);
+  await dialog.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your canvas is ready." }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Open projects", exact: true })
+    .click();
+  await expect(page.locator(".project-row")).toHaveCount(2);
+  await dialog
+    .getByRole("button", { name: "Delete Untitled diagram", exact: true })
+    .click();
+  await dialog
+    .getByRole("button", { name: "Remove project", exact: true })
+    .click();
+  await expect(page.locator(".project-row")).toHaveCount(1);
   await dialog
     .getByRole("button", { name: "Delete Edge to cloud", exact: true })
     .click();
@@ -173,12 +184,10 @@ test("new project choices preserve existing work and deleting the final project 
       exact: true,
     }),
   ).toBeVisible();
-  await test
-    .info()
-    .attach("welcome-returning-project", {
-      body: await page.screenshot(),
-      contentType: "image/png",
-    });
+  await test.info().attach("welcome-returning-project", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
 });
 
 test("mobile welcome, heading dialog, and inactive panel focus targets fit the viewport", async ({
@@ -187,24 +196,20 @@ test("mobile welcome, heading dialog, and inactive panel focus targets fit the v
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
-  await test
-    .info()
-    .attach("welcome-mobile", {
-      body: await page.screenshot(),
-      contentType: "image/png",
-    });
+  await test.info().attach("welcome-mobile", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
   await openExample(page);
   await page.getByRole("button", { name: "Edit heading", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page
     .getByRole("textbox", { name: "Title", exact: true })
     .fill("Mobile review");
-  await test
-    .info()
-    .attach("heading-mobile", {
-      body: await page.screenshot(),
-      contentType: "image/png",
-    });
+  await test.info().attach("heading-mobile", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
   await page
     .getByRole("button", { name: "Apply heading", exact: true })
     .click();
@@ -214,12 +219,10 @@ test("mobile welcome, heading dialog, and inactive panel focus targets fit the v
   await page.getByRole("button", { name: "Canvas", exact: true }).click();
   await expect(page.locator(".canvas-panel")).toBeVisible();
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
-  await test
-    .info()
-    .attach("studio-mobile", {
-      body: await page.screenshot(),
-      contentType: "image/png",
-    });
+  await test.info().attach("studio-mobile", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
 });
 
 test("corrupt storage stays untouched while a new in-memory project can be exported", async ({

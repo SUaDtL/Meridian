@@ -177,6 +177,10 @@ function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, 
 
   useEffect(() => {
     const el = drawing.current;
+    // Exports are atomic images; the live stage contains editable headings and
+    // selectable nodes. A named group keeps those controls in the accessibility
+    // tree without changing the serialized export or its visual appearance.
+    el?.querySelector('[data-meridian-export]')?.setAttribute('role', 'group');
     selectionTargets.current = el ? Array.from(el.querySelectorAll<SVGElement>('[data-element-key], [data-element-owner]'), node => ({
       node,
       key: node.getAttribute('data-element-key') || node.getAttribute('data-element-owner') || '',

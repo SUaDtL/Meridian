@@ -28,8 +28,8 @@ async function importProject(page: Page, doc: StudioDocument) {
   await expect.poll(() => page.evaluate(key => {
     const workspace = JSON.parse(localStorage.getItem(key) || '{}');
     const active = workspace.documents?.find((item: { id: string }) => item.id === workspace.activeId);
-    return JSON.stringify([active?.title, active?.source, active?.storyboard ?? null]);
-  }, STORAGE_KEY)).toBe(JSON.stringify([doc.title, doc.source, doc.storyboard ?? null]));
+    return { title: active?.title, source: active?.source, storyboard: active?.storyboard ?? null };
+  }, STORAGE_KEY)).toEqual({ title: doc.title, source: doc.source, storyboard: doc.storyboard ?? null });
   await ready(page);
   await expect(page.locator('.saved-state')).toContainText('Saved locally');
 }

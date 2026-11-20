@@ -36,6 +36,12 @@ export function applyDesignPreset(doc: Pick<StudioDocument, 'design'> & Partial<
   return { settings: { ...DEFAULT_SETTINGS, ...doc.settings, ...preset?.settings }, design: { preset: preset?.id ?? 'custom', elements: { ...doc.design?.elements } } };
 }
 
+/** The selected base can keep renderer behavior while individual settings change. */
+export function matchesDesignPreset(settings: StudioSettings, id: DesignPresetId): boolean {
+  const preset = DESIGN_PRESETS.find(item => item.id === id);
+  return Boolean(preset && Object.entries(preset.settings).every(([key, value]) => settings[key as keyof StudioSettings] === value));
+}
+
 /** Clearing one override restores inheritance without leaving empty sidecars. */
 export function patchElementStyle(design: DesignState, key: string, values: Partial<ElementStyle>): DesignState {
   const previous = design.elements[key] ?? {};
@@ -333,7 +339,8 @@ export function decorateDesign(svg: SVGSVGElement, renderId: string, nodes: Rend
       add(target, { key, kind: 'edge', sourceId: edgeId, label: labelText ? `${sourceLabel} → ${targetLabel} · ${labelText}` : `${sourceLabel} → ${targetLabel}`, capabilities, from: `${groupIds.has(edge.start) ? 'group' : 'node'}:${edge.start}`, to: `${groupIds.has(edge.end) ? 'group' : 'node'}:${edge.end}` });
       // Generous transparent hit area makes thin connectors operable by touch.
       const hit = target.cloneNode(false) as SVGPathElement;
-      hit.removeAttribute('id'); hit.removeAttribute('data-element-key'); hit.removeAttribute('data-node-key');
+      // This is an interaction aid owned by an edge, not another semantic edge.
+      for (const attribute of ['id', 'data-element-key', 'data-element-kind', 'data-node-key', 'data-id', 'data-et', 'data-edge', 'data-look']) hit.removeAttribute(attribute);
       hit.removeAttribute('marker-start'); hit.removeAttribute('marker-end'); hit.removeAttribute('tabindex'); hit.removeAttribute('role'); hit.removeAttribute('aria-label');
       hit.setAttribute('data-element-owner', key); hit.setAttribute('data-edge-hit', 'true'); hit.setAttribute('aria-hidden', 'true'); hit.setAttribute('class', 'meridian-edge-hit');
       hit.style.cssText = 'fill:none!important;stroke:transparent!important;stroke-width:14px!important;pointer-events:stroke;cursor:pointer;filter:none!important;';
