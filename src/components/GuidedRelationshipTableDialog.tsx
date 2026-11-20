@@ -28,11 +28,12 @@ export type RelationshipTableDraft = {
 };
 type Review = { document: Awaited<ReturnType<typeof prepareGuidedFlowchart>>["document"]; url: string; graph: RelationshipGraph };
 
-export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreated, onProcess, onClose }: {
+export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreated, onProcess, onSystems, onClose }: {
   draft: RelationshipTableDraft;
   onDraft: Dispatch<SetStateAction<RelationshipTableDraft>>;
   onCreated: (id: string, draftRetained?: boolean) => void;
   onProcess: () => void;
+  onSystems: () => void;
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState<"file" | "read" | "checkpoint" | "preview" | "save" | "discard">();
@@ -175,6 +176,7 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
     <Modal title="Systems and relationships" wide initialFocus="[name='table-title']" busy={busy === "checkpoint" || busy === "save" || busy === "discard"} onClose={onClose}>
       {inputVisible && <div className="heading-form">
         <button type="button" className="button quiet" disabled={!!busy} onClick={onProcess}>Process steps</button>
+        <button type="button" className="button secondary" disabled={!!busy} onClick={onSystems}>Enter systems manually</button>
         {!!savedDrafts.length && <ul className="project-list">{savedDrafts.map(saved => (
           <li className="project-row" key={saved.id}>
             <button type="button" className="project-open" disabled={!!busy} onClick={() => resume(saved)}>

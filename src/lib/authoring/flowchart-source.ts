@@ -9,6 +9,11 @@ export const authoringLimits = {
 
 export type Shape = NonNullable<ElementStyle['shape']>;
 type Direction = 'TB' | 'BT' | 'LR' | 'RL';
+export type ConnectionDirection = 'forward' | 'both' | 'none';
+const connectionNotation: Record<ConnectionDirection, string> = { forward: '-->', both: '<-->', none: '---' };
+export const flowchartEngineConnections: Record<ConnectionDirection, string> = {
+  forward: 'arrow_point', both: 'double_arrow_point', none: 'arrow_open',
+};
 
 export const shapeDelimiters: Record<Shape, readonly [string, string]> = {
   rect: ['[', ']'],
@@ -32,15 +37,18 @@ export function writeNodeDeclaration(id: string, label: string, shape: Shape): s
   return `${id}${opening}${encodeMermaidLabel(label)}${closing}`;
 }
 
-export function writeEdgeDeclaration(id: string, from: string, to: string, label?: string): string {
+export function writeEdgeDeclaration(
+  id: string, from: string, to: string, label?: string, direction: ConnectionDirection = 'forward',
+): string {
+  if (!Object.hasOwn(connectionNotation, direction)) throw new Error('Choose a supported connection direction.');
   const labelToken = label ? `|${encodeMermaidLabel(label)}|` : '';
-  return `${from} ${id}@-->${labelToken} ${to}`;
+  return `${from} ${id}@${connectionNotation[direction]}${labelToken} ${to}`;
 }
 
 export interface FlowchartInput {
   direction: Direction;
   nodes: readonly { key: string; label: string; shape?: Shape }[];
-  edges: readonly { from: string; to: string; label?: string }[];
+  edges: readonly { from: string; to: string; label?: string; direction?: ConnectionDirection }[];
 }
 
 export interface GeneratedFlowchart {
@@ -88,7 +96,7 @@ export function writeFlowchart(input: FlowchartInput): GeneratedFlowchart {
     const to = nodeIds.get(edge.to);
     if (!from || !to) throw new Error('Choose two existing nodes for each connection.');
     const id = `m_e${edgeIds.length + 1}`;
-    sourceLines.push('  ' + writeEdgeDeclaration(id, from, to, edge.label));
+    sourceLines.push('  ' + writeEdgeDeclaration(id, from, to, edge.label, edge.direction));
     edgeIds.push(id);
   }
   const source = sourceLines.join('\n') + '\n';
