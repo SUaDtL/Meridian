@@ -160,7 +160,7 @@ function appendStatements(source: string, ...statements: string[]): SourcePatch 
   return { from: source.length, to: source.length, expectedText: '', replacement: separator + statements.map(statement => '  ' + statement + newline).join('') };
 }
 
-function allocateSourceId(prefix: string, nodes: ReadonlyMap<string, RecordSpan>, edges: ReadonlySet<string>): string {
+function allocateSourceId(prefix: string, nodes: ReadonlyMap<string, unknown>, edges: ReadonlySet<string>): string {
   let ordinal = 1;
   while (nodes.has(prefix + ordinal) || edges.has(prefix + ordinal)) ordinal++;
   return prefix + ordinal;
@@ -198,6 +198,48 @@ export function planAddNext(source: string, anchor: string, label: string, shape
   const to = incoming ? anchor : sourceId;
   return { sourceId, edgeId, from, to, patches: [appendStatements(source,
     writeNodeDeclaration(sourceId, label, shape), writeEdgeDeclaration(edgeId, from, to, edgeLabel))] };
+}
+
+export type FragmentEndpoint = { key: string } | { current: string };
+export type FlowchartFragment = {
+  nodes: readonly { key: string; label: string; shape: Shape }[];
+  edges: readonly { key: string; from: FragmentEndpoint; to: FragmentEndpoint; label: string }[];
+};
+
+/** Append verified fragment declarations while retaining all authored bytes and indices. */
+export function planFlowchartFragment(source: string, fragment: FlowchartFragment) {
+  const { nodes, edges, edgeIds } = readSubset(source);
+  if (!fragment.nodes.length || nodes.size + fragment.nodes.length > authoringLimits.graphNodes
+      || edges.length + fragment.edges.length > authoringLimits.graphEdges) {
+    throw new Error('The combined project exceeds the supported node or connection limit.');
+  }
+  const allocated = new Map<string, string>();
+  const statements: string[] = [];
+  const insertedNodes = fragment.nodes.map(item => {
+    if (!item.key || allocated.has(item.key)) throw new Error('Each inserted node needs a distinct fragment key.');
+    const sourceId = allocateSourceId('m_n', nodes, edgeIds);
+    allocated.set(item.key, sourceId);
+    edgeIds.add(sourceId);
+    statements.push(writeNodeDeclaration(sourceId, item.label, item.shape));
+    return { ...item, sourceId };
+  });
+  const endpoint = (item: FragmentEndpoint) => {
+    const found = 'key' in item ? allocated.get(item.key) : nodes.has(item.current) ? item.current : undefined;
+    if (!found) throw new Error('Choose a current node for every attachment.');
+    return found;
+  };
+  const keys = new Set<string>();
+  const insertedEdges = fragment.edges.map(item => {
+    if (!item.key || keys.has(item.key)) throw new Error('Each inserted connection needs a distinct fragment key.');
+    keys.add(item.key);
+    const sourceId = allocateSourceId('m_e', nodes, edgeIds);
+    edgeIds.add(sourceId);
+    const from = endpoint(item.from);
+    const to = endpoint(item.to);
+    statements.push(writeEdgeDeclaration(sourceId, from, to, item.label));
+    return { ...item, sourceId, from, to };
+  });
+  return { nodes: insertedNodes, edges: insertedEdges, patches: [appendStatements(source, ...statements)] };
 }
 
 /** Wrap a consecutive set of declarations without moving the existing source bytes. */

@@ -3,8 +3,10 @@ import { readPendingAssist } from '../persistence/pending-assist';
 import { readWorkspaceProject, writeWorkspaceProject, type SavedAnchor } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
 import { authorizeAssistRename, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
-import { canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
+import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } from './bulk-text';
+import type { ComponentDefinition } from './component-definition';
+import type { PortAssignment } from './component-insertion';
 import { buildContrastCandidate, measureTargetContrast } from './contrast-fix';
 import { buildDesignRecipeCandidate, buildScopedDesignRecipe, readDesignRecipe, verifyScopedDesign, type DesignRecipeId, type DesignScope } from './design-recipes';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
@@ -48,6 +50,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     writeWorkspaceProject(db, document, anchor), notify);
   const past: (typeof current)[] = [];
   const future: (typeof current)[] = [];
+  const insertions = new WeakMap<ReadyProposal, {
+    base: MermaidProjectV3; next: MermaidProjectV3; definition: { id: string; version: string; hash: string };
+  }>();
   const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId?: string; impact?: ElementRemovalImpact }>();
   const suggestions = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3; next: MermaidProjectV3; request: PendingAssistRequest;
@@ -115,6 +120,43 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     if (change.base !== current.document) return { status: 'stale' } as const;
     const status = commit(change.next);
     return { status, elementId: status === 'applied' || status === 'unchanged' ? change.elementId : undefined };
+  }
+
+  async function prepareInsertion(
+    definition: ComponentDefinition, values: Readonly<Record<string, string | number>>,
+    assignments: ReadonlyMap<string, PortAssignment>, signal?: AbortSignal,
+  ) {
+    if (closed) throw new Error('The project is closed.');
+    const base = current.document;
+    const snapshot = structuredClone(definition);
+    const input = structuredClone(values);
+    const ports = structuredClone(assignments);
+    const { prepareComponentInsertion } = await import('./component-insertion');
+    const candidate = await prepareComponentInsertion(base, snapshot, input, ports, signal);
+    const rendered = await renderMermaidProject(candidate.document, signal);
+    signal?.throwIfAborted();
+    if (closed || current.document !== base || !rendered.targetTable) {
+      throw new Error('The project changed or the inserted component could not be verified.');
+    }
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    const next = freezeSnapshot(candidate.document);
+    insertions.set(proposal, { base, next, definition: { id: snapshot.id, version: snapshot.version, hash: candidate.definitionHash } });
+    return { ...candidate, document: next, rendered: rendered.result, proposal };
+  }
+
+  async function applyInsertion(proposal: ReadyProposal, signal?: AbortSignal) {
+    const change = insertions.get(proposal);
+    if (closed || !change || change.base !== current.document) return 'stale';
+    const [{ readComponentLibrary }, { curatedComponents }] = await Promise.all([
+      import('../persistence/component-library'), import('./curated-components'),
+    ]);
+    const definitions = [...curatedComponents, ...await readComponentLibrary(db)];
+    const currentDefinition = definitions.find(item => item.id === change.definition.id && item.version === change.definition.version);
+    if (!currentDefinition || await canonicalDigest('meridian-component/v1', [currentDefinition]) !== change.definition.hash) {
+      throw new Error('The saved definition changed. Select the current definition and preview again.');
+    }
+    signal?.throwIfAborted();
+    return !closed && change.base === current.document ? commit(change.next) : 'stale';
   }
 
   function detachComponentInstance(instanceId: string, expected: MermaidProjectV3) {
@@ -427,6 +469,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     readStructurePreview,
     readStructureImpact,
     applyStructure,
+    prepareInsertion,
+    applyInsertion,
     prepareAssistSuggestion,
     applyAssistSuggestion,
     detachComponentInstance,

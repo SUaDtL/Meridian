@@ -26,6 +26,7 @@ import { downloadText, safeFilename, serializeProject } from "../lib/storage";
 import type { ProposalOutcome } from "../lib/workspace";
 
 const SaveComponentDialog = lazy(() => import("./SaveComponentDialog"));
+const ComponentProjectDialog = lazy(() => import("./ComponentProjectDialog"));
 const AssistExchangeDialog = lazy(() => import("./AssistExchangeDialog"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
@@ -47,6 +48,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [editFlowchart, setEditFlowchart] = useState<NativeFlowchartEdit["op"]>();
   const [assistOpen, setAssistOpen] = useState(false);
   const [editSource, setEditSource] = useState(false);
+  const [insertOpen, setInsertOpen] = useState(false);
   const [detachOpen, setDetachOpen] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<SourceDraft>();
   const [commandsOpen, setCommandsOpen] = useState(false);
@@ -225,7 +227,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
 
   useEffect(() => {
     if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen
-      || editHeading || editFlowchart || editSource || detachOpen || assistOpen || bulkTextHidden !== undefined || componentHidden !== undefined) return;
+      || editHeading || editFlowchart || editSource || detachOpen || insertOpen || assistOpen
+      || bulkTextHidden !== undefined || componentHidden !== undefined) return;
     const openCommands = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
         || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -235,7 +238,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
   }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading,
-    editFlowchart, editSource, detachOpen, assistOpen, bulkTextHidden, componentHidden]);
+    editFlowchart, editSource, detachOpen, insertOpen, assistOpen, bulkTextHidden, componentHidden]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
@@ -286,6 +289,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "show-source", title: "Show Mermaid source", category: "Project", synonyms: ["open source", "code"], run: showSource },
     { id: "edit-source", title: "Edit Mermaid source", category: "Project", synonyms: ["update source", "code"],
       unavailable: busy ? "Wait for the current action to finish." : targetTable ? undefined : "Open a verified flowchart before editing its source.", run: () => setEditSource(true) },
+    { id: "insert-component", title: "Insert component", category: "Diagram", synonyms: ["add reusable pattern", "component library"],
+      unavailable: editingUnavailable, run: () => setInsertOpen(true) },
     { id: "detach-component", title: "Detach component", category: "Diagram", synonyms: ["component instance"],
       unavailable: busy ? "Wait for the current action to finish." : project?.componentInstances.length ? undefined : "This project has no component instances.",
       run: () => setDetachOpen(true) },
@@ -466,6 +471,13 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setDetachOpen(false);
           setProject(editor.current!.snapshot());
         }} />}
+      {insertOpen && editor.current && <Suspense>
+        <ComponentProjectDialog onBack={() => setInsertOpen(false)} onClose={() => setInsertOpen(false)}
+          insertion={{ editor: editor.current, nodes, onApplied: () => {
+            setInsertOpen(false);
+            setProject(editor.current!.snapshot());
+          } }} />
+      </Suspense>}
       {assistOpen && project && targetTable && edgeLabels && flatFlowchart && connection.current && editor.current && <Suspense>
         <AssistExchangeDialog db={connection.current} editor={editor.current} project={project} table={targetTable} edgeLabels={edgeLabels}
           onClose={() => setAssistOpen(false)} onApplied={() => {
