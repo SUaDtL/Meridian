@@ -2,6 +2,8 @@ import mermaid, { type MermaidConfig } from 'mermaid';
 import DOMPurify from 'dompurify';
 import type { RenderNode, RenderResult, StudioSettings } from '../types';
 import { getTheme } from './themes';
+import type { DesignState } from '../types/design';
+import { createDesign, decorateDesign, designRenderSource, measureDesignElements, type FlowModel } from './design';
 
 const NS = 'http://www.w3.org/2000/svg';
 const MAX_SOURCE = 100_000;
@@ -94,7 +96,7 @@ function safeSvg(raw: string): SVGSVGElement {
   return svg;
 }
 
-async function performRender(source: string, settings: StudioSettings, nodeAccents: Record<string, string>): Promise<RenderResult> {
+async function performRender(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState): Promise<RenderResult> {
   const { text, warnings } = prepareSource(source);
   const theme = getTheme(settings.theme);
   const id = `meridian-${++serial}`;
@@ -111,6 +113,7 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
     theme: 'base',
     look: 'classic',
     layout: settings.layout,
+    elk: { preset: 'default', straightenEdges: true, lineHops: 'gap', mergeEdges: false },
     darkMode: theme.dark,
     fontFamily: font,
     deterministicIds: true,
@@ -191,7 +194,15 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
       mermaid.initialize({ ...config, layout: 'cose-bilkent' });
       warnings.push('Mind maps use their native radial layout. The ELK and Dagre controls apply to graph diagrams.');
     }
-    const rendered = await mermaid.render(id, text, host);
+    let model: FlowModel | undefined;
+    let renderText = text;
+    if (mermaid.detectType(text).startsWith('flowchart')) {
+      const parsed = await mermaid.mermaidAPI.getDiagramFromText(text);
+      const database = parsed.db as unknown as { getVertices: () => FlowModel['vertices']; getEdges: () => FlowModel['edges']; getSubGraphs: () => FlowModel['groups'] };
+      model = { vertices: database.getVertices(), edges: database.getEdges(), groups: database.getSubGraphs() };
+      renderText = designRenderSource(text, design, model);
+    }
+    const rendered = await mermaid.render(id, renderText, host);
     const svg = safeSvg(rendered.svg);
     if (/<foreignObject\b/i.test(rendered.svg)) warnings.push('This diagram contains HTML-only content that is omitted for portable SVG export. Text labels and built-in shapes work best.');
     const doc = svg.ownerDocument;
@@ -249,7 +260,7 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
       for (const shape of shapes) {
         if (shape.getAttribute('fill') === 'none' || shape.style.fill === 'none') continue;
         if (!shape.style.stroke) shape.style.stroke = mix(theme.border, theme.accent, 0.18);
-        if (rendered.diagramType.startsWith('flowchart') && shape.localName === 'rect' && (!shape.hasAttribute('rx') || shape.getAttribute('rx') === '0')) {
+        if (rendered.diagramType.startsWith('flowchart') && design.elements[`node:${key}`]?.shape !== 'rect' && shape.localName === 'rect' && (!shape.hasAttribute('rx') || shape.getAttribute('rx') === '0')) {
           shape.setAttribute('rx', '8'); shape.setAttribute('ry', '8');
         }
         if (accent) {
@@ -279,6 +290,7 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
           d: edge.getAttribute('d')!,
           class: 'meridian-motion',
           'data-studio-motion': 'true',
+          'data-edge-native-id': edge.getAttribute('data-id') ?? edge.id,
           'aria-hidden': 'true',
           fill: 'none',
           stroke: theme.accent,
@@ -297,6 +309,7 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
       if (uniqueEdges.length === 0) warnings.push('Flow effects apply to path-based connectors. This diagram keeps its native layout and theme.');
       if (uniqueEdges.length > 150) warnings.push('Motion is limited to the first 150 connectors to keep the canvas responsive.');
     }
+    const elements = decorateDesign(svg, id, nodes, model, design, settings);
     const css = makeElement(doc, 'style');
     css.setAttribute('data-meridian-style', 'true');
     css.textContent = `
@@ -320,23 +333,25 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
       viewBox = [0, 0, w, h];
     }
     // Filters extend beyond shape geometry, so retain breathing room in export.
-    const bleed = settings.shadow || settings.glow ? 18 : 6;
+    const bleed = settings.shadow || settings.glow || Object.values(design.elements).some(style => style.shadow || style.glow || style.emphasis === 'highlight') ? 24 : 6;
     const width = viewBox[2] + bleed * 2;
     const height = viewBox[3] + bleed * 2;
     svg.setAttribute('viewBox', `${viewBox[0] - bleed} ${viewBox[1] - bleed} ${width} ${height}`);
     svg.setAttribute('width', String(width));
     svg.setAttribute('height', String(height));
+    host.replaceChildren(svg);
+    measureDesignElements(svg, elements);
     const otherEdges = svg.querySelectorAll('[data-et="message"], .relationshipLine, .messageLine0, .messageLine1').length;
-    return { svg: new XMLSerializer().serializeToString(svg), diagramType: rendered.diagramType, nodes, edgeCount: uniqueEdges.length || otherEdges, width, height, warnings };
+    return { svg: new XMLSerializer().serializeToString(svg), diagramType: rendered.diagramType, nodes, elements, edgeCount: uniqueEdges.length || otherEdges, width, height, warnings };
   } finally {
     host.remove();
   }
 }
 
-export function renderDiagram(source: string, settings: StudioSettings, nodeAccents: Record<string, string>): Promise<RenderResult> {
+export function renderDiagram(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState = createDesign()): Promise<RenderResult> {
   // Mermaid has a global configuration. Serializing the whole operation avoids
   // a later theme selection changing the config of an in-flight render.
-  const task = renderQueue.then(() => performRender(source, settings, nodeAccents));
+  const task = renderQueue.then(() => performRender(source, settings, nodeAccents, design));
   renderQueue = task.catch(() => undefined);
   return task;
 }

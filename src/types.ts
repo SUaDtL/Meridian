@@ -1,3 +1,6 @@
+import type { DesignState, RenderElement } from './types/design';
+import type { StoryboardState } from './types/storyboard';
+
 export type ThemeId = 'obsidian' | 'porcelain' | 'blueprint' | 'ember' | 'dusk' | 'moss';
 
 export interface DiagramTheme {
@@ -40,13 +43,15 @@ export interface StudioSettings {
 }
 
 export interface StudioDocument {
-  schema: 'meridian/v1';
+  schema: 'meridian/v2';
   id: string;
   title: string;
   subtitle: string;
   source: string;
   settings: StudioSettings;
   nodeAccents: Record<string, string>;
+  design: DesignState;
+  storyboard?: StoryboardState;
   updatedAt: string;
 }
 
@@ -60,6 +65,7 @@ export interface RenderResult {
   svg: string;
   diagramType: string;
   nodes: RenderNode[];
+  elements?: RenderElement[];
   edgeCount: number;
   width: number;
   height: number;

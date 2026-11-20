@@ -1,13 +1,15 @@
 import type { DiagramTemplate, StudioDocument, StudioSettings } from '../types';
 import { DEFAULT_SETTINGS } from './themes';
 import { TEMPLATES } from './templates';
+import { createDesign, validateDesign } from './design';
 
-const STORAGE_KEY = 'meridian:v1';
+export const STORAGE_KEY = 'meridian:v2';
+export const LEGACY_STORAGE_KEY = 'meridian:v1';
 const MAX_PROJECTS = 50;
 const MAX_SOURCE = 100_000;
 const MAX_WORKSPACE_BYTES = 8_000_000;
 const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-const DOCUMENT_KEYS = new Set(['schema', 'id', 'title', 'subtitle', 'source', 'settings', 'nodeAccents', 'updatedAt']);
+const DOCUMENT_KEYS = new Set(['schema', 'id', 'title', 'subtitle', 'source', 'settings', 'nodeAccents', 'design', 'updatedAt']);
 const SETTING_KEYS = new Set([
   'theme', 'layout', 'curve', 'spacing', 'finish', 'shadow', 'glow', 'motion',
   'speed', 'background', 'ambient', 'frame', 'font', 'edgeWidth', 'padding',
@@ -84,8 +86,8 @@ function validateSettings(value: unknown): StudioSettings {
 function validateDocument(value: unknown): StudioDocument {
   const doc = record(value, 'Project');
   checkKeys(doc, DOCUMENT_KEYS, 'Project');
-  if (doc.schema !== 'meridian/v1') {
-    throw new Error('Unsupported project format. Open a Meridian version 1 project JSON file.');
+  if (doc.schema !== 'meridian/v1' && doc.schema !== 'meridian/v2') {
+    throw new Error('Unsupported project format. Open a Meridian version 1 or 2 project JSON file.');
   }
   const id = string(doc.id, 'Project ID', 120, true);
   if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('Project ID contains unsupported characters.');
@@ -104,13 +106,14 @@ function validateDocument(value: unknown): StudioDocument {
     nodeAccents[key] = value;
   }
   return {
-    schema: 'meridian/v1',
+    schema: 'meridian/v2',
     id,
     title: string(doc.title, 'Project title', 120),
     subtitle: string(doc.subtitle, 'Project subtitle', 240),
     source: string(doc.source, 'Mermaid source', MAX_SOURCE),
     settings: validateSettings(doc.settings),
     nodeAccents,
+    design: doc.design === undefined && doc.schema === 'meridian/v1' ? createDesign() : validateDesign(doc.design),
     updatedAt,
   };
 }
@@ -123,13 +126,14 @@ function newId(): string {
 export function createDocument(template?: DiagramTemplate): StudioDocument {
   const selected = template ?? TEMPLATES[0];
   return {
-    schema: 'meridian/v1',
+    schema: 'meridian/v2',
     id: newId(),
     title: selected?.title ?? 'Untitled diagram',
     subtitle: selected?.subtitle ?? '',
     source: selected?.source ?? 'flowchart LR\n  A[An idea] --> B[Something worth showing]',
     settings: { ...DEFAULT_SETTINGS, ...(selected ? { theme: selected.theme } : {}) },
     nodeAccents: {},
+    design: createDesign(),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -147,12 +151,14 @@ export function parseProject(text: string): StudioDocument {
 
 export function loadWorkspace(): { documents: StudioDocument[]; activeId: string | null; warning?: string } {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    // Leave the old workspace untouched so the previous app can still open it.
+    // Once v2 has saved, it always takes precedence over the legacy copy.
+    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
     if (raw === null) return { documents: [], activeId: null };
     if (raw.length > MAX_WORKSPACE_BYTES) throw new Error('The stored workspace is larger than supported.');
     const workspace = record(JSON.parse(raw), 'Workspace');
     checkKeys(workspace, new Set(['version', 'documents', 'activeId']), 'Workspace');
-    if (workspace.version !== 1) throw new Error('This browser contains an unsupported workspace version.');
+    if (workspace.version !== 1 && workspace.version !== 2) throw new Error('This browser contains an unsupported workspace version.');
     if (!Array.isArray(workspace.documents) || workspace.documents.length > MAX_PROJECTS) {
       throw new Error('The stored project list is invalid.');
     }
@@ -183,7 +189,7 @@ export function saveWorkspace(documents: StudioDocument[], activeId: string): { 
     const checked = documents.map(validateDocument);
     if (new Set(checked.map(doc => doc.id)).size !== checked.length) throw new Error('Project IDs must be unique.');
     if (checked.length && !checked.some(doc => doc.id === activeId)) throw new Error('The active project does not exist.');
-    const serialized = JSON.stringify({ version: 1, documents: checked, activeId: checked.length ? activeId : null });
+    const serialized = JSON.stringify({ version: 2, documents: checked, activeId: checked.length ? activeId : null });
     if (serialized.length > MAX_WORKSPACE_BYTES) throw new Error('The workspace is too large for browser storage. Export projects before removing any.');
     localStorage.setItem(STORAGE_KEY, serialized);
     return { ok: true };

@@ -1,11 +1,18 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Check, ChevronDown, Layers, MousePointer2, Palette, RotateCcw, Sparkles, X } from 'lucide-react';
 import { getTheme, THEMES } from '../lib/themes';
-import type { StudioDocument, StudioSettings } from '../types';
+import type { RenderResult, StudioDocument, StudioSettings } from '../types';
+import type { DesignState, RenderElement } from '../types/design';
+import { applyDesignPreset, createDesign, DESIGN_PRESETS, suggestedLayout } from '../lib/design';
+import ElementInspector from './ElementInspector';
 import '../inspector.css';
 
 export interface InspectorProps {
   document: StudioDocument;
+  result?: RenderResult | null;
+  selectedElement?: RenderElement | null;
+  onDesign?: (design: DesignState) => void;
+  onSelectElement?: (key: string | null) => void;
   onSettings: (patch: Partial<StudioSettings>) => void;
   onDocument: (patch: Partial<Pick<StudioDocument, 'title' | 'subtitle'>>) => void;
   selectedNode: { key: string; label: string } | null;
@@ -80,8 +87,8 @@ function Range({ label, value, min, max, step, display, onChange }: {
   );
 }
 
-export function Inspector({ document, onSettings, onDocument, selectedNode, onAccent, onClearSelection, onReplay, reducedMotion }: InspectorProps) {
-  const [section, setSection] = useState<'look' | 'stage'>('look');
+export function Inspector({ document, result, selectedElement, onDesign, onSelectElement, onSettings, onDocument, selectedNode, onAccent, onClearSelection, onReplay, reducedMotion }: InspectorProps) {
+  const [section, setSection] = useState<'look' | 'stage' | 'element'>('look');
   const settings = document.settings;
   const theme = getTheme(settings.theme);
   const titleId = useId();
@@ -89,16 +96,24 @@ export function Inspector({ document, onSettings, onDocument, selectedNode, onAc
   const accentId = useId();
   const layoutId = useId();
   const selectedAccent = selectedNode ? document.nodeAccents[selectedNode.key] : undefined;
+  const design = document.design ?? createDesign();
+  const elements = result?.elements ?? [];
+  const preset = DESIGN_PRESETS.find(item => item.id === design.preset);
+  useEffect(() => {
+    if (selectedElement) setSection('element');
+    else setSection(current => current === 'element' ? 'look' : current);
+  }, [selectedElement?.key]);
 
   return (
     <div className="mi-inspector" role="group" aria-label="Diagram design">
       <div className="mi-tabs" role="group" aria-label="Design section">
+        {selectedElement && <button type="button" aria-pressed={section === 'element'} className={section === 'element' ? 'is-active' : ''} onClick={() => setSection('element')}><MousePointer2 size={15} aria-hidden="true" />Element</button>}
         <button type="button" aria-pressed={section === 'look'} className={section === 'look' ? 'is-active' : ''} onClick={() => setSection('look')}><Palette size={15} aria-hidden="true" />Look</button>
         <button type="button" aria-pressed={section === 'stage'} className={section === 'stage' ? 'is-active' : ''} onClick={() => setSection('stage')}><Layers size={15} aria-hidden="true" />Stage</button>
       </div>
 
       <div className="mi-inspector-scroll">
-        {selectedNode && (
+        {selectedNode && !selectedElement && (
           <section className="mi-node-card" aria-label="Selected node">
             <div className="mi-node-heading"><span><MousePointer2 size={13} aria-hidden="true" />Selected node</span><button type="button" className="mi-icon-button" aria-label="Clear node selection" onClick={onClearSelection}><X size={14} /></button></div>
             <strong className="mi-node-label">{selectedNode.label || selectedNode.key}</strong>
@@ -114,8 +129,14 @@ export function Inspector({ document, onSettings, onDocument, selectedNode, onAc
           </section>
         )}
 
-        {section === 'look' ? (
+        {section === 'element' && selectedElement ? <ElementInspector document={document} element={selectedElement} selectedNode={selectedNode} onDesign={value => onDesign?.(value)} onAccent={onAccent} onClear={onClearSelection}/> : section === 'look' ? (
           <>
+            <section className="mi-section mi-presets" aria-label="Design presets">
+              <div className="mi-section-heading"><h3>Design preset</h3><span className="mi-preset-status">{preset ? preset.name : 'Custom'}</span></div>
+              <div className="mi-preset-list">{DESIGN_PRESETS.map(item => <button key={item.id} type="button" className={`mi-preset${design.preset === item.id ? ' is-active' : ''}`} aria-pressed={design.preset === item.id} onClick={() => { const next = applyDesignPreset(document, item.id); onSettings(next.settings); onDesign?.(next.design); }}><span className="mi-preset-swatch" style={{ background: getTheme(item.settings.theme ?? 'obsidian').canvas, color: getTheme(item.settings.theme ?? 'obsidian').accent }} aria-hidden="true"><span/><i/><span/></span><span><strong>{item.name}</strong><small>{item.description}</small></span>{design.preset === item.id && <Check size={13}/>}</button>)}</div>
+              <p className="mi-note">Presets change the overall look. Individual element overrides stay in place.</p>
+            </section>
+            {elements.length > 0 && <section className="mi-section"><h3>Diagram elements</h3><div className="mi-field"><label className="mi-label" htmlFor="inspect-element">Inspect an element</label><select id="inspect-element" value={selectedElement?.key ?? ''} onChange={event => onSelectElement?.(event.target.value || null)}><option value="">Select on canvas or here</option>{(['node', 'edge', 'group'] as const).map(kind => <optgroup key={kind} label={`${kind[0].toUpperCase() + kind.slice(1)}s`}>{elements.filter(item => item.kind === kind).map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</optgroup>)}</select></div><button type="button" className="mi-auto-layout" onClick={() => { onSettings(suggestedLayout(elements)); onDesign?.({ ...design, preset: 'custom' }); }}><Sparkles size={14}/>Refine layout</button><p className="mi-note">Uses layered routing for groups or larger graphs, and more breathing room for smaller flows.</p></section>}
             <section className="mi-section mi-theme-section" aria-labelledby="mi-theme-title">
               <h3 id="mi-theme-title">Theme</h3>
               <div className="mi-theme-grid">
@@ -195,7 +216,7 @@ export function Inspector({ document, onSettings, onDocument, selectedNode, onAc
             </section>
           </>
         )}
-        <div className="mi-inspector-footer"><MousePointer2 size={12} aria-hidden="true" /><span>Select a supported node to change its accent.</span></div>
+        <div className="mi-inspector-footer"><MousePointer2 size={12} aria-hidden="true" /><span>Select a node, connector, or group to style it.</span></div>
       </div>
     </div>
   );

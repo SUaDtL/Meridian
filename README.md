@@ -14,6 +14,14 @@ This is the independent repository **SUaDtL/Meridian**. Its GitHub Pages workflo
 - Mobile Canvas, Source, and Style panels and reduced-motion support.
 - No backend, accounts, API keys, telemetry, runtime CDNs, or external runtime assets.
 
+## Design inspector
+
+Choose Executive, Infrastructure, Cyberpunk, Minimal, or Technical Blueprint for a coordinated starting point. Select a supported node, connector, or group on the canvas, or use the element selector, to edit its properties. Individual overrides remain in the project when applying another preset.
+
+Flowcharts expose node shapes, typography, fill/text/border colors, line patterns, arrowheads, shadows, glow, and emphasis. Shape and font overrides are applied to a temporary rendering copy before layout; the Mermaid text and downloaded `.mmd` remain unchanged. Dagre exposes per-connector curves and density; ELK uses its supported layered routing controls. Other diagram families retain their existing themes and expose only properties supported by their renderer.
+
+Projects now use `meridian/v2`. Version 1 files and the existing browser workspace migrate automatically. The previous browser storage entry is retained, while subsequent writes use a separate v2 entry. Download project JSON to keep source and all styling together.
+
 ## Development
 
 Use the Node version in `.nvmrc` and the committed lockfile:

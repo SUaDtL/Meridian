@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDocument, loadWorkspace, normalizeSource, parseProject, saveWorkspace } from './storage';
+import { createDocument, loadWorkspace, normalizeSource, parseProject, saveWorkspace, STORAGE_KEY, LEGACY_STORAGE_KEY } from './storage';
 import type { StudioDocument } from '../types';
-
-const STORAGE_KEY = 'meridian:v1';
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -69,7 +67,7 @@ describe('portable project files and local workspace', () => {
   });
 
   it.each([
-    ['a future schema', { schema: 'meridian/v2' }],
+    ['a future schema', { schema: 'meridian/v3' }],
     ['an unrelated file', { schema: 'other-app/v1' }],
     ['an unexpected version field', { version: 2 }],
   ])('rejects %s instead of silently coercing the document', (_label, patch) => {
@@ -166,6 +164,51 @@ describe('portable project files and local workspace', () => {
     expect(loaded.documents).toEqual(projects);
     expect(loaded.activeId).toBe(projects[0].id);
     expect(loaded.warning).toBeUndefined();
+  });
+
+  it('migrates a published v1 project without rewriting its source or touching its stored backup', () => {
+    const current = styledProject();
+    const { design: _design, ...fields } = current;
+    const legacy = { ...fields, schema: 'meridian/v1' };
+    const raw = JSON.stringify({ version: 1, documents: [legacy], activeId: legacy.id });
+    storage.values.set(LEGACY_STORAGE_KEY, raw);
+    const loaded = loadWorkspace();
+    expect(loaded.warning).toBeUndefined();
+    expect(loaded.documents[0]).toEqual(current);
+    expect(storage.values.get(LEGACY_STORAGE_KEY)).toBe(raw);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    expect(saveWorkspace(loaded.documents, current.id).ok).toBe(true);
+    expect(storage.values.get(LEGACY_STORAGE_KEY)).toBe(raw);
+    expect(JSON.parse(storage.values.get(STORAGE_KEY)!).version).toBe(2);
+    expect(parseProject(JSON.stringify(legacy)).source).toBe(current.source);
+  });
+
+  it('round trips visual overrides with stable element IDs and preserves the Mermaid text exactly', () => {
+    const project = styledProject();
+    project.design = {
+      preset: 'executive',
+      elements: {
+        'node:A': { fill: '#102030', font: 'mono', fontSize: 20, shape: 'hexagon', shadow: false },
+        'edge:A-B-0': { stroke: '#abcdef', lineStyle: 'dashed', arrowhead: 'both' },
+        'group:Services': { emphasis: 'muted', strokeWidth: 2 },
+      },
+    };
+    const imported = parseProject(JSON.stringify(project));
+    expect(imported.design).toEqual(project.design);
+    expect(imported.source).toBe(project.source);
+    expect(saveWorkspace([imported], imported.id).ok).toBe(true);
+    expect(loadWorkspace().documents[0]).toEqual(imported);
+  });
+
+  it('does not fall back to a stale v1 workspace when the newer workspace is damaged', () => {
+    const project = styledProject();
+    storage.values.set(LEGACY_STORAGE_KEY, JSON.stringify({ version: 1, documents: [project], activeId: project.id }));
+    storage.values.set(STORAGE_KEY, '{damaged');
+    const result = loadWorkspace();
+    expect(result.warning).toMatch(/could not be loaded/);
+    expect(result.documents).toEqual([]);
+    expect(storage.values.get(STORAGE_KEY)).toBe('{damaged');
+    expect(storage.setItem).not.toHaveBeenCalled();
   });
 
   it('unwraps only one complete Mermaid fence and preserves other source text', () => {

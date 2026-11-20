@@ -15,6 +15,12 @@ type PinchSnapshot = {
 };
 const clampZoom = (value: number) => Math.min(5, Math.max(.08, value));
 
+function elementKey(target: EventTarget | null): string | null {
+  const element = target instanceof Element ? target.closest('[data-element-key], [data-element-owner]') : null;
+  return element?.getAttribute('data-element-key') || element?.getAttribute('data-element-owner') || null;
+}
+
+
 interface Props {
   result: RenderResult | null;
   document: StudioDocument;
@@ -87,18 +93,27 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
   }, [updateCamera]);
 
   useEffect(() => {
-    const el = drawing.current; if(!el) return;
-    const nodes = el.querySelectorAll<SVGGElement>('[data-node-key]');
-    nodes.forEach(node => {
-      const key = node.getAttribute('data-node-key');
-      node.classList.toggle('studio-selected',key===selectedKey);
-      node.classList.toggle('studio-dimmed',focused && !!selectedKey && key!==selectedKey);
-      node.setAttribute('tabindex','0'); node.setAttribute('role','button');
-      node.setAttribute('aria-label',`Select ${node.textContent?.trim() || key}`);
-      node.setAttribute('aria-pressed',String(key===selectedKey));
+    const el = drawing.current;
+    if (!el) return;
+    const active = new Set<string>();
+    const visit = (key: string) => {
+      if (active.has(key)) return;
+      active.add(key);
+      result?.elements?.find(item => item.key === key)?.members?.forEach(visit);
+    };
+    if (selectedKey) visit(selectedKey);
+    el.querySelectorAll<SVGElement>('[data-element-key], [data-element-owner]').forEach(node => {
+      const key = node.getAttribute('data-element-key') || node.getAttribute('data-element-owner');
+      node.classList.toggle('studio-selected', key === selectedKey && node.hasAttribute('data-element-key'));
+      node.classList.toggle('studio-dimmed', focused && !!selectedKey && !!key && !active.has(key));
+      if (node.hasAttribute('data-element-key')) {
+        node.setAttribute('tabindex', '0');
+        node.setAttribute('role', 'button');
+        node.setAttribute('aria-label', `Select ${result?.elements?.find(item => item.key === key)?.label || node.textContent?.trim() || key}`);
+        node.setAttribute('aria-pressed', String(key === selectedKey));
+      }
     });
-    el.querySelectorAll('.flowchart-link, .meridian-motion').forEach(edge => edge.classList.toggle('studio-edge-dimmed',focused&&!!selectedKey));
-  },[svg,selectedKey,focused,replayKey]);
+  }, [svg, selectedKey, focused, replayKey, result]);
   useEffect(() => { if(!selectedKey) setFocused(false); },[selectedKey]);
 
   useEffect(() => {
@@ -137,7 +152,7 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
   const pointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || (e.target as Element).closest('button')) return;
     if (!pointers.current.size) { hadPinch.current = false; suppressClickUntil.current = 0; }
-    const nodeKey = (e.target as Element).closest('[data-node-key]')?.getAttribute('data-node-key') ?? null;
+    const nodeKey = elementKey(e.target);
     // Mouse clicks still reach the SVG's existing node-selection handler.
     // Touches are tracked even on nodes so either finger can begin there.
     if (e.pointerType !== 'touch' && tool === 'select' && nodeKey) return;
@@ -209,17 +224,17 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
   return <div className={`diagram-viewport ${dragging?'is-dragging':''} ${tool==='pan'?'pan-tool':''} ${motionPaused?'motion-paused':''}`}
     ref={viewport} data-testid="diagram-viewport" style={{'--canvas-color':theme.canvas,'--canvas-accent':theme.accent} as CSSProperties}
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={(e) => finishPointer(e)} onPointerCancel={(e) => finishPointer(e, true)} onLostPointerCapture={(e) => finishPointer(e, true)}
-    onDoubleClick={(e)=> {if (Date.now() < suppressClickUntil.current) { e.preventDefault(); return; } if(!(e.target as Element).closest('[data-node-key],button')) fit();}}>
+    onDoubleClick={(e)=> {if (Date.now() < suppressClickUntil.current) { e.preventDefault(); return; } if(!elementKey(e.target) && !(e.target as Element).closest('button')) fit();}}>
     <div className="canvas-corner-label"><span className="corner-square" />{present?'PRESENTATION': 'CANVAS'}<span className="canvas-theme-name">{theme.name}</span></div>
     {!result ? <div className="canvas-loading"><div className="loading-mark"><span/><span/><span/></div><p>Setting the stage</p><span>Your diagram will appear here.</span></div> :
       <div className="drawing-position" style={{width:dimensions.width,height:dimensions.height,transform:`translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`}}>
         <div key={replayKey} ref={drawing} className={`drawing ${replayKey>0?'replay':''}`} data-testid="rendered-diagram" dangerouslySetInnerHTML={{__html:svg}}
-          onClick={(e) => {if (Date.now() < suppressClickUntil.current) { e.preventDefault(); e.stopPropagation(); return; } const node=(e.target as Element).closest('[data-node-key]'); if(node&&tool==='select'){e.stopPropagation();onSelect(node.getAttribute('data-node-key'));}}}
-          onKeyDown={(e)=>{ if(e.key==='Enter'||e.key===' '){const node=(e.target as Element).closest('[data-node-key]');if(node){e.preventDefault();onSelect(node.getAttribute('data-node-key'));}} }} />
+          onClick={(e) => {if (Date.now() < suppressClickUntil.current) { e.preventDefault(); e.stopPropagation(); return; } const key=elementKey(e.target); if(key&&tool==='select'){e.stopPropagation();onSelect(key);}}}
+          onKeyDown={(e)=>{ if(e.key==='Enter'||e.key===' '){const key=elementKey(e.target);if(key){e.preventDefault();onSelect(key);}} }} />
       </div>}
-    {selectedKey && <div className="selection-toolbar"><span>{result?.nodes.find(n=>n.key===selectedKey)?.label||selectedKey}</span><button className={focused?'active':''} onClick={()=>setFocused(!focused)} title="Spotlight this node" aria-pressed={focused}><Focus size={15}/>Spotlight</button><button className="icon-button" aria-label="Clear selected node" onClick={()=>onSelect(null)}><X size={15}/></button></div>}
+    {selectedKey && <div className="selection-toolbar"><span>{result?.elements?.find(element=>element.key===selectedKey)?.label||selectedKey}</span><button className={focused?'active':''} onClick={()=>setFocused(!focused)} title="Spotlight this element" aria-pressed={focused}><Focus size={15}/>Spotlight</button><button className="icon-button" aria-label="Clear selected node" onClick={()=>onSelect(null)}><X size={15}/></button></div>}
     <div className="canvas-controls">
-      <div className="control-group tool-buttons"><button className={tool==='select'?'active':''} onClick={()=>setTool('select')} aria-label="Select nodes" aria-pressed={tool==='select'} title="Select nodes"><MousePointer2 size={17}/></button><button className={tool==='pan'?'active':''} onClick={()=>setTool('pan')} aria-label="Pan canvas" aria-pressed={tool==='pan'} title="Pan canvas"><Move size={17}/></button></div>
+      <div className="control-group tool-buttons"><button className={tool==='select'?'active':''} onClick={()=>setTool('select')} aria-label="Select diagram elements" aria-pressed={tool==='select'} title="Select diagram elements"><MousePointer2 size={17}/></button><button className={tool==='pan'?'active':''} onClick={()=>setTool('pan')} aria-label="Pan canvas" aria-pressed={tool==='pan'} title="Pan canvas"><Move size={17}/></button></div>
       <div className="control-group"><button onClick={()=>zoomTo(zoom/1.2)} aria-label="Zoom out"><Minus size={17}/></button><button className="zoom-value" onClick={()=>zoomTo(1)} title="Actual size">{Math.round(zoom*100)}%</button><button onClick={()=>zoomTo(zoom*1.2)} aria-label="Zoom in"><Plus size={17}/></button><span className="control-separator"/><button onClick={fit} aria-label="Fit diagram to view" title="Fit to view"><Maximize size={17}/></button></div>
     </div>
     <div className="canvas-hint"><RotateCcw size={12}/><span>Drag to pan · Pinch or scroll to zoom · Double-click to fit</span></div>

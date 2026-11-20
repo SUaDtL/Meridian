@@ -36,10 +36,9 @@ export function buildExportSvg(result: RenderResult, doc: StudioDocument, opts: 
   const settings = doc.settings;
   const theme = getTheme(settings.theme);
   const framed = opts.includeFrame !== false;
-  source.querySelectorAll('[data-node-key]').forEach((node) => {
+  source.querySelectorAll('[data-element-key], [data-node-key]').forEach((node) => {
     node.removeAttribute('tabindex'); node.removeAttribute('role'); node.removeAttribute('aria-label'); node.removeAttribute('aria-pressed');
     node.classList.remove('is-focused', 'is-dimmed', 'is-selected', 'focused', 'dimmed', 'selected', 'studio-selected', 'studio-dimmed');
-    (node as SVGElement).style.removeProperty('opacity');
     (node as SVGElement).style.removeProperty('cursor');
   });
   source.querySelectorAll('.studio-edge-dimmed').forEach((node) => node.classList.remove('studio-edge-dimmed'));
