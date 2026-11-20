@@ -380,7 +380,11 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     const serialized = new XMLSerializer().serializeToString(svg.current);
     if (kind === "svg") return downloadText(serialized, `${name}.svg`, "image/svg+xml;charset=utf-8");
     const { description } = describeChart(project, projection);
-    downloadText(chartHtml(project.title, serialized, description, projection), `${name}.html`, "text/html;charset=utf-8");
+    void perform({ label: "Preparing accessible HTML", async run(signal) {
+      const html = await chartHtml(project.title, serialized, description, projection);
+      signal.throwIfAborted();
+      downloadText(html, `${name}.html`, "text/html;charset=utf-8");
+    } });
   }
 
   const editing = !!editingBase.current;
