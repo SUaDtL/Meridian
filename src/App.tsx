@@ -30,7 +30,8 @@ const Studio = lazy(() => import("./Studio"));
 const ExampleGallery = lazy(() => import("./components/ExampleGallery"));
 const ProjectManager = lazy(() => import("./components/ProjectManager"));
 const Guide = lazy(() => import("./components/Guide"));
-type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | null;
+const WorkspaceMigrationReview = lazy(() => import("./components/WorkspaceMigrationReview"));
+type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | null;
 export type Notify = (
   message: string,
   tone?: "success" | "error",
@@ -77,6 +78,10 @@ export default function App() {
   }, []);
   const showExamples = useCallback(() => setDialog("examples"), []);
   const showProjects = useCallback(() => setDialog("projects"), []);
+  const showMigration = useCallback(() => {
+    workspaceRef.current.flush();
+    setDialog("migration");
+  }, []);
   const showNew = useCallback(() => setDialog("new"), []);
   const showGuide = useCallback(() => setDialog("guide"), []);
   const closeDialog = useCallback(() => setDialog(null), []);
@@ -331,10 +336,14 @@ export default function App() {
                 onDuplicate={duplicate}
                 onDownload={downloadProject}
                 onRemove={remove}
+                onMigration={showMigration}
                 onClose={closeDialog}
               />
             )}
             {dialog === "guide" && <Guide onClose={closeDialog} />}
+            {dialog === "migration" && (
+              <WorkspaceMigrationReview onClose={showProjects} onDownloadLegacy={backupWorkspace} />
+            )}
           </Suspense>
           {dialog === "new" && (
             <Modal

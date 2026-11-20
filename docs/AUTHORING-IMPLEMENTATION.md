@@ -135,3 +135,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The same playback engine reads measured UUID targets in the studio fixture and in standalone HTML. It includes required ancestor containers without expanding their contents. Flow uses the explicit edge direction and is available only when both endpoints are visible. Camera bounds are transformed from the measured diagram coordinates into the framed SVG.
 - The v3 presentation exporter compares all four base-token fields before embedding the typed table and hashed playback script. The Chromium fixture rejects an old render after a heading edit, then compares scene visibility, camera and bidirectional flow with network access disabled.
 - This advances G02 and the playback/export foundation for F05. Public canvas wiring, migration recovery controls and the automatic story generator remain open.
+
+## Milestone 0 workspace migration review
+
+[PR #15](https://github.com/SUaDtL/Meridian/pull/15) merged shared v3 studio and standalone playback as [`634d6c8`](https://github.com/SUaDtL/Meridian/commit/634d6c805c5c82b2a8351723b6904aaba621b93b).
+
+- Manage Projects opens a review of the saved migration receipt. Users can prepare v3 copies, see which legacy records need recovery, and download the checksum-verified original archive or individual verified v3 projects. The existing editing workspace continues to open v1/v2 projects.
+- A later legacy write updates the recovery notice. It leaves prior v3 copies and their pre-migration backup available separately. A failed migration keeps Download current legacy workspace available and permits a clean retry.
+- Built-app Chromium tests read the downloaded files, verify source and archive preservation after a second-tab write, and simulate a quota error after project writes have been requested within the transaction. This advances PS03 and PS04. Opening and editing v3 projects through the application and importing v3 files remain open.
