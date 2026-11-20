@@ -9,7 +9,7 @@ import { validateStoryboard } from './storyboard';
 export const STORAGE_KEY = 'meridian:v2';
 export const LEGACY_STORAGE_KEY = 'meridian:v1';
 export const MAX_PROJECT_FILE_BYTES = 2_000_000;
-const MAX_PROJECTS = 50;
+export const MAX_PROJECTS = 50;
 const MAX_SOURCE = 100_000;
 // A compatibility boundary for the previously stored v1/v2 workspace strings.
 export const MAX_LEGACY_WORKSPACE_CODE_UNITS = 8_000_000;

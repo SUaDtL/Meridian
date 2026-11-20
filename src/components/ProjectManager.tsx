@@ -21,6 +21,7 @@ export default function ProjectManager({
   onDuplicate,
   onDownload,
   onRemove,
+  onMigration,
   onClose,
 }: {
   documents: StudioDocument[];
@@ -31,6 +32,7 @@ export default function ProjectManager({
   onDuplicate: () => void;
   onDownload: () => void;
   onRemove: (id: string) => void;
+  onMigration: () => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState("");
@@ -164,6 +166,9 @@ export default function ProjectManager({
         browsers. Project files include your source, styling, and presentation
         scenes.
       </p>
+      <button className="button quiet" onClick={onMigration}>
+        Project migration and recovery
+      </button>
     </Modal>
   );
 }

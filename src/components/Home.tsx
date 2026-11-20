@@ -210,6 +210,9 @@ export default function Home({
           <span>
             No account needed. Export a project for a portable backup.
           </span>
+          {recent.length === 0 && (
+            <button className="button quiet" onClick={onManage}>Manage projects</button>
+          )}
         </footer>
       </main>
     </div>
