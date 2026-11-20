@@ -17,10 +17,12 @@ export class JsonInputError extends Error {
 }
 
 /** Check object keys and bounds before JSON.parse can discard repeated keys. */
-export function decodeJson(text: string, entryLimit = maxEntries): unknown {
+export function decodeJson(text: string, entryLimit = maxEntries, numericTokens: 'number' | 'text' = 'number'): unknown {
   const scalar = /(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/y;
   let offset = 0;
   let entries = 0;
+  let copyFrom = 0;
+  const preserved: string[] = [];
   const syntax = () => new JsonInputError('syntax');
   const skipWhitespace = () => {
     while (text[offset] === ' ' || text[offset] === '\t' || text[offset] === '\n' || text[offset] === '\r') offset++;
@@ -83,9 +85,14 @@ export function decodeJson(text: string, entryLimit = maxEntries): unknown {
     const token = scalar.exec(text)?.[0];
     if (!token) throw syntax();
     if (start === '-' || (start >= '0' && start <= '9')) {
-      const value = Number(token);
-      if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
-        throw new JsonInputError('number');
+      if (numericTokens === 'text') {
+        preserved.push(text.slice(copyFrom, offset), `"${token}"`);
+        copyFrom = scalar.lastIndex;
+      } else {
+        const value = Number(token);
+        if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
+          throw new JsonInputError('number');
+        }
       }
     }
     offset = scalar.lastIndex;
@@ -95,7 +102,8 @@ export function decodeJson(text: string, entryLimit = maxEntries): unknown {
   skipWhitespace();
   if (offset !== text.length) throw syntax();
   try {
-    return JSON.parse(text) as unknown;
+    const input = preserved.length ? preserved.join('') + text.slice(copyFrom) : text;
+    return JSON.parse(input) as unknown;
   } catch {
     throw syntax();
   }

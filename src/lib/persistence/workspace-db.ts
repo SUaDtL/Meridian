@@ -1,4 +1,6 @@
 import { projectBaseToken } from '../authoring/base-token';
+import type { ChartProject } from '../authoring/chart-data';
+import { validateChartProject } from '../authoring/chart-project';
 import { elementUuidPattern } from '../authoring/identities';
 import type { MermaidProjectV3 } from '../authoring/mermaid-project';
 import { parseMermaidProject, validateMermaidProject } from '../authoring/validate-mermaid-project';
@@ -9,15 +11,18 @@ export interface SavedAnchor {
   stateDigest: string;
 }
 
-export interface StoredProject {
+type WorkspaceProject = MermaidProjectV3 | ChartProject;
+
+export interface StoredProject<Project extends WorkspaceProject = MermaidProjectV3> {
   id: string;
-  document: MermaidProjectV3;
+  document: Project;
   anchor: SavedAnchor;
 }
 
 const databaseName = 'meridian-workspace';
-const databaseVersion = 1;
+const databaseVersion = 2;
 const documentsStore = 'documents';
+const kindIndex = 'document-kind';
 const digestPattern = /^[a-f0-9]{64}$/;
 
 export class StorageConflict extends Error {
@@ -35,17 +40,20 @@ export function openWorkspaceDatabase(factory = indexedDB): Promise<IDBDatabase>
       blocked = true;
       reject(new Error('Close older Meridian tabs before preparing the workspace database.'));
     };
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = event => {
       if (blocked) {
         request.transaction?.abort();
         return;
       }
       const db = request.result;
-      db.createObjectStore(documentsStore, { keyPath: 'id' });
-      db.createObjectStore('datasets', { keyPath: 'digest' });
-      db.createObjectStore('library', { keyPath: ['id', 'version'] });
-      for (const name of ['drafts', 'pendingAssist']) db.createObjectStore(name, { keyPath: 'id' });
-      for (const name of ['migrations', 'metadata', 'previews']) db.createObjectStore(name, { keyPath: 'key' });
+      if (event.oldVersion === 0) {
+        db.createObjectStore(documentsStore, { keyPath: 'id' });
+        db.createObjectStore('datasets', { keyPath: 'digest' });
+        db.createObjectStore('library', { keyPath: ['id', 'version'] });
+        for (const name of ['drafts', 'pendingAssist']) db.createObjectStore(name, { keyPath: 'id' });
+        for (const name of ['migrations', 'metadata', 'previews']) db.createObjectStore(name, { keyPath: 'key' });
+      }
+      request.transaction!.objectStore(documentsStore).createIndex(kindIndex, 'document.documentKind');
     };
     request.onerror = () => reject(request.error ?? new Error('Could not open Meridian workspace storage.'));
     request.onsuccess = () => {
@@ -57,8 +65,13 @@ export function openWorkspaceDatabase(factory = indexedDB): Promise<IDBDatabase>
   });
 }
 
-export async function captureProjectWrite(document: MermaidProjectV3): Promise<StoredProject> {
-  const snapshot = structuredClone(validateMermaidProject(document));
+function validateStoredProject(value: unknown, kind: WorkspaceProject['documentKind']): WorkspaceProject {
+  if (kind === 'mermaid') return validateMermaidProject(value);
+  return validateChartProject(value).project;
+}
+
+export async function captureProjectWrite<Project extends WorkspaceProject>(document: Project): Promise<StoredProject<Project>> {
+  const snapshot = structuredClone(validateStoredProject(document, document?.documentKind === 'chart' ? 'chart' : 'mermaid')) as Project;
   const token = await projectBaseToken(snapshot);
   return {
     id: snapshot.id,
@@ -78,10 +91,10 @@ function sameAnchor(left: SavedAnchor, right: SavedAnchor): boolean {
   return left.storageGeneration === right.storageGeneration && left.stateDigest === right.stateDigest;
 }
 
-export function listWorkspaceProjectIds(db: IDBDatabase): Promise<string[]> {
+export function listWorkspaceProjectIds(db: IDBDatabase, kind: WorkspaceProject['documentKind'] = 'mermaid'): Promise<string[]> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(documentsStore);
-    const request = tx.objectStore(documentsStore).getAllKeys(undefined, MAX_PROJECTS + 1);
+    const request = tx.objectStore(documentsStore).index(kindIndex).getAllKeys(kind, MAX_PROJECTS + 1);
     tx.oncomplete = () => {
       const keys = request.result;
       if (keys.length > MAX_PROJECTS || !keys.every(key => typeof key === 'string' && elementUuidPattern.test(key))) {
@@ -106,15 +119,17 @@ export async function saveWorkspaceProjectCopy(db: IDBDatabase, original: Mermai
 }
 
 /** Verify the payload against its durable anchor after the readonly transaction completes. */
-export async function readWorkspaceProject(db: IDBDatabase, id: string): Promise<StoredProject | undefined> {
-  const stored = await new Promise<StoredProject | undefined>((resolve, reject) => {
+export function readWorkspaceProject(db: IDBDatabase, id: string, kind?: 'mermaid'): Promise<StoredProject | undefined>;
+export function readWorkspaceProject(db: IDBDatabase, id: string, kind: 'chart'): Promise<StoredProject<ChartProject> | undefined>;
+export async function readWorkspaceProject(db: IDBDatabase, id: string, kind: WorkspaceProject['documentKind'] = 'mermaid'): Promise<StoredProject<WorkspaceProject> | undefined> {
+  const stored = await new Promise<StoredProject<WorkspaceProject> | undefined>((resolve, reject) => {
     const tx = db.transaction(documentsStore);
     const request = tx.objectStore(documentsStore).get(id);
     tx.oncomplete = () => resolve(request.result);
     tx.onabort = () => reject(tx.error ?? new Error('Could not read the saved Meridian project.'));
   });
   if (stored === undefined) return undefined;
-  const document = validateMermaidProject(stored.document);
+  const document = validateStoredProject(stored.document, kind);
   if (stored.id !== id || document.id !== id || !validAnchor(stored.anchor)) {
     throw new Error('Stored Meridian project information is invalid.');
   }
@@ -128,7 +143,7 @@ export async function readWorkspaceProject(db: IDBDatabase, id: string): Promise
 /** Compare the existing anchor and commit the exact capture in a single transaction. */
 export async function writeWorkspaceProject(
   db: IDBDatabase,
-  document: MermaidProjectV3,
+  document: WorkspaceProject,
   expected: SavedAnchor | null,
 ): Promise<SavedAnchor> {
   if (expected !== null && !validAnchor(expected)) throw new Error('Invalid saved workspace anchor.');
@@ -142,7 +157,7 @@ export async function writeWorkspaceProject(
     tx.onabort = () => reject(failure ?? tx.error ?? new Error('Meridian could not save the project.'));
     const read = documents.get(record.id);
     read.onsuccess = () => {
-      const existing: StoredProject | undefined = read.result;
+      const existing: StoredProject<WorkspaceProject> | undefined = read.result;
       if (existing !== undefined && (!validAnchor(existing?.anchor) || existing.id !== record.id)) {
         failure = new Error('Stored Meridian project information is invalid. Download a copy before recovery.');
         tx.abort();
@@ -159,7 +174,7 @@ export async function writeWorkspaceProject(
         const count = documents.count();
         count.onsuccess = () => {
           if (count.result >= MAX_PROJECTS) {
-            failure = new Error(`Keep at most ${MAX_PROJECTS} v3 projects in this browser.`);
+            failure = new Error(`Keep at most ${MAX_PROJECTS} workspace projects in this browser.`);
             tx.abort();
           } else documents.add(record);
         };

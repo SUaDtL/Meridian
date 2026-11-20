@@ -22,6 +22,7 @@ export default function ProjectManager({
   onDownload,
   onRemove,
   onMigration,
+  onCharts,
   onClose,
 }: {
   documents: StudioDocument[];
@@ -33,6 +34,7 @@ export default function ProjectManager({
   onDownload: () => void;
   onRemove: (id: string) => void;
   onMigration: () => void;
+  onCharts: () => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState("");
@@ -169,6 +171,7 @@ export default function ProjectManager({
       <button className="button quiet" onClick={onMigration}>
         Project migration and recovery
       </button>
+      <button className="button quiet" onClick={onCharts}>Chart projects</button>
     </Modal>
   );
 }

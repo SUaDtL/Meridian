@@ -5,9 +5,11 @@ import { fitsProjectFile, serializeProject } from '../storage';
 import common from './schemas/common.schema.json';
 import project from './schemas/project.schema.json';
 
+type SchemaType = 'object' | 'array' | 'string' | 'integer' | 'number' | 'boolean' | 'null';
+
 interface Schema {
   $ref?: string;
-  type?: 'object' | 'array' | 'string' | 'integer' | 'number' | 'boolean' | 'null';
+  type?: SchemaType | readonly SchemaType[];
   const?: string | number | boolean;
   enum?: readonly (string | number | boolean)[];
   anyOf?: readonly Schema[];
@@ -63,6 +65,7 @@ function within(size: number, min = 0, max = Infinity) { return size >= min && s
 /** The shipped Mermaid branch uses only these assertions. References never load files. */
 function agrees(value: unknown, rule: Schema, source = false): boolean {
   for (const key of Object.keys(rule)) if (!supported.has(key)) throw new Error('Unsupported Meridian project schema assertion.');
+  if (Array.isArray(rule.type)) return rule.type.some(type => agrees(value, { ...rule, type }, source));
   if (rule.$ref) {
     const name = rule.$ref.startsWith(referencePrefix) ? rule.$ref.slice(referencePrefix.length) : '';
     if (!Object.hasOwn(sharedSchemas, name)) throw new Error('Unsupported Meridian project schema reference.');

@@ -13,10 +13,13 @@ export const sameCheckpoint = (value: unknown, expected: unknown) => value !== u
 type GuidedRecord = { id: string; createdAt: string; expiresAt: string };
 
 function expiredGuidedDraft(record: Record<string, unknown>, now: number) {
-  if (record?.schema !== 'meridian-draft/v1' || record.feature !== 'guided' || typeof record.id !== 'string'
+  if (record?.schema !== 'meridian-draft/v1' || typeof record.id !== 'string'
     || !elementUuidPattern.test(record.id) || record.baseToken !== null || typeof record.createdAt !== 'string'
-    || typeof record.expiresAt !== 'string' || !record.payload || typeof record.payload !== 'object'
-    || !('intent' in record.payload) || (record.payload.intent !== 'process' && record.payload.intent !== 'systems')) return false;
+    || typeof record.expiresAt !== 'string' || !record.payload || typeof record.payload !== 'object') return false;
+  const guided = record.feature === 'guided' && 'intent' in record.payload
+    && (record.payload.intent === 'process' || record.payload.intent === 'systems');
+  const chart = record.feature === 'chart' && 'step' in record.payload && record.payload.step === 'mapping';
+  if (!guided && !chart) return false;
   const created = Date.parse(record.createdAt);
   const expires = Date.parse(record.expiresAt);
   return expires <= now && expires - created === draftWeek;
