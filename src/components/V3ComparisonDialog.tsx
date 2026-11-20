@@ -38,6 +38,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
 }) {
   const layout = mode === "layout";
   const [scopeKind, setScopeKind] = useState<DesignScope["kind"]>(selection?.ids.length ? "selection" : "diagram");
+  const [preserveOverrides, setPreserveOverrides] = useState(true);
   const [role, setRole] = useState<SemanticRole | "">(selectedRoleCounts[0]?.[0] ?? "");
   const [choice, setChoice] = useState<Choice>(layout ? "balanced" : "clear");
   const [direction, setDirection] = useState<LayoutIntent["direction"]>("keep");
@@ -59,8 +60,8 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
 
   async function prepare() {
     if (active.current || (!layout && scopeKind === "role" && !role)) return;
-    const scope: DesignScope = scopeKind === "selection" ? { kind: scopeKind, ids: selection?.ids ?? [] }
-      : scopeKind === "role" && role ? { kind: scopeKind, role } : { kind: "diagram" };
+    const scope: DesignScope = scopeKind === "selection" ? { kind: scopeKind, ids: selection?.ids ?? [], preserveOverrides }
+      : scopeKind === "role" && role ? { kind: scopeKind, role, preserveOverrides } : { kind: "diagram" };
     const work = new AbortController();
     active.current = work;
     setBusy(true);
@@ -125,9 +126,16 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
         }}>
           {selectedRoleCounts.map(([option, count]) => <option key={option} value={option}>{option[0].toUpperCase() + option.slice(1)} ({count})</option>)}
         </select></label>}
+        {scopeKind !== "diagram" && <label className="check-label">
+          <input type="checkbox" checked={preserveOverrides} disabled={busy} onChange={event => {
+            setPreserveOverrides(event.target.checked);
+            resetPreview();
+          }} /> Preserve my element overrides
+        </label>}
         {!allowDirection && <p>Scoped recipes are available on flat flowcharts with explicit node declarations.</p>}
       </div>}
-      <p>{layout || scopeKind === "diagram" ? "Diagram scope · Element overrides are preserved." : "This scope uses node paint. Element overrides are preserved."}</p>
+      <p>{layout || scopeKind === "diagram" ? "Diagram scope · Element overrides are preserved."
+        : preserveOverrides ? "This scope uses node paint." : "The preview lists the node paint overrides this recipe will clear."}</p>
       <div className="recipe-options" role="group" aria-label={layout ? "Layout alternatives" : "Design recipes"}>
         {options.map(option => {
           return <button className="button secondary" key={option.id} aria-pressed={choice === option.id} disabled={busy}
@@ -161,6 +169,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
       </div>
       {preview?.scope && <section aria-label="Reviewed design scope">
         <p>Applies to {preview.scope.eligible} of {preview.scope.total} elements. {preview.scope.protectedFields} protected paint {preview.scope.protectedFields === 1 ? "field" : "fields"}.</p>
+        {preview.scope.clearedFields > 0 && <p>Clears {preview.scope.clearedFields} user paint {preview.scope.clearedFields === 1 ? "override" : "overrides"} from {preview.scope.clearedTargets} {preview.scope.clearedTargets === 1 ? "element" : "elements"}.</p>}
         <p>Diagram-wide settings outside this scope include {preview.scope.omitted.join(", ").toLowerCase()}.</p>
         {preview.scope.exclusions.length > 0 && <details><summary>Review excluded elements</summary>
           <ul>{preview.scope.exclusions.map((label, index) => <li key={index}>{label}</li>)}</ul>
