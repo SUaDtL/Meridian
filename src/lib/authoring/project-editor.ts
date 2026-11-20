@@ -106,6 +106,16 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return { status, elementId: status === 'applied' || status === 'unchanged' ? change.elementId : undefined };
   }
 
+  function detachComponentInstance(instanceId: string, expected: MermaidProjectV3) {
+    const base = current.document;
+    if (closed || base !== expected) return 'stale';
+    const componentInstances = base.componentInstances.filter(instance => instance.id !== instanceId);
+    if (componentInstances.length === base.componentInstances.length) return 'unchanged';
+    return commit(freezeSnapshot(validateMermaidProject({
+      ...base, componentInstances, revision: base.revision + 1, updatedAt: new Date().toISOString(),
+    })));
+  }
+
   function readStructurePreview(proposal: ReadyProposal) {
     const change = structure.get(proposal);
     return !closed && change?.base === current.document ? change.next : undefined;
@@ -299,6 +309,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     readStructurePreview,
     readStructureImpact,
     applyStructure,
+    detachComponentInstance,
     prepareDesign,
     readDesignPreview,
     applyDesign,
