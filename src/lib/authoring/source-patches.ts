@@ -36,13 +36,13 @@ function scanRecords(source: string): RecordSpan[] {
   let depth = 0;
 
   const finish = (end: number) => {
+    let from = start;
+    let to = end;
+    while (from < to && (source[from] === ' ' || source[from] === '\t')) from++;
+    while (to > from && (source[to - 1] === ' ' || source[to - 1] === '\t')) to--;
+    if (from === to) return;
     if (records.length === recordLimit) throw unsupported();
-    const raw = source.slice(start, end);
-    const text = raw.replace(/^[ \t]+|[ \t]+$/g, '');
-    if (text) {
-      const offset = raw.length - raw.replace(/^[ \t]+/, '').length;
-      records.push({ start: start + offset, end: start + offset + text.length, text });
-    }
+    records.push({ start: from, end: to, text: source.slice(from, to) });
   };
 
   for (let position = start; position < source.length; position++) {

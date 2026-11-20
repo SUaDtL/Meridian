@@ -58,6 +58,12 @@ describe('bounded top-level source edit spike', () => {
     expect(() => planNodeLabel(unsupported, 'A', 'New')).toThrow('source panel');
   });
 
+  it('preserves very long horizontal whitespace without repeated searches', () => {
+    const padding = ' '.repeat(98_000);
+    const original = `flowchart LR\n  A[First${padding}step]  \n`;
+    expect(applySourcePatches(original, planNodeLabel(original, 'A', 'Next'))).toBe('flowchart LR\n  A["Next"]  \n');
+  });
+
   it('rejects stale spans and overlaps atomically', () => {
     const patches = planNodeLabel(source, 'Alpha', 'Changed');
     expect(() => applySourcePatches(source.replace('Board', 'Blank'), patches)).toThrow('changed');

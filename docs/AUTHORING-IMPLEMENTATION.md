@@ -35,6 +35,8 @@ Each row applies to every listed story. Module paths are relative to `src/`. Nam
 
 ## Milestone 0 checkpoint
 
+[Draft PR #7](https://github.com/SUaDtL/Meridian/pull/7) contains the implementation from [commit `9f491c1`](https://github.com/SUaDtL/Meridian/commit/9f491c196ec03c78583550fc210bcdb28b04bfca). The [GitHub Actions run](https://github.com/SUaDtL/Meridian/actions/runs/44761903911) retains browser evidence.
+
 ### Exact state identity and bounded source proof
 
 `src/lib/authoring/base-token.ts` implements the four-field base token and canonical JSON/SHA-256 contract. The supplied project and source vectors verify Unicode escapes, source whitespace and metadata-only state changes. This verifies the hashing portion of FN01 and FN02. The existing app has yet to enforce the token in proposal and persistence entry points, so neither end-to-end story is marked complete.
@@ -60,6 +62,7 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 
 ### Build evidence
 
-- Local verification passed `npm run typecheck`, `npm test` (117 tests), `npm run verify:legacy`, `npm run build:pages`, `npm run verify:artifact`, `npm run build:standalone` and `npm run verify:standalone`.
+- Local verification passed `npm run typecheck`, `npm test` (118 tests), `npm run verify:legacy`, `npm run build:pages`, `npm run verify:artifact`, `npm run build:standalone` and `npm run verify:standalone`.
 - The generated Pages artifact has 106 files and totals 6,847,382 bytes. The initial dependency graph remains at 336,880 bytes, against the 370,568-byte budget. Portable HTML is 6,914,934 bytes. The before/after artifact checks also verify CSP and dependency integrity.
-- The repository's pinned Playwright Chromium 159.0.8154.6 runs the browser checks. The desktop fixture and touch viewport screenshots are attached by the authoring browser spec. The pre-change system Chromium run passed the hosted suite, including theme and example comparisons. Its managed file-URL policy blocked standalone navigation. The standalone test passed when rerun with Playwright's pinned browser.
+- All 34 Playwright tests passed locally in pinned Chromium 159.0.8154.6, including six themes, ten example comparisons, standalone offline rendering and the five new authoring checks. The browser spec attaches desktop and touch viewport screenshots. The installed system Chromium blocked standalone file navigation during the baseline run. That baseline case passed with the pinned browser.
+- `npm audit --audit-level=high` reported zero advisories.
