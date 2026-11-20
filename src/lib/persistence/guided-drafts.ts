@@ -14,12 +14,18 @@ type GuidedRecord = { id: string; createdAt: string; expiresAt: string };
 
 function expiredGuidedDraft(record: Record<string, unknown>, now: number) {
   if (record?.schema !== 'meridian-draft/v1' || typeof record.id !== 'string'
-    || !elementUuidPattern.test(record.id) || record.baseToken !== null || typeof record.createdAt !== 'string'
+    || !elementUuidPattern.test(record.id) || typeof record.createdAt !== 'string'
     || typeof record.expiresAt !== 'string' || !record.payload || typeof record.payload !== 'object') return false;
-  const guided = record.feature === 'guided' && 'intent' in record.payload
+  const guided = record.baseToken === null && record.feature === 'guided' && 'intent' in record.payload
     && (record.payload.intent === 'process' || record.payload.intent === 'systems');
-  const chart = record.feature === 'chart' && 'step' in record.payload && record.payload.step === 'mapping';
-  if (!guided && !chart) return false;
+  const chart = record.baseToken === null && record.feature === 'chart' && 'step' in record.payload && record.payload.step === 'mapping';
+  const token = record.baseToken as { projectId?: unknown; revision?: unknown; contentHash?: unknown; stateDigest?: unknown } | null;
+  const story = record.feature === 'story' && typeof token?.projectId === 'string' && elementUuidPattern.test(token.projectId)
+    && typeof token.revision === 'number' && Number.isSafeInteger(token.revision) && token.revision >= 0
+    && typeof token.contentHash === 'string' && /^[a-f0-9]{64}$/.test(token.contentHash)
+    && typeof token.stateDigest === 'string' && /^[a-f0-9]{64}$/.test(token.stateDigest)
+    && 'strategy' in record.payload && (record.payload.strategy === 'groups' || record.payload.strategy === 'paths');
+  if (!guided && !chart && !story) return false;
   const created = Date.parse(record.createdAt);
   const expires = Date.parse(record.expiresAt);
   return expires <= now && expires - created === draftWeek;

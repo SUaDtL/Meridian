@@ -1,29 +1,30 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import type { GroupStoryChoice, GroupStoryOptions } from "../lib/authoring/group-story";
-import { resolveStoryPath, type PathStoryOptions, type PathStep } from "../lib/authoring/path-story";
+import type { GroupStoryChoice } from "../lib/authoring/group-story";
+import { resolveStoryPath, type PathStep } from "../lib/authoring/path-story";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { RenderTargetTable } from "../lib/authoring/project-render";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import { buildExportFrame } from "../lib/export";
 import { createStoryboardPlayer } from "../lib/storyboard-runtime";
 import { getTheme } from "../lib/themes";
+import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
+import { isCurrentStoryDraft, listStoryCheckpoints, resumeStoryCheckpoint, saveStoryCheckpoint,
+  type PathDraft, type StoryCheckpoint, type StoryDraft } from "../lib/persistence/story-drafts";
 import type { StoryboardController, StoryPlaybackState, StoryScene } from "../types/storyboard";
 import Modal from "./Modal";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type StoryPreview = NonNullable<ReturnType<Editor["readStoryPreview"]>>;
-type PathDraft = Omit<PathStoryOptions, "animate" | "duration">;
-export type GroupStoryDraft = GroupStoryOptions & {
-  destination: "append" | "replace"; strategy: "groups" | "path"; path: PathDraft;
-};
+type GroupStoryDraft = StoryDraft;
 export const initialGroupStoryDraft: GroupStoryDraft = {
   groups: [], overview: true, ungrouped: false, animate: false, duration: 5, destination: "append",
   strategy: "groups", path: { startId: "", steps: [], includeContext: false, title: "" },
 };
 const count = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`;
 
-export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onApply, onClose }: {
+export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, onApply, onClose }: {
   editor: Editor;
+  db: IDBDatabase;
   table: RenderTargetTable;
   draft: GroupStoryDraft;
   onDraft: Dispatch<SetStateAction<GroupStoryDraft>>;
@@ -34,7 +35,14 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
   const [busy, setBusy] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const [error, setError] = useState("");
+  const [draftMessage, setDraftMessage] = useState("");
+  const [savedDrafts, setSavedDrafts] = useState<StoryCheckpoint[]>([]);
+  const [checkpoint, setCheckpoint] = useState<StoryCheckpoint>();
+  const [draftWriting, setDraftWriting] = useState(false);
+  const [closeBlocked, setCloseBlocked] = useState(false);
   const pending = useRef<AbortController | undefined>(undefined);
+  const savedSelection = useRef(draft);
+  const writing = useRef(false);
   const scenes = useMemo(() => prepared?.result.suggestions.map(item => item.scene) ?? [], [prepared]);
   const snapshot = editor.snapshot();
   const existing = snapshot.storyboard.scenes;
@@ -49,7 +57,17 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
     catch { return undefined; }
   }, [table, draft.path.startId, draft.path.steps]);
   const sceneCount = draft.strategy === "path" ? Number(!!path) : total;
+  const working = busy || draftWriting;
   useEffect(() => () => pending.current?.abort(), []);
+  useEffect(() => {
+    let live = true;
+    void listStoryCheckpoints(db, table.baseToken.projectId).then(records => {
+      if (live) setSavedDrafts(records);
+    }).catch(reason => {
+      if (live) setError(reason instanceof Error ? reason.message : "Saved story drafts could not be read.");
+    });
+    return () => { live = false; };
+  }, [db, table.baseToken.projectId]);
 
   function pick(id: string, included: boolean) {
     onDraft(current => ({ ...current, groups: included ? [...current.groups, { id, depth: 1, boundary: false }]
@@ -70,7 +88,7 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
   }
 
   async function prepare() {
-    if (!sceneCount || pending.current) return;
+    if (!sceneCount || pending.current || writing.current) return;
     const controller = new AbortController();
     pending.current = controller;
     setBusy(true);
@@ -96,24 +114,99 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
   function apply() {
     if (!prepared || !previewReady) return;
     const status = onApply(prepared.proposal);
-    if (status === "applied") onClose();
+    if (status === "applied") {
+      if (checkpoint) void discardGuidedCheckpoint(db, checkpoint).catch(() => undefined);
+      onClose();
+    }
     else {
       setPrepared(undefined);
       setError(status === "stale" ? "The project changed. Prepare the story preview again." : "The scene changes could not be applied with Undo.");
     }
   }
 
+  async function persist(close = false) {
+    if (writing.current) return;
+    writing.current = true;
+    setDraftWriting(true);
+    setCloseBlocked(false);
+    setError("");
+    try {
+      const saved = await saveStoryCheckpoint(db, draft, table.baseToken, checkpoint);
+      savedSelection.current = draft;
+      setCheckpoint(saved);
+      setSavedDrafts(previous => [saved, ...previous.filter(item => item.id !== saved.id)]);
+      if (close) onClose();
+      else setDraftMessage("Story choices saved as a local draft.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The local story draft could not be saved.");
+      setCloseBlocked(close);
+    } finally {
+      writing.current = false;
+      setDraftWriting(false);
+    }
+  }
+
+  function resume(saved: StoryCheckpoint) {
+    const restored = resumeStoryCheckpoint(saved);
+    savedSelection.current = restored;
+    setCheckpoint(saved);
+    setError("");
+    setPrepared(undefined);
+    onDraft(restored);
+    setDraftMessage(isCurrentStoryDraft(saved, table.baseToken) ? "Review the restored choices before applying scenes."
+      : "This draft is from an earlier revision. Review its choices against the current diagram.");
+  }
+
+  async function discard(saved: StoryCheckpoint) {
+    if (writing.current) return;
+    writing.current = true;
+    setDraftWriting(true);
+    setError("");
+    try {
+      await discardGuidedCheckpoint(db, saved);
+      setSavedDrafts(previous => previous.filter(item => item.id !== saved.id));
+      if (checkpoint?.id === saved.id) {
+        setCheckpoint(undefined);
+        savedSelection.current = draft;
+      }
+      setDraftMessage("Saved story draft discarded.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The story draft could not be discarded.");
+    } finally {
+      writing.current = false;
+      setDraftWriting(false);
+    }
+  }
+
+  function close() {
+    if (pending.current) {
+      pending.current.abort();
+      setBusy(false);
+    }
+    if (sceneCount && Number.isFinite(draft.duration) && JSON.stringify(draft) !== JSON.stringify(savedSelection.current)) void persist(true);
+    else onClose();
+  }
+
   return (
-    <Modal title="Suggest scenes" wide onClose={onClose}>
+    <Modal title="Suggest scenes" wide busy={draftWriting} onClose={close}>
       {!prepared && <div className="heading-form">
-        <label>Scene strategy<select value={draft.strategy} disabled={busy} onChange={event => {
+        {savedDrafts.length > 0 && <ul className="project-list" aria-label="Saved story drafts">
+          {savedDrafts.map(saved => <li className="project-row" key={saved.id}>
+            <button className="project-open" disabled={working} onClick={() => resume(saved)}>
+              <span><strong>Resume {saved.payload.strategy === "paths" ? "path" : "group"} story draft</strong>
+                <small>{new Date(saved.createdAt).toLocaleString()}</small></span>
+            </button>
+            <button className="button quiet" disabled={working} onClick={() => void discard(saved)}>Discard draft</button>
+          </li>)}
+        </ul>}
+        <label>Scene strategy<select value={draft.strategy} disabled={working} onChange={event => {
           setError("");
           onDraft(current => ({ ...current, strategy: event.target.value === "path" ? "path" : "groups" }));
         }}>
           <option value="groups">Overview by groups</option><option value="path">Follow a path</option>
         </select></label>
         {draft.strategy === "groups" ? <>
-        <fieldset className="guided-process-fieldset" disabled={busy}>
+        <fieldset className="guided-process-fieldset" disabled={working}>
           <legend>Overview by groups</legend>
           <label className="check-label"><input type="checkbox" checked={draft.overview}
             onChange={event => onDraft(current => ({ ...current, overview: event.target.checked }))} /> Include a diagram overview</label>
@@ -123,9 +216,11 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
             onChange={event => onDraft(current => ({ ...current, ungrouped: event.target.checked }))} /> Include ungrouped nodes</label>}
         </fieldset>
         {draft.groups.length > 0 && <ol aria-label="Group scene order" className="guided-process-connections">{draft.groups.map((choice, index) => {
-          const name = groups.find(group => group.id === choice.id)?.label || "Unnamed group";
-          return <li key={choice.id}><fieldset className="heading-form guided-process-fieldset" disabled={busy}>
+          const group = groups.find(group => group.id === choice.id);
+          const name = group ? group.label || "Unnamed group" : "Unavailable group";
+          return <li key={choice.id}><fieldset className="heading-form guided-process-fieldset" disabled={working}>
             <legend>{name}</legend>
+            {!group && <button type="button" className="button quiet" onClick={() => pick(choice.id, false)}>Remove unavailable group</button>}
             <label>Scene title<input maxLength={120} value={choice.title ?? ""} placeholder={name} onChange={event => editGroup(choice.id, { title: event.target.value })} /></label>
             <label>Group depth<select value={choice.depth} onChange={event => editGroup(choice.id, { depth: Number(event.target.value) })}>
               {[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}
@@ -137,23 +232,28 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
             </div>
           </fieldset></li>;
         })}</ol>}
-        </> : <PathChoices table={table} sourceIds={sourceIds} draft={draft.path} resolved={path} disabled={busy} onChange={change => {
+        </> : <PathChoices table={table} sourceIds={sourceIds} draft={draft.path} resolved={path} disabled={working} onChange={change => {
           setError("");
           onDraft(current => ({ ...current, path: { ...current.path, ...change } }));
         }} />}
-        <label>Scene duration in seconds<input type="number" min={0.5} max={120} step={0.5} value={Number.isFinite(draft.duration) ? draft.duration : ""} disabled={busy}
+        <label>Scene duration in seconds<input type="number" min={0.5} max={120} step={0.5} value={Number.isFinite(draft.duration) ? draft.duration : ""} disabled={working}
           onChange={event => onDraft(current => ({ ...current, duration: event.target.valueAsNumber }))} /></label>
-        <label className="check-label"><input type="checkbox" checked={draft.animate} disabled={busy}
+        <label className="check-label"><input type="checkbox" checked={draft.animate} disabled={working}
           onChange={event => onDraft(current => ({ ...current, animate: event.target.checked }))} /> Animate visible directional connections</label>
-        <label>Apply to storyboard<select value={draft.destination} disabled={busy}
+        <label>Apply to storyboard<select value={draft.destination} disabled={working}
           onChange={event => onDraft(current => ({ ...current, destination: event.target.value === "replace" ? "replace" : "append" }))}>
           <option value="append">Append scenes</option><option value="replace">Replace scenes</option>
         </select></label>
         {draft.destination === "replace" && existing.length > 0 && <p>Replace {existing.length} current scenes: {existing.map(scene => scene.title || "Untitled scene").join(", ")}</p>}
-        <div className="dialog-actions"><button className="button primary" disabled={busy || sceneCount === 0} onClick={() => void prepare()}>Preview {sceneCount} {sceneCount === 1 ? "scene" : "scenes"}</button></div>
+        <div className="dialog-actions">
+          <button className="button secondary" disabled={working || sceneCount === 0} onClick={() => void persist()}>Save story draft</button>
+          <button className="button primary" disabled={working || sceneCount === 0} onClick={() => void prepare()}>Preview {sceneCount} {sceneCount === 1 ? "scene" : "scenes"}</button>
+        </div>
       </div>}
       {busy && <p role="status">Checking the current diagram and preparing scenes…</p>}
+      {draftMessage && <p role="status">{draftMessage}</p>}
       {error && <p role="alert">{error}</p>}
+      {closeBlocked && <button className="button quiet" onClick={onClose}>Close without saving draft</button>}
       {prepared && <>
         <StoryPreviewPlayer svg={prepared.svg} story={scenes}
           table={prepared.result.rendered.targetTable!} accent={getTheme(prepared.result.next.settings.theme).accent} onReady={setPreviewReady} />

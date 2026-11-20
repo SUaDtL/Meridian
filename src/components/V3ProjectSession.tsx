@@ -382,7 +382,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
           if (status === "applied") setProject(current.snapshot());
           return status;
         }} />}
-      {storyOpen && targetTable && editor.current && <V3GroupStoryDialog editor={editor.current} table={targetTable}
+      {storyOpen && targetTable && editor.current && connection.current && <V3GroupStoryDialog editor={editor.current} db={connection.current} table={targetTable}
         draft={storyDraft} onDraft={setStoryDraft} onClose={() => setStoryOpen(false)} onApply={proposal => {
           const current = editor.current!;
           const status = current.applyStory(proposal);
