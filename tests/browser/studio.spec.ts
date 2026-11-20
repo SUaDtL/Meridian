@@ -182,8 +182,11 @@ test('downloaded projects round-trip through the real file import control', asyn
   await expect(page.getByRole('status')).toContainText('Imported');
   await ready(page);
   await expect(page.locator('.cm-content')).toContainText('alpha[Client]');
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('meridian:v1') || '{}').activeId)).not.toBe(project.id);
-  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('meridian:v1') || '{}'));
+  await expect.poll(() => page.evaluate(originalId => {
+    const workspace = JSON.parse(localStorage.getItem('meridian:v2') || '{}');
+    return Boolean(workspace.activeId && workspace.activeId !== originalId);
+  }, project.id)).toBe(true);
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('meridian:v2') || '{}'));
   const imported = stored.documents.find((item: { id: string }) => item.id === stored.activeId);
   expect(imported.id).not.toBe(project.id);
   expect(imported.source).toBe(project.source);
