@@ -818,3 +818,27 @@
 .guided-process-connections li span {
   display: block;
 }
+.guided-process-fieldset {
+  min-inline-size: 0;
+  border: 1px solid #405255;
+  border-radius: 7px;
+  margin: 0;
+  padding: 12px;
+}
+.guided-process-fieldset > legend {
+  padding-inline: 5px;
+}
+.guided-process-fieldset > .guided-process-connections {
+  padding-inline-start: 1.25rem;
+}
+.guided-process-connections .check-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+}
+.process-step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

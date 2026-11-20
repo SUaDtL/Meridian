@@ -1,5 +1,7 @@
 import { authoringLimits } from './flowchart-source';
 
+export const maxProcessSourceRows = 10_000;
+
 export interface ProcessStep {
   line: number;
   original: string;
@@ -8,8 +10,10 @@ export interface ProcessStep {
 
 export function normalizeProcessSteps(raw: string): ProcessStep[] {
   if (raw.length > authoringLimits.sourceCodeUnits) throw new Error('The process input is too large.');
+  const lines = raw.split(/\r\n|\n|\r/);
+  if (lines.length > maxProcessSourceRows) throw new Error('Use at most 10,000 lines, including blank lines.');
   const steps: ProcessStep[] = [];
-  raw.split(/\r\n|\n|\r/).forEach((original, index) => {
+  lines.forEach((original, index) => {
     const trimmed = original.trim();
     if (!trimmed) return;
     const label = trimmed.replace(/^(?:[-*•]|\d+\.) +/, '');
