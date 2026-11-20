@@ -2,6 +2,7 @@ import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/pr
 import { readWorkspaceProject, writeWorkspaceProject } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
 import type { MermaidProjectV3 } from './mermaid-project';
+import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-flowchart';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
 import { validateMermaidProject } from './validate-mermaid-project';
 
@@ -33,6 +34,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     writeWorkspaceProject(db, document, anchor), notify);
   const past: (typeof current)[] = [];
   const future: (typeof current)[] = [];
+  const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId: string }>();
   let closed = false;
 
   function prepareHeading(envelope: unknown) {
@@ -43,8 +45,28 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     if (closed) return 'invalid';
     const result = headingLane.resolve(proposal, current.document, current.document.revision);
     if (result.status !== 'ready') return result.status;
-    if (result.document === current.document) return 'unchanged';
-    const next = historyEntry(result.document);
+    return commit(result.document);
+  }
+
+  async function prepareStructure(edit: NativeFlowchartEdit, signal?: AbortSignal): Promise<ReadyProposal> {
+    const base = current.document;
+    const { document, elementId } = await prepareFlowchartCandidate(base, { ...edit }, signal);
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    structure.set(proposal, { base, next: freezeSnapshot(document), elementId });
+    return proposal;
+  }
+
+  function applyStructure(proposal: ReadyProposal) {
+    const change = structure.get(proposal);
+    if (closed || !change) return { status: 'invalid' } as const;
+    if (change.base !== current.document) return { status: 'stale' } as const;
+    const status = commit(change.next);
+    return { status, elementId: status === 'applied' || status === 'unchanged' ? change.elementId : undefined };
+  }
+
+  function commit(document: MermaidProjectV3) {
+    if (document === current.document) return 'unchanged';
+    const next = historyEntry(document);
     if (current.bytes + next.bytes > historyByteLimit) return 'history-limit';
     past.push(current);
     future.length = 0;
@@ -75,6 +97,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     snapshot: () => current.document,
     prepareHeading,
     applyHeading,
+    prepareStructure,
+    applyStructure,
     undo: () => restore(past, future),
     redo: () => restore(future, past),
     saveState: queue.state,
