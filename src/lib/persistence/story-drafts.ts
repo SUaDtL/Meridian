@@ -2,13 +2,14 @@ import { sameBaseToken, type BaseToken } from '../authoring/base-token';
 import type { GroupStoryOptions } from '../authoring/group-story';
 import { elementUuidPattern } from '../authoring/identities';
 import type { PathStoryOptions } from '../authoring/path-story';
+import type { StoryDestination } from '../authoring/project-editor';
 import common from '../authoring/schemas/common.schema.json';
 import { matchesBundledContract } from '../authoring/validate-mermaid-project';
 import { draftBytes, draftWeek, listGuidedCheckpoints, maxDraftBytes, sameCheckpoint, saveGuidedCheckpoint } from './guided-drafts';
 
 export type PathDraft = Omit<PathStoryOptions, 'animate' | 'duration'>;
 export type StoryDraft = GroupStoryOptions & {
-  destination: 'append' | 'replace';
+  destination: StoryDestination;
   strategy: 'groups' | 'path';
   path: PathDraft;
 };
@@ -26,7 +27,7 @@ function storyCheckpoint(draft: StoryDraft, baseToken: BaseToken, id: string, no
   if (typeof id !== 'string' || !elementUuidPattern.test(id) || !Number.isFinite(now)
     || !matchesBundledContract(baseToken, common.$defs.BaseToken)
     || (draft.strategy !== 'groups' && draft.strategy !== 'path')
-    || (draft.destination !== 'append' && draft.destination !== 'replace')
+    || (draft.destination !== 'append' && draft.destination !== 'replace' && draft.destination !== 'duplicate')
     || typeof draft.overview !== 'boolean' || typeof draft.ungrouped !== 'boolean' || typeof draft.animate !== 'boolean'
     || !Number.isFinite(draft.duration) || draft.duration < 0.5 || draft.duration > 120) {
     throw new Error('The story draft is incomplete.');

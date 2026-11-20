@@ -19,6 +19,7 @@ import { validateMermaidProject } from './validate-mermaid-project';
 const historyByteLimit = 8 * 1024 * 1024;
 const historyEntryLimit = 50;
 const encoder = new TextEncoder();
+export type StoryDestination = 'append' | 'replace' | 'duplicate';
 
 function freezeSnapshot<Value>(value: Value): Value {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -63,6 +64,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     next: MermaidProjectV3;
     suggestions: ReturnType<typeof suggestGroupScenes>;
     rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
+    destination: StoryDestination;
+    savingCopy: boolean;
   }>();
   const contrast = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3; next: MermaidProjectV3; color: string; label: string; beforeRatio: number; afterRatio: number; threshold: number; svg: string;
@@ -234,11 +237,13 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   async function prepareStory(
     intent: { strategy: 'groups'; options: GroupStoryOptions } | { strategy: 'path'; options: PathStoryOptions },
-    destination: 'append' | 'replace',
+    destination: StoryDestination,
     signal?: AbortSignal,
   ) {
     if (closed) throw new Error('The project is closed.');
-    if (destination !== 'append' && destination !== 'replace') throw new Error('Choose whether to append or replace scenes.');
+    if (destination !== 'append' && destination !== 'replace' && destination !== 'duplicate') {
+      throw new Error('Choose a storyboard destination.');
+    }
     signal?.throwIfAborted();
     const base = current.document;
     const choices = structuredClone(intent);
@@ -250,12 +255,24 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       ? suggestGroupScenes(rendered.targetTable, choices.options) : suggestPathScene(rendered.targetTable, choices.options);
     const existing = destination === 'append' ? base.storyboard.scenes : [];
     if (existing.length + suggestions.length > 50) throw new Error('Choose fewer scenes or review Replace. A story can contain at most 50 scenes.');
+    const orphans = destination === 'append' ? base.identity.orphans : base.identity.orphans.flatMap(orphan => {
+      if (!orphan.retained.sceneReferences?.length) return [orphan];
+      const { sceneReferences: removed, ...retained } = orphan.retained;
+      return retained.style || retained.role || retained.componentIds?.length ? [{ ...orphan, retained }] : [];
+    });
+    const suffix = ' — story copy';
+    const projectFields = destination === 'duplicate' ? {
+      id: crypto.randomUUID(),
+      title: (base.title.trim() || 'Untitled diagram').slice(0, 120 - suffix.length).replace(/[\uD800-\uDBFF]$/, '') + suffix,
+      revision: 0,
+    } : { revision: base.revision + 1 };
     const next = freezeSnapshot(validateMermaidProject({
-      ...base, storyboard: { ...base.storyboard, scenes: [...existing, ...suggestions.map(item => item.scene)] },
-      revision: base.revision + 1, updatedAt: new Date().toISOString(),
+      ...base, ...projectFields, identity: { ...base.identity, orphans },
+      storyboard: { ...base.storyboard, scenes: [...existing, ...suggestions.map(item => item.scene)] },
+      updatedAt: new Date().toISOString(),
     }));
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
-    stories.set(proposal, { base, next, suggestions: freezeSnapshot(suggestions), rendered });
+    stories.set(proposal, { base, next, suggestions: freezeSnapshot(suggestions), rendered, destination, savingCopy: false });
     return proposal;
   }
 
@@ -267,8 +284,26 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   function applyStory(proposal: ReadyProposal) {
     const change = stories.get(proposal);
-    if (closed || !change) return 'invalid';
+    if (closed || !change || change.destination === 'duplicate') return 'invalid';
     return change.base === current.document ? commit(change.next) : 'stale';
+  }
+
+  async function saveStoryCopy(proposal: ReadyProposal) {
+    const change = stories.get(proposal);
+    if (closed || !change || change.destination !== 'duplicate' || change.savingCopy || change.base !== current.document) {
+      throw new Error('The project changed. Prepare the story preview again.');
+    }
+    change.savingCopy = true;
+    try {
+      await queue.flush();
+      if (closed || change.base !== current.document) throw new Error('The project changed. Prepare the story preview again.');
+      if (queue.state().phase !== 'saved') throw new Error('Save the original project before opening a separate story copy.');
+      await writeWorkspaceProject(db, change.next, null);
+      stories.delete(proposal);
+      return change.next.id;
+    } finally {
+      change.savingCopy = false;
+    }
   }
 
   function commit(document: MermaidProjectV3) {
@@ -322,6 +357,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareStory,
     readStoryPreview,
     applyStory,
+    saveStoryCopy,
     undo: () => restore(past, future),
     redo: () => restore(future, past),
     canUndo: () => past.length > 0,
