@@ -6,7 +6,7 @@ test('reviews OpenAPI operations, keeps hidden selection, and stores precise pro
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   await page.getByRole('button', { name: 'Engineering file' }).click();
   const dialog = page.getByRole('dialog', { name: 'Engineering file' });
-  await dialog.getByLabel('OpenAPI JSON file').setInputFiles({
+  await dialog.getByLabel('OpenAPI specification').setInputFiles({
     name: 'service.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({
       openapi: '3.1.0',
@@ -52,4 +52,39 @@ test('reviews OpenAPI operations, keeps hidden selection, and stores precise pro
   const source = outline.getByRole('region', { name: 'Imported source' });
   await expect(source).toContainText('Declared OpenAPI tag membership');
   await expect(source).toContainText('specifications/service.json#/paths/~1pets~1{id}/get/tags/0');
+});
+
+test('recovers from invalid YAML and creates a reviewed operation diagram from one restricted document', async ({ page }, info) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Engineering file' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Engineering file' });
+  async function openYaml(source: string) {
+    await dialog.getByLabel('OpenAPI specification').setInputFiles({
+      name: 'service.yaml', mimeType: 'application/yaml', buffer: Buffer.from(source),
+    });
+    await dialog.getByRole('button', { name: 'Read operation facts' }).click();
+  }
+  await openYaml('openapi: 3.1.0\npaths: {}\npaths: {}');
+  await expect(dialog.getByRole('alert')).toContainText('repeated mapping key');
+  await openYaml('openapi: 3.1.0\npaths:\n  /entries/{id}:\n    get:\n      operationId: readEntry\n      tags: [Entries]\n      description: raw-yaml-description');
+  await dialog.getByRole('checkbox', { name: 'GET /entries/{id}' }).check();
+  await dialog.getByLabel('Primary tag').selectOption('Entries');
+  await dialog.getByLabel('Diagram title').fill('Entry operations');
+  await dialog.getByRole('button', { name: 'Preview diagram' }).click();
+  await expect(dialog.getByRole('img', { name: 'Proposed OpenAPI operation diagram' })).toBeVisible();
+  await page.screenshot({ path: info.outputPath('openapi-yaml-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('openapi-yaml-mobile.png') });
+  await dialog.getByRole('button', { name: 'Create new diagram' }).click();
+  const live = page.getByRole('dialog', { name: 'Entry operations' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Entry operations' })).toBeVisible();
+  const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+  const path = await file.path();
+  if (!path) throw new Error('Missing OpenAPI YAML project download.');
+  const text = await readFile(path, 'utf8');
+  expect(text).not.toContain('raw-yaml-description');
+  expect(JSON.parse(text).provenance).toContainEqual(expect.objectContaining({
+    virtualPath: 'service.yaml', pointer: '/paths/~1entries~1{id}/get', relationship: 'Declared OpenAPI operation',
+  }));
 });
