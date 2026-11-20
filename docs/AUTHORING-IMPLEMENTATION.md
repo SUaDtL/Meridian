@@ -199,7 +199,8 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 
 - Follow a path starts from a selected node and uses individually chosen connections with explicit traversal direction. It stops after the first loop, retains only selected path content and optional one-hop context, and adds group containers without expanding unrelated descendants.
 - The shared story proposal and player preview exact coverage before append or replacement. Fixture coverage verifies loops and motion direction. Chromium verifies selection, settled visibility and one saved scene in the existing v3 workspace. This advances AS-02 and AS-06.
-- Branch scenes, multi-path ordering and persistent story drafts remain open.
+- Group and path choices can be saved as seven-day local drafts with the exact project token. A resumed draft from an earlier revision needs a fresh preview. Browser coverage verifies reload, a changed base, preserved choices, and applying only after review.
+- Branch scenes and multi-path ordering remain open.
 
 ## Milestone 4 typed chart projects
 

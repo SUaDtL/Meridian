@@ -110,3 +110,57 @@ test('follows explicitly chosen connections to a loop and keeps unrelated group 
     title: 'Loop returns to Start', flow: [bindings.get('send'), bindings.get('finish'), bindings.get('repeat')],
   });
 });
+
+test('resumes a local path draft after reload and reviews it against the newer project revision', async ({ page }) => {
+  const source = 'flowchart LR\nA[Start]\nB[Review]\nC[Archive]\nA review@-->|"Send"| B\nB archive@--> C\n';
+  const project = { ...createDocument(), title: 'Story draft example', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  async function openProjects() {
+    await page.getByRole('button', { name: 'Manage projects' }).click();
+    await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  }
+  await page.goto('/');
+  await openProjects();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Story draft example' }).click();
+  const live = page.getByRole('dialog', { name: 'Story draft example' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Story draft example' })).toBeVisible();
+  const original = JSON.parse(await download(page, live, 'Download v3 project'));
+  await live.getByRole('button', { name: 'Suggest scenes', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Suggest scenes' });
+  await dialog.getByLabel('Scene strategy').selectOption('path');
+  await dialog.getByLabel('Start node').selectOption({ label: 'Start (A)' });
+  await dialog.getByLabel('Next connection from Start').selectOption({ label: 'Start → Review · Send · Along the arrow · review' });
+  await dialog.getByRole('button', { name: 'Add connection to path' }).click();
+  await dialog.getByLabel('Scene title').fill('Reviewed path');
+  await dialog.getByLabel('Scene duration in seconds').fill('7');
+  await dialog.getByRole('checkbox', { name: 'Include one-hop context' }).check();
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(dialog).toHaveCount(0);
+  await live.getByRole('button', { name: 'Edit heading', exact: true }).click();
+  const heading = page.getByRole('dialog', { name: 'Edit heading' });
+  await heading.getByRole('textbox', { name: 'Title', exact: true }).fill('Updated story project');
+  await heading.getByRole('button', { name: 'Apply heading', exact: true }).click();
+  const updated = page.getByRole('dialog', { name: 'Updated story project' });
+  await expect(updated.getByText('Saved in this browser.')).toBeVisible();
+  await page.reload();
+  await openProjects();
+  await page.getByRole('button', { name: 'Open v3 project Updated story project' }).click();
+  await expect(updated.getByRole('img', { name: 'Diagram preview for Updated story project' })).toBeVisible();
+  expect(JSON.parse(await download(page, updated, 'Download v3 project')).storyboard).toEqual(original.storyboard);
+  await updated.getByRole('button', { name: 'Suggest scenes', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Resume path story draft' }).click();
+  await expect(dialog.getByText(/This draft is from an earlier revision/)).toBeVisible();
+  await expect(dialog.getByLabel('Scene title')).toHaveValue('Reviewed path');
+  await expect(dialog.getByLabel('Scene duration in seconds')).toHaveValue('7');
+  await expect(dialog.getByRole('checkbox', { name: 'Include one-hop context' })).toBeChecked();
+  await dialog.getByRole('button', { name: 'Preview 1 scene' }).click();
+  await expect(dialog.getByRole('list', { name: 'Suggested scene coverage' })).toContainText('Reviewed path');
+  await dialog.getByRole('button', { name: 'Append suggested scenes' }).click();
+  await expect(updated.getByText('Saved in this browser.')).toBeVisible();
+  const saved = JSON.parse(await download(page, updated, 'Download v3 project'));
+  expect(saved.storyboard.scenes.at(-1)).toMatchObject({ title: 'Reviewed path', duration: 7 });
+  await updated.getByRole('button', { name: 'Suggest scenes', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Resume path story draft' })).toHaveCount(0);
+});
