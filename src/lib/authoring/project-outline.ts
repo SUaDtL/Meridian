@@ -24,6 +24,12 @@ export function projectOutline(project: MermaidProjectV3, table: RenderTargetTab
   const targets = new Map(table.targets.map(target => [target.id, target]));
   const bindings = new Map(project.identity.elements.filter(record => record.status === 'resolved').map(record => [record.id, record.binding]));
   const roles = new Map(project.roles.map(role => [role.elementId, role.role]));
+  const origins = new Map<string, MermaidProjectV3['provenance']>();
+  for (const record of project.provenance) {
+    const entries = origins.get(record.elementId) ?? [];
+    entries.push(record);
+    origins.set(record.elementId, entries);
+  }
   const sourceLocations = provenSourceLocations(project.source);
   const lineStarts = sourceLocations ? [0, ...Array.from(project.source.matchAll(/\n/g), match => match.index + 1)] : [];
   const connectionCounts = new Map<string, number>();
@@ -47,7 +53,7 @@ export function projectOutline(project: MermaidProjectV3, table: RenderTargetTab
     return {
       id: target.id, kind: target.elementKind, label: target.label, parentId: target.parentId,
       role: roles.get(target.id) ?? null, endpoints, sourceId: publicId, source,
-      connections: connectionCounts.get(target.id) ?? 0,
+      connections: connectionCounts.get(target.id) ?? 0, provenance: origins.get(target.id) ?? [],
     };
   });
 }

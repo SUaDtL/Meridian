@@ -30,7 +30,7 @@ Each row applies to every listed story. In Progress indicates that a slice is im
 | F04 Components and libraries · In Progress | CP-01, CP-02, CP-03, CP-04, CP-05, CP-06, CP-07, CP-08, CP-09, CP-10 | F00a atomic proposal; F00b source/identity; F00c library | `lib/authoring/`, `lib/storage.ts`; *component manifests, parameters and ports* | M3 component definition and insertion |
 | F05 Automatic stories · In Progress | AS-01, AS-02, AS-03, AS-04, AS-05, AS-06, AS-07, AS-08, AS-09 | F00a one transaction; F00b typed targets; F00c persistence | `lib/storyboard.ts`, `lib/storyboard-runtime.ts`, `lib/export.ts`; *story generation and visibility closure* | M3 story generation |
 | F10 Quantitative charts · In Progress | CH01, CH02, CH03, CH04, CH05, CH06, CH07, CH08, CH09 | F00a/c shared shell; exact-number and rendering proof | `lib/storage.ts`, `lib/export.ts`; *typed dataset, transforms and chart renderer* | M4 chart model and marks |
-| F11 Engineering imports · Not Started | IM01, IM02, IM03, IM04, IM05, IM06, IM07, IM08 | F00a/b/c; bounded local readers and resolver | `App.tsx`, `lib/authoring/`; *typed readers, resolver and fact mapping* | M4 one PR per import adapter |
+| F11 Engineering imports · In Progress | IM01, IM02, IM03, IM04, IM05, IM06, IM07, IM08 | F00a/b/c; bounded local readers and resolver | `components/OpenApiImportDialog.tsx`, `lib/authoring/openapi-facts.ts`, `lib/authoring/openapi-project.ts`; *multi-file resolver and remaining adapters* | M4 one PR per import adapter |
 | F08 External assistant · Blocked | AI01, AI02, AI03, AI04, AI05, AI06, AI07, AI08, AI09, AI10 | F00a/b/c; scoped contracts; approved hosting, identity, spend and operator | `lib/authoring/`; *file exchange and independently operated companion* | M5 local exchange, then separately approved pilot |
 
 ## Milestone 0 checkpoint
@@ -200,3 +200,9 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - Chart values in guided creation opens local delimited or JSON data, confirms column types, and previews an independent chart project. The parser keeps exact JSON number tokens until conversion. Confirmed chart drafts and saved projects use IndexedDB. Saved projects reopen from Chart projects and export portable JSON, SVG and offline HTML with a displayed-values table.
 - Chart number fixtures verify the golden sum, mean, null, rounding and precision examples. Portable chart tests verify date sorting, duplicate policy and persisted domain metadata. Chromium verifies a typed-data draft across reload, confirms a reviewed project, reopens it and reads its offline export. This advances CH01–CH06, CH08 and CH09.
 - Mapping and frame changes to saved projects, locale and conversion controls, the remaining accessibility controls, and the chart performance gates remain open.
+
+## Milestone 4 OpenAPI operation diagrams
+
+- Engineering file reads one local OpenAPI 3.0 or 3.1 JSON file through a bounded worker. It presents operation IDs, declared tags and the scope excluded because of referenced path items or schema content. Select operations and review their display labels and optional primary tags before creating a new project.
+- Generated Mermaid links represent declared tag membership. Outline shows the exact virtual path and escaped JSON Pointer for each generated target. Chromium verifies filtered selection, reviewed generation and a portable export that retains provenance without examples, descriptions or remote URI content.
+- This advances IM05, IM06, IM07 and IM08 for the operation view. Restricted YAML, multi-file resolution, schema/reference views, check-pointed facts and further adapters remain open.

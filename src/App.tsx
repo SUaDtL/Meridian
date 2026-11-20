@@ -37,7 +37,8 @@ const GuidedProcessDialog = lazy(() => import("./components/GuidedProcessDialog"
 const GuidedRelationshipTableDialog = lazy(() => import("./components/GuidedRelationshipTableDialog"));
 const ComponentProjectDialog = lazy(() => import("./components/ComponentProjectDialog"));
 const ChartProjectDialog = lazy(() => import("./components/ChartProjectDialog"));
-type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | "guided" | "guided-table" | "components" | "guided-chart" | "saved-charts" | null;
+const OpenApiImportDialog = lazy(() => import("./components/OpenApiImportDialog"));
+type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | "guided" | "guided-table" | "components" | "guided-chart" | "saved-charts" | "engineering-file" | null;
 const emptyRelationshipTable: RelationshipTableDraft = { title: "", text: "", delimiter: ",", header: true };
 export type Notify = (
   message: string,
@@ -362,6 +363,7 @@ export default function App() {
                 onRelationshipTable={() => setDialog("guided-table")}
                 onComponents={() => setDialog("components")}
                 onChart={() => setDialog("guided-chart")}
+                onEngineeringFile={() => setDialog("engineering-file")}
                 onCreated={(id, draftRetained) => {
                   if (draftRetained) notify("Project saved. The local draft could not be cleared.", "error");
                   setGuidedDraft({ title: "", text: "" });
@@ -383,6 +385,8 @@ export default function App() {
               onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
             {(dialog === "guided-chart" || dialog === "saved-charts") && <ChartProjectDialog fromProjects={dialog === "saved-charts"}
               onBack={() => setDialog(dialog === "saved-charts" ? "projects" : "guided")} onClose={closeDialog} />}
+            {dialog === "engineering-file" && <OpenApiImportDialog onBack={() => setDialog("guided")} onClose={closeDialog}
+              onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
           </Suspense>
           {dialog === "new" && (
             <Modal

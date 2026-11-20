@@ -19,13 +19,14 @@ export type GuidedProcessDraft = {
 };
 type Review = { document: Awaited<ReturnType<typeof prepareGuidedProcess>>["document"]; url: string };
 
-export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelationshipTable, onComponents, onChart, onClose }: {
+export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelationshipTable, onComponents, onChart, onEngineeringFile, onClose }: {
   draft: GuidedProcessDraft;
   onDraft: Dispatch<SetStateAction<GuidedProcessDraft>>;
   onCreated: (id: string, draftRetained?: boolean) => void;
   onRelationshipTable: () => void;
   onComponents: () => void;
   onChart: () => void;
+  onEngineeringFile: () => void;
   onClose: () => void;
 }) {
   const [stage, setStage] = useState<"input" | "connections" | "review">("input");
@@ -190,6 +191,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
           <button type="button" className="button quiet" disabled={!!busy} onClick={onRelationshipTable}>Systems and relationships</button>
           <button type="button" className="button quiet" disabled={!!busy} onClick={onComponents}>Browse components</button>
           <button type="button" className="button quiet" disabled={!!busy} onClick={onChart}>Chart values</button>
+          <button type="button" className="button quiet" disabled={!!busy} onClick={onEngineeringFile}>Engineering file</button>
           {drafts.length > 0 && (
             <ul className="project-list">
               {drafts.map(saved => (
