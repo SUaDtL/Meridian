@@ -3,6 +3,7 @@ import Modal from "./Modal";
 import { buildExportFrame } from "../lib/export";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
+import type { SemanticRole } from "../lib/authoring/mermaid-project";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { ConnectionRemovalImpact } from "../lib/authoring/retire-connection";
@@ -12,6 +13,7 @@ type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Operation = NativeFlowchartEdit["op"];
 type NodeChoice = { id: string; label: string };
 type Preview = { proposal: ReadyProposal; url: string; impact?: ConnectionRemovalImpact };
+const nextRoles: readonly SemanticRole[] = ["process", "decision", "neutral", "service", "database", "queue", "external", "person"];
 
 export default function V3StructureEditor({ editor, nodes, edges, initialOperation = "addNode", initialTarget = "", onApply, onClose }: {
   editor: Editor;
@@ -25,6 +27,9 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
   const [operation, setOperation] = useState<Operation>(initialOperation);
   const [shape, setShape] = useState<Shape>("rect");
   const [label, setLabel] = useState("");
+  const [edgeLabel, setEdgeLabel] = useState("");
+  const [incoming, setIncoming] = useState(false);
+  const [role, setRole] = useState<SemanticRole | "">("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState(initialTarget);
   const [error, setError] = useState("");
@@ -50,6 +55,7 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
     setBusy(true);
     try {
       const edit: NativeFlowchartEdit = operation === "addNode" ? { op: operation, shape, label }
+        : operation === "addNext" ? { op: operation, anchorId: from, shape, label, edgeLabel, incoming, role: role || undefined }
         : operation === "setNodeLabel" ? { op: operation, targetId: to, label }
         : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label } : { op: operation, targetId: to };
       const proposal = await editor.prepareStructure(edit, controller.signal);
@@ -80,6 +86,7 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
   }
 
   const canPreview = operation === "addNode" ? !!label
+    : operation === "addNext" ? !!label && !!from
     : operation === "setNodeLabel" ? !!label && !!to
     : operation === "removeEdge" ? !!to : !!from && !!to;
   const nodeOptions = nodes.map(node => <option value={node.id} key={node.id}>{node.label}</option>);
@@ -90,22 +97,26 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
           <select value={operation} disabled={busy} onChange={event => {
             setOperation(event.target.value as Operation);
             setLabel("");
+            setEdgeLabel("");
+            setIncoming(false);
+            setRole("");
             setFrom("");
             setTo("");
             resetPreview();
           }}>
             <option value="addNode">Add node</option>
+            <option value="addNext" disabled={!nodes.length}>Add next</option>
             <option value="setNodeLabel" disabled={!nodes.length}>Rename node</option>
             <option value="addEdge" disabled={!nodes.length}>Connect nodes</option>
             <option value="removeEdge" disabled={!edges.length}>Delete connection</option>
           </select>
         </label>
-        {operation === "addNode" && <label>Shape
+        {(operation === "addNode" || operation === "addNext") && <label>Shape
           <select value={shape} disabled={busy} onChange={event => { setShape(event.target.value as Shape); resetPreview(); }}>
             {Object.keys(shapeDelimiters).map(value => <option key={value} value={value}>{value === "rect" ? "Rectangle" : value}</option>)}
           </select>
         </label>}
-        {operation === "addEdge" && <label>From
+        {(operation === "addEdge" || operation === "addNext") && <label>{operation === "addNext" ? "Connect to this node" : "From"}
           <select value={from} disabled={busy} onChange={event => { setFrom(event.target.value); resetPreview(); }}>
             <option value="">Choose a node</option>{nodeOptions}
           </select>
@@ -123,6 +134,17 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
         {operation !== "removeEdge" && <label>{operation === "addEdge" ? "Connection label (optional)" : "Node label"}
           <input value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
         </label>}
+        {operation === "addNext" && <>
+          <label>Connection direction<select value={incoming ? "incoming" : "outgoing"} disabled={busy}
+            onChange={event => { setIncoming(event.target.value === "incoming"); resetPreview(); }}>
+            <option value="outgoing">Existing node → new node</option><option value="incoming">New node → existing node</option>
+          </select></label>
+          <label>Connection label (optional)<input value={edgeLabel} disabled={busy}
+            onChange={event => { setEdgeLabel(event.target.value); resetPreview(); }} /></label>
+          <label>Node role<select value={role} disabled={busy} onChange={event => { setRole(event.target.value as SemanticRole | ""); resetPreview(); }}>
+            <option value="">No role</option>{nextRoles.map(item => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}
+          </select></label>
+        </>}
         {busy && <p role="status">Checking and rendering the proposed diagram…</p>}
         {error && <p role="alert">{error}</p>}
         {preview && (

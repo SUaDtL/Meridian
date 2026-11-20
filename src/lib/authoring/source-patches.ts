@@ -152,10 +152,10 @@ function replace(span: RecordSpan, replacement: string): SourcePatch {
   return { from: span.start, to: span.end, expectedText: span.text, replacement };
 }
 
-function appendStatement(source: string, statement: string): SourcePatch {
+function appendStatements(source: string, ...statements: string[]): SourcePatch {
   const newline = source.match(/\r?\n/)?.[0] ?? '\n';
   const separator = source.endsWith('\n') ? '' : newline;
-  return { from: source.length, to: source.length, expectedText: '', replacement: separator + '  ' + statement + newline };
+  return { from: source.length, to: source.length, expectedText: '', replacement: separator + statements.map(statement => '  ' + statement + newline).join('') };
 }
 
 function allocateSourceId(prefix: string, nodes: ReadonlyMap<string, RecordSpan>, edges: ReadonlySet<string>): string {
@@ -171,7 +171,7 @@ export function planNodeAddition(source: string, label: string, shape: Shape = '
     throw new Error('The diagram is too large for a generated edit.');
   }
   const sourceId = allocateSourceId('m_n', nodes, edgeIds);
-  return { sourceId, patches: [appendStatement(source, writeNodeDeclaration(sourceId, label, shape))] };
+  return { sourceId, patches: [appendStatements(source, writeNodeDeclaration(sourceId, label, shape))] };
 }
 
 export function planEdgeAddition(source: string, from: string, to: string, label?: string) {
@@ -181,7 +181,21 @@ export function planEdgeAddition(source: string, from: string, to: string, label
     throw new Error('The diagram is too large for a generated edit.');
   }
   const sourceId = allocateSourceId('m_e', nodes, edgeIds);
-  return { sourceId, patches: [appendStatement(source, writeEdgeDeclaration(sourceId, from, to, label))] };
+  return { sourceId, patches: [appendStatements(source, writeEdgeDeclaration(sourceId, from, to, label))] };
+}
+
+export function planAddNext(source: string, anchor: string, label: string, shape: Shape, edgeLabel: string | undefined, incoming: boolean) {
+  const { nodes, edges, edgeIds } = readSubset(source);
+  if (!nodes.has(anchor)) throw unsupported();
+  if (nodes.size >= authoringLimits.graphNodes || edges.length >= authoringLimits.graphEdges) {
+    throw new Error('The diagram is too large to add a step and connection together.');
+  }
+  const sourceId = allocateSourceId('m_n', nodes, edgeIds);
+  const edgeId = allocateSourceId('m_e', nodes, edgeIds);
+  const from = incoming ? sourceId : anchor;
+  const to = incoming ? anchor : sourceId;
+  return { sourceId, edgeId, from, to, patches: [appendStatements(source,
+    writeNodeDeclaration(sourceId, label, shape), writeEdgeDeclaration(edgeId, from, to, edgeLabel))] };
 }
 
 /** Plan an exact label replacement for the explicit-declaration spike. The caller still needs the Mermaid oracle. */

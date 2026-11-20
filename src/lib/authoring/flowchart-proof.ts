@@ -3,10 +3,11 @@ import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram } from '../render';
 import { canonicalJson } from './base-token';
 import { flowchartEngineShapes, type Shape } from './flowchart-source';
-import { applySourcePatches, flowchartSubsetTopology, planEdgeAddition, planEdgeRemoval, planNodeAddition, planNodeLabel } from './source-patches';
+import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeRemoval, planNodeAddition, planNodeLabel, type SourcePatch } from './source-patches';
 
 export type SourceIntent =
   | { op: 'addNode'; label: string; shape?: Shape }
+  | { op: 'addNext'; anchor: string; label: string; shape: Shape; edgeLabel?: string; incoming: boolean }
   | { op: 'setNodeLabel'; sourceId: string; label: string }
   | { op: 'addEdge'; from: string; to: string; label?: string }
   | { op: 'removeEdge'; sourceId: string };
@@ -37,16 +38,17 @@ function readModel(model: FlowModel | undefined) {
 
 type SemanticGraph = ReturnType<typeof readModel>;
 
-function planSourceEdit(source: string, intent: SourceIntent) {
+function planSourceEdit(source: string, intent: SourceIntent): { sourceId: string; patches: SourcePatch[]; edgeId?: string; from?: string; to?: string } {
   switch (intent.op) {
     case 'addNode': return planNodeAddition(source, intent.label, intent.shape);
+    case 'addNext': return planAddNext(source, intent.anchor, intent.label, intent.shape, intent.edgeLabel, intent.incoming);
     case 'addEdge': return planEdgeAddition(source, intent.from, intent.to, intent.label);
     case 'removeEdge': return { sourceId: intent.sourceId, patches: planEdgeRemoval(source, intent.sourceId) };
     case 'setNodeLabel': return { sourceId: intent.sourceId, patches: planNodeLabel(source, intent.sourceId, intent.label) };
   }
 }
 
-function expectedEdit(graph: SemanticGraph, intent: SourceIntent, sourceId: string, changed: boolean): SemanticGraph {
+function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 'addNext' }>, sourceId: string, changed: boolean): SemanticGraph {
   switch (intent.op) {
     case 'addNode': return {
       ...graph,
@@ -70,7 +72,7 @@ function expectedEdit(graph: SemanticGraph, intent: SourceIntent, sourceId: stri
   }
 }
 
-function verifyVisibleLabel(result: RenderResult, intent: SourceIntent, id: string) {
+function verifyVisibleLabel(result: RenderResult, intent: Exclude<SourceIntent, { op: 'addNext' }>, id: string) {
   if ((intent.op === 'addEdge' && !intent.label) || intent.op === 'removeEdge') return;
   const svg = new DOMParser().parseFromString(result.svg, 'image/svg+xml');
   const targets = intent.op === 'addEdge' ? svg.querySelectorAll('g.edgeLabel[data-element-owner]') : svg.querySelectorAll('[data-node-key]');
@@ -103,8 +105,20 @@ export async function proveFlowchartEdit(
   if (canonicalJson(sourceTopology) !== canonicalJson(observedTopology)) throw mismatch();
   const output = source === document.source ? initial : await render(source);
   const actual = readModel(flowchartModelFor(output));
-  verifyVisibleLabel(output, intent, plan.sourceId);
-  const expected = expectedEdit(before, intent, plan.sourceId, source !== document.source);
+  let expected: SemanticGraph;
+  let addedEdgeId: string | undefined;
+  if (intent.op === 'addNext') {
+    if (!plan.edgeId || !plan.from || !plan.to) throw mismatch();
+    const node = { op: 'addNode', label: intent.label, shape: intent.shape } as const;
+    const edge = { op: 'addEdge', from: plan.from, to: plan.to, label: intent.edgeLabel } as const;
+    verifyVisibleLabel(output, node, plan.sourceId);
+    verifyVisibleLabel(output, edge, plan.edgeId);
+    expected = expectedEdit(expectedEdit(before, node, plan.sourceId, true), edge, plan.edgeId, true);
+    addedEdgeId = plan.edgeId;
+  } else {
+    verifyVisibleLabel(output, intent, plan.sourceId);
+    expected = expectedEdit(before, intent, plan.sourceId, source !== document.source);
+  }
   if (canonicalJson(actual) !== canonicalJson(expected)) throw mismatch();
-  return { source, sourceId: plan.sourceId, render: output };
+  return { source, sourceId: plan.sourceId, render: output, addedEdgeId };
 }
