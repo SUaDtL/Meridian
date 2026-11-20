@@ -1,4 +1,5 @@
 import { decodeJson } from './decode-json';
+import { readOpenApiSchemaFacts, type OpenApiSchemaFacts } from './openapi-schema-facts';
 
 const maxBytes = 2_000_000;
 const maxFacts = 10_000;
@@ -22,6 +23,7 @@ export type OpenApiFacts = {
   operations: OpenApiOperation[];
   referencedPathCount: number;
   uncheckedSchemaCount: number;
+  schemaView?: OpenApiSchemaFacts;
 };
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -61,6 +63,7 @@ function enforceStringBudget(root: unknown) {
 /** Extract allowlisted declared operations. Raw descriptions and examples never leave the worker. */
 export function readOpenApiFacts(
   bytes: ArrayBuffer, virtualPath: string, decode = (source: string) => decodeJson(source, 50_000, 'skip'),
+  view: 'operations' | 'schemas' = 'operations',
 ): OpenApiFacts {
   validateVirtualPath(virtualPath);
   if (bytes.byteLength > maxBytes) throw new Error('Choose an OpenAPI file no larger than 2,000,000 bytes.');
@@ -75,7 +78,14 @@ export function readOpenApiFacts(
   if (!record(base) || typeof base.openapi !== 'string' || base.openapi.trim() !== base.openapi || !supportedVersion.test(base.openapi)) {
     throw new Error('Choose an OpenAPI 3.0 or 3.1 document.');
   }
-  const sourcePaths = base.paths;
+  const schemas = record(base.components) && record(base.components.schemas) ? base.components.schemas : {};
+  const uncheckedSchemaCount = Object.keys(schemas).length;
+  if (view === 'schemas') {
+    return { version: base.openapi, virtualPath, operations: [], referencedPathCount: 0, uncheckedSchemaCount,
+      schemaView: readOpenApiSchemaFacts(schemas, base.openapi, base.jsonSchemaDialect) };
+  }
+  const sourcePaths = base.paths === undefined && base.openapi.startsWith('3.1.')
+    && (record(base.components) || record(base.webhooks)) ? {} : base.paths;
   if (!record(sourcePaths)) throw new Error('This OpenAPI document does not declare any paths in its root paths object.');
   const operations: OpenApiOperation[] = [];
   const keys = new Set<string>();
@@ -105,6 +115,5 @@ export function readOpenApiFacts(
       if (operations.length > maxFacts) throw new Error('This file exceeds 10,000 supported operation facts.');
     }
   }
-  const uncheckedSchemaCount = record(base.components) && record(base.components.schemas) ? Object.keys(base.components.schemas).length : 0;
   return { version: base.openapi, virtualPath, operations, referencedPathCount, uncheckedSchemaCount };
 }
