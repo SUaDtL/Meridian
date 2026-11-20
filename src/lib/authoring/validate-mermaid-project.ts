@@ -36,7 +36,7 @@ const unpairedSurrogate = /[\uD800-\uDFFF]/u;
 const dateTime = /^(\d{4})-(\d\d)-(\d\d)T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i;
 const patterns = new Map<string, RegExp>();
 const supported = new Set([
-  '$ref', '$comment', 'type', 'const', 'enum', 'anyOf', 'oneOf', 'required', 'properties', 'additionalProperties',
+  '$ref', '$comment', '$id', '$schema', 'type', 'const', 'enum', 'anyOf', 'oneOf', 'required', 'properties', 'additionalProperties',
   'propertyNames', 'items', 'pattern', 'format', 'minLength', 'maxLength', 'minItems', 'maxItems',
   'minProperties', 'maxProperties', 'minimum', 'maximum',
 ]);
@@ -121,6 +121,10 @@ function agrees(value: unknown, rule: Schema, source = false): boolean {
     case undefined: return true;
     default: throw new Error('Unsupported Meridian project schema type.');
   }
+}
+
+export function matchesBundledContract(value: unknown, schema: unknown) {
+  return agrees(value, schema as Schema);
 }
 
 function verifyReferences(document: MermaidProjectV3) {

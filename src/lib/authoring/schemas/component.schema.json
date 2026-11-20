@@ -1,0 +1,414 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.meridian.invalid/component.schema.json",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "meridian-component/v1"
+    },
+    "id": {
+      "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+    },
+    "version": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 40
+      },
+      "maxItems": 12,
+      "minItems": 0
+    },
+    "family": {
+      "const": "flowchart"
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "license": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "licenseText": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "author",
+        "license",
+        "licenseText",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "fragment": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+              },
+              "label": {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Label"
+              },
+              "shape": {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Shape"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Role"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "shape",
+              "role"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 100,
+          "minItems": 1
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+              },
+              "sourceId": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+              },
+              "targetId": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "direction": {
+                "enum": [
+                  "forward",
+                  "both",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "sourceId",
+              "targetId",
+              "label",
+              "direction"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 200,
+          "minItems": 0
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+              },
+              "label": {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Label"
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+                },
+                "maxItems": 100,
+                "minItems": 0
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "members",
+              "parentId"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 10,
+          "minItems": 0
+        }
+      },
+      "required": [
+        "nodes",
+        "edges",
+        "groups"
+      ],
+      "additionalProperties": false
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "type": {
+                "const": "text"
+              },
+              "default": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "maxLength": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "required",
+              "type",
+              "default",
+              "maxLength"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "type": {
+                "const": "enum"
+              },
+              "default": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "choices": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "maxItems": 20,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "required",
+              "type",
+              "default",
+              "choices"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "type": {
+                "const": "integer"
+              },
+              "default": {
+                "type": "integer",
+                "minimum": -1000,
+                "maximum": 1000
+              },
+              "minimum": {
+                "type": "integer",
+                "minimum": -1000,
+                "maximum": 1000
+              },
+              "maximum": {
+                "type": "integer",
+                "minimum": -1000,
+                "maximum": 1000
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "required",
+              "type",
+              "default",
+              "minimum",
+              "maximum"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "maxItems": 32,
+      "minItems": 0
+    },
+    "labelBindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+          },
+          "parameterId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+          },
+          "prefix": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "suffix": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "nodeId",
+          "parameterId",
+          "prefix",
+          "suffix"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 100,
+      "minItems": 0
+    },
+    "ports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+          },
+          "nodeId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "direction": {
+            "enum": [
+              "in",
+              "out",
+              "either"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "nodeId",
+          "label",
+          "direction"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 16,
+      "minItems": 0
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "name",
+    "description",
+    "tags",
+    "family",
+    "provenance",
+    "fragment",
+    "parameters",
+    "labelBindings",
+    "ports"
+  ],
+  "additionalProperties": false,
+  "$comment": "Maximum serialized definition 200000 UTF8 bytes. Parameter binding is literal concatenation into a label, never evaluated source or an expression. References and acyclicity need semantic validation."
+}
