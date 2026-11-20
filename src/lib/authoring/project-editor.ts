@@ -64,6 +64,11 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return { status, elementId: status === 'applied' || status === 'unchanged' ? change.elementId : undefined };
   }
 
+  function readStructurePreview(proposal: ReadyProposal) {
+    const change = structure.get(proposal);
+    return !closed && change?.base === current.document ? change.next : undefined;
+  }
+
   function commit(document: MermaidProjectV3) {
     if (document === current.document) return 'unchanged';
     const next = historyEntry(document);
@@ -98,6 +103,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareHeading,
     applyHeading,
     prepareStructure,
+    readStructurePreview,
     applyStructure,
     undo: () => restore(past, future),
     redo: () => restore(future, past),

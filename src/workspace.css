@@ -798,3 +798,11 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.heading-form select {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #405255;
+  border-radius: 6px;
+  color: inherit;
+  background: #142127;
+}

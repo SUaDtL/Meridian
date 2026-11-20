@@ -174,3 +174,65 @@ test('opens a live v3 project, saves reversible edits and recovers a second tab 
   expect(JSON.parse(await download(second, 'Download v3 copy of First tab edit'))).toEqual(first);
   expect(await download(second, 'Download pre-migration backup')).toBe(raw);
 });
+
+test('previews and commits Add, Rename and Connect through the live v3 workspace', async ({ page }) => {
+  await seedWorkspace(page);
+  const list = await openReview(page);
+  await list.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await list.getByRole('button', { name: 'Open v3 project Migration example' }).click();
+  const original = JSON.parse(await download(page, 'Download v3 project'));
+
+  async function openEdit() {
+    await page.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+    return page.getByRole('dialog', { name: 'Edit flowchart', exact: true });
+  }
+
+  async function prepareAndApply(dialog: Awaited<ReturnType<typeof openEdit>>) {
+    const apply = dialog.getByRole('button', { name: 'Apply change' });
+    await expect(apply).toBeDisabled();
+    await dialog.getByRole('button', { name: 'Preview change' }).click();
+    await expect.poll(() => dialog.getByRole('img', { name: 'Proposed diagram' })
+      .evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+    await apply.click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText('Saved in this browser.', { exact: true })).toBeVisible();
+  }
+
+  const cancelled = await openEdit();
+  await cancelled.getByRole('textbox', { name: 'Node label' }).fill('Unsaved preview');
+  await cancelled.getByRole('button', { name: 'Preview change' }).click();
+  await expect(cancelled.getByRole('button', { name: 'Apply change' })).toBeEnabled();
+  await cancelled.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(JSON.parse(await download(page, 'Download v3 project'))).toEqual(original);
+
+  const add = await openEdit();
+  await add.getByRole('textbox', { name: 'Node label' }).fill('Archive');
+  await add.getByRole('combobox', { name: 'Shape' }).selectOption('cylinder');
+  await prepareAndApply(add);
+  const added = JSON.parse(await download(page, 'Download v3 project'));
+  expect(added.source).toBe(source + '  m_n1[("Archive")]\r\n');
+
+  const rename = await openEdit();
+  await rename.getByRole('combobox', { name: 'Operation' }).selectOption('setNodeLabel');
+  await rename.getByRole('combobox', { name: 'Node to rename' }).selectOption({ label: 'Original (A)' });
+  await rename.getByRole('textbox', { name: 'Node label' }).fill('Intake');
+  await prepareAndApply(rename);
+
+  const connect = await openEdit();
+  await connect.getByRole('combobox', { name: 'Operation' }).selectOption('addEdge');
+  await connect.getByRole('combobox', { name: 'From', exact: true }).selectOption({ label: 'Intake (A)' });
+  await connect.getByRole('combobox', { name: 'To', exact: true }).selectOption({ label: 'Archive (m_n1)' });
+  await connect.getByRole('textbox', { name: 'Connection label (optional)' }).fill('Publish');
+  await prepareAndApply(connect);
+  const connected = JSON.parse(await download(page, 'Download v3 project'));
+  expect(connected.source).toBe(added.source.replace('A[Original]', 'A["Intake"]') + '  A m_e1@-->|"Publish"| m_n1\r\n');
+  expect(connected.revision).toBe(3);
+  expect(connected.identity.elements).toContainEqual(original.identity.elements[0]);
+  expect(connected.identity.elements).toHaveLength(3);
+
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByText('Saved in this browser.', { exact: true })).toBeVisible();
+  const undone = JSON.parse(await download(page, 'Download v3 project'));
+  expect(undone.source).toBe(added.source.replace('A[Original]', 'A["Intake"]'));
+  expect(undone.revision).toBe(4);
+});
