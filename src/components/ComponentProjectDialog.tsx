@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { canonicalDigest } from "../lib/authoring/base-token";
+import { canonicalDigest, projectBaseToken, sameBaseToken } from "../lib/authoring/base-token";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
 import { maxComponentLibraryBytes, type ComponentDefinition, type parseComponentFile } from "../lib/authoring/component-definition";
 import ComponentFileWorker from "../lib/authoring/component-file.worker?worker&inline";
 import type { PortAssignment } from "../lib/authoring/component-insertion";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { ReadyProposal } from "../lib/authoring/proposals";
-import { buildComponentProject } from "../lib/authoring/component-project";
+import { buildComponentProject, materializeComponent } from "../lib/authoring/component-project";
 import { curatedComponents } from "../lib/authoring/curated-components";
 import { buildExportFrame } from "../lib/export";
 import { readComponentLibrary, saveComponentDefinitions } from "../lib/persistence/component-library";
+import { listComponentCheckpoints, saveComponentCheckpoint, type ComponentCheckpoint, type ComponentDraft } from "../lib/persistence/component-drafts";
+import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import { downloadText } from "../lib/storage";
 import Modal from "./Modal";
@@ -28,19 +30,27 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
   const [libraryStatus, setLibraryStatus] = useState("");
   const [retryFile, setRetryFile] = useState<File>();
   const [definition, setDefinition] = useState<ComponentDefinition>();
+  const [drafts, setDrafts] = useState<ComponentCheckpoint[]>([]);
+  const [checkpoint, setCheckpoint] = useState<ComponentCheckpoint>();
+  const [changedDefinition, setChangedDefinition] = useState<ComponentCheckpoint>();
   const [values, setValues] = useState<Record<string, string | number>>({});
   const [attachments, setAttachments] = useState(new Map<string, DraftAttachment>());
   const [targetQuery, setTargetQuery] = useState("");
   const [disconnected, setDisconnected] = useState(false);
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
-  const [busy, setBusy] = useState<"read" | "preview" | "create">();
+  const [busy, setBusy] = useState<"read" | "preview" | "create" | "draft">();
   const [error, setError] = useState("");
   const work = useRef<AbortController | undefined>(undefined);
+  const projectId = insertion?.editor.snapshot().id ?? null;
+  const targetIds = new Set(insertion?.nodes.map(node => node.id));
   const choices = [...(insertion ? [] : sessionComponents), ...library, ...curatedComponents].filter(component =>
     [component.name, component.description, ...component.tags].join(" ").toLowerCase().includes(query.trim().toLowerCase()));
   const readyPorts = !definition?.ports.length || (insertion
-    ? definition.ports.every(port => attachments.has(port.id) && (attachments.get(port.id) === null || !!attachments.get(port.id)?.direction))
+    ? definition.ports.every(port => {
+      const choice = attachments.get(port.id);
+      return choice === null || !!(choice?.direction && targetIds.has(choice.targetId));
+    })
     : disconnected);
   const targetNeedle = targetQuery.trim().toLowerCase();
 
@@ -50,15 +60,22 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
     let closed = false;
     void openWorkspaceDatabase().then(async db => {
       try {
-        const stored = await readComponentLibrary(db);
-        if (!closed) setLibrary(stored);
+        const [stored, saved] = await Promise.allSettled([readComponentLibrary(db), listComponentCheckpoints(db, projectId)]);
+        if (closed) return;
+        if (stored.status === "fulfilled") setLibrary(stored.value);
+        if (saved.status === "fulfilled") setDrafts(saved.value);
+        if (stored.status === "rejected" || saved.status === "rejected") {
+          setLibraryStatus(stored.status === "rejected" ? "The local component library could not be read." : "Saved component drafts could not be read.");
+        }
       } finally { db.close(); }
-    }).catch(() => { if (!closed) setLibraryStatus("The local component library could not be opened."); });
+    }).catch(() => { if (!closed) setLibraryStatus("Saved components and drafts could not be opened."); });
     return () => { closed = true; };
-  }, []);
+  }, [projectId]);
 
   function select(component: ComponentDefinition) {
     setDefinition(component);
+    setCheckpoint(undefined);
+    setChangedDefinition(undefined);
     setValues({});
     setAttachments(new Map());
     setTargetQuery("");
@@ -76,9 +93,100 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
     try { await execute(controller.signal); } catch (reason) {
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "The component could not be opened.");
     } finally {
-      work.current = undefined;
-      if (!controller.signal.aborted) setBusy(undefined);
+      if (work.current === controller) {
+        work.current = undefined;
+        if (!controller.signal.aborted) setBusy(undefined);
+      }
     }
+  }
+
+  async function restoreDraft(saved: ComponentCheckpoint, signal: AbortSignal, acceptChanged = false) {
+    const state = saved.payload;
+    const current = [...library, ...curatedComponents].find(item => item.id === state.definitionId && item.version === state.definitionVersion);
+    if (!current) throw new Error("Import the matching component definition before resuming this draft.");
+    const digest = await canonicalDigest("meridian-component/v1", [current]);
+    if (digest !== state.definitionHash && !acceptChanged) {
+      setChangedDefinition(saved);
+      setError("The component definition changed. Review and explicitly use the current definition to continue.");
+      return;
+    }
+    const currentToken = insertion && await projectBaseToken(insertion.editor.snapshot());
+    signal.throwIfAborted();
+    select(current);
+    setCheckpoint(digest === state.definitionHash ? saved : undefined);
+    const parameterIds = new Set(current.parameters.map(parameter => parameter.id));
+    setValues(Object.fromEntries(Object.entries(state.parameters).filter(([id]) => parameterIds.has(id))));
+    const ports = new Map(current.ports.map(port => [port.id, port]));
+    setAttachments(new Map(state.connections.flatMap(choice => {
+      const port = ports.get(choice.portId);
+      if (!port) return [];
+      const attachment: DraftAttachment = choice.targetId === null ? null : { targetId: choice.targetId,
+        direction: port.direction === "either" || port.direction === choice.direction ? choice.direction : null };
+      return [[choice.portId, attachment] as const];
+    })));
+    setDisconnected(!insertion && current.ports.every(port =>
+      state.connections.some(choice => choice.portId === port.id && choice.targetId === null)));
+    setLibraryStatus(digest !== state.definitionHash ? "Review the current definition and all attachment choices before previewing."
+      : currentToken && (!saved.baseToken || !sameBaseToken(saved.baseToken, currentToken))
+        ? "This draft is from an earlier project revision. Review the current attachment targets."
+        : "Component choices restored. Preview again before applying.");
+  }
+
+  function draftConnections(): ComponentDraft["connections"] {
+    if (insertion) return [...attachments].map(([portId, choice]) => ({
+      portId, targetId: choice?.targetId ?? null, direction: choice?.direction ?? null,
+    }));
+    return disconnected ? definition?.ports.map(port => ({ portId: port.id, targetId: null, direction: null })) ?? [] : [];
+  }
+
+  async function keepDraft(signal: AbortSignal) {
+    if (!definition) return;
+    materializeComponent(definition, values);
+    const base = insertion ? await projectBaseToken(insertion.editor.snapshot()) : null;
+    const draft: ComponentDraft = {
+      step: preview ? "review" : definition.ports.length ? "connections" : "parameters",
+      definitionId: definition.id, definitionVersion: definition.version,
+      definitionHash: await canonicalDigest("meridian-component/v1", [definition]),
+      parameters: values, destination: { mode: insertion ? "insert" : "new", targetProjectId: base?.projectId ?? null },
+      connections: draftConnections(),
+    };
+    signal.throwIfAborted();
+    const db = await openWorkspaceDatabase();
+    try {
+      signal.throwIfAborted();
+      const saved = await saveComponentCheckpoint(db, draft, base, checkpoint);
+      setCheckpoint(saved);
+      setDrafts(previous => [saved, ...previous.filter(item => item.id !== saved.id)]);
+      setLibraryStatus("Component choices saved as a local draft.");
+    } finally { db.close(); }
+  }
+
+  function leaveChoices(leave: () => void) {
+    if (busy && busy !== "preview") return;
+    if (work.current) {
+      const pending = work.current;
+      work.current = undefined;
+      pending.abort();
+      setBusy(undefined);
+    }
+    const connections = draftConnections();
+    if (!definition || (checkpoint
+      ? JSON.stringify([values, connections]) === JSON.stringify([checkpoint.payload.parameters, checkpoint.payload.connections])
+      : !Object.keys(values).length && !connections.length)) {
+      leave();
+      return;
+    }
+    void run("draft", async signal => { await keepDraft(signal); leave(); });
+  }
+
+  async function discardDraft(saved: ComponentCheckpoint) {
+    const db = await openWorkspaceDatabase();
+    try {
+      await discardGuidedCheckpoint(db, saved);
+      setDrafts(previous => previous.filter(item => item.id !== saved.id));
+      if (checkpoint?.id === saved.id) setCheckpoint(undefined);
+      if (changedDefinition?.id === saved.id) setChangedDefinition(undefined);
+    } finally { db.close(); }
   }
 
   async function importFile(file: File, signal: AbortSignal, extended = false) {
@@ -155,19 +263,56 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
         throw new Error(status === "stale" ? "The diagram changed. Review the current attachment targets."
           : "The component could not be inserted with Undo.");
       }
+      if (checkpoint) await discardDraft(checkpoint).catch(() => undefined);
       insertion.onApplied();
       return;
     }
     if (!onCreated) return;
     const db = await openWorkspaceDatabase();
-    try { await writeWorkspaceProject(db, preview.document, null); } finally { db.close(); }
+    try {
+      if (!sessionComponents.includes(definition)) {
+        const available = [...await readComponentLibrary(db), ...curatedComponents]
+          .find(item => item.id === definition.id && item.version === definition.version);
+        if (!available || await canonicalDigest("meridian-component/v1", [available]) !== preview.definitionHash) {
+          setPreview(undefined);
+          throw new Error("The saved definition changed. Review the current component before creating a project.");
+        }
+      }
+      signal.throwIfAborted();
+      await writeWorkspaceProject(db, preview.document, null);
+    } finally { db.close(); }
+    if (checkpoint) await discardDraft(checkpoint).catch(() => undefined);
     onCreated(preview.document.id);
   }
 
+  function discardCurrentChoices() {
+    void run("draft", async () => {
+      if (checkpoint) await discardDraft(checkpoint);
+      setDefinition(undefined);
+      setPreview(undefined);
+      setLibraryStatus("Component draft discarded.");
+    });
+  }
+
   return (
-    <Modal title={insertion ? "Insert component" : "Components"} wide busy={busy === "create" || busy === "read"} onClose={onClose}>
+    <Modal title={insertion ? "Insert component" : "Components"} wide busy={busy === "create" || busy === "read" || busy === "draft"}
+      onClose={() => leaveChoices(onClose)}>
       {!definition && <div className="heading-form">
         <button className="button quiet" disabled={!!busy} onClick={onBack}>{insertion ? "Back to diagram" : "Process steps"}</button>
+        {!!drafts.length && <ul className="project-list" aria-label="Component drafts">
+          {drafts.map(saved => {
+            const name = [...library, ...curatedComponents].find(item => item.id === saved.payload.definitionId
+              && item.version === saved.payload.definitionVersion)?.name || "unavailable component";
+            return <li key={saved.id} className="project-row">
+              <button className="project-open" disabled={!!busy} onClick={() => void run("draft", signal => restoreDraft(saved, signal))}>
+                <span><strong>Resume {name} draft</strong><small>{new Date(saved.createdAt).toLocaleString()}</small></span>
+              </button>
+              <button className="button quiet" disabled={!!busy} onClick={() => void run("draft", () => discardDraft(saved))}>Discard draft</button>
+            </li>;
+          })}
+        </ul>}
+        {changedDefinition && <button className="button secondary" disabled={!!busy}
+          onClick={() => void run("draft", signal => restoreDraft(changedDefinition, signal, true))}>Use current definition</button>}
         <label>Search components<input value={query} maxLength={120} disabled={!!busy} onChange={event => setQuery(event.target.value)} /></label>
         <label>Import a component definition or library<input type="file" accept=".json,application/json" disabled={!!busy} onChange={event => {
           const file = event.target.files?.[0]; if (file) void run("read", signal => importFile(file, signal));
@@ -195,7 +340,8 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
             {parameter.choices.map(choice => <option key={choice}>{choice}</option>)}</select>
             : <input type={parameter.type === "integer" ? "number" : "text"} disabled={!!busy}
               min={parameter.type === "integer" ? parameter.minimum : undefined} max={parameter.type === "integer" ? parameter.maximum : undefined}
-              maxLength={parameter.type === "text" ? parameter.maxLength * 2 : undefined} value={values[parameter.id] ?? parameter.default}
+              maxLength={parameter.type === "text" ? parameter.maxLength * 2 : undefined}
+              value={Number.isNaN(values[parameter.id]) ? "" : values[parameter.id] ?? parameter.default}
               onChange={event => setValues(current => ({ ...current, [parameter.id]: parameter.type === "integer" ? event.target.valueAsNumber : event.target.value }))} />}
         </label>)}
         {definition.ports.length > 0 && <>
@@ -220,6 +366,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
                   <option value="">Choose a node</option>
                   <option value="skip">Leave unconnected</option>
                   {nodes.map(node => <option key={node.id} value={node.id}>{node.label}</option>)}
+                  {assignment && !targetIds.has(assignment.targetId) && <option value={assignment.targetId} disabled>Previously chosen node is unavailable</option>}
                 </select></label>
                 {assignment && port.direction === "either" && <label>Connection direction<select value={assignment.direction ?? ""} onChange={event => {
                   const direction = event.target.value;
@@ -238,7 +385,9 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
           </>}
         </>}
         <div className="dialog-actions">
-          <button className="button quiet" disabled={!!busy} onClick={() => { setDefinition(undefined); setError(""); }}>Back to components</button>
+          <button className="button quiet" disabled={!!busy} onClick={() => leaveChoices(() => { setDefinition(undefined); setError(""); })}>Back to components</button>
+          <button className="button quiet" disabled={!!busy} onClick={discardCurrentChoices}>Discard component draft</button>
+          <button className="button secondary" disabled={!!busy} onClick={() => void run("draft", keepDraft)}>Save component draft</button>
           <button className="button primary" disabled={!!busy || !readyPorts} onClick={() => void run("preview", prepare)}>Preview component</button>
         </div>
       </div>}
@@ -258,7 +407,8 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
           <button className="button primary" disabled={!!busy || !painted} onClick={() => void run("create", create)}>{insertion ? "Insert reviewed component" : "Create component project"}</button>
         </div>
       </div>}
-      {busy && <p role="status">{busy === "read" ? "Reading the local component file…" : busy === "preview" ? "Checking and rendering the component…" : insertion ? "Inserting the reviewed component…" : "Saving the new project…"}</p>}
+      {busy && <p role="status">{busy === "read" ? "Reading the local component file…" : busy === "preview" ? "Checking and rendering the component…"
+        : busy === "draft" ? "Updating the local component draft…" : insertion ? "Inserting the reviewed component…" : "Saving the new project…"}</p>}
       {!busy && libraryStatus && <p role="status">{libraryStatus}</p>}
       {error && <p role="alert">{error}</p>}
     </Modal>
