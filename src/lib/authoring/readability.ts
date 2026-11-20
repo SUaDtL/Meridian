@@ -6,6 +6,7 @@ export type ReadabilityTarget = {
   id: string;
   kind: 'node' | 'group' | 'edge';
   label: string;
+  sourceId?: string;
   typography: boolean;
   measuredLabelSize?: number;
   solidTextPaint?: SolidTextPaint;
@@ -37,29 +38,39 @@ export function viewingScale(profile: ViewingProfile, frame: FrameGeometry): num
     (profile.height - profile.padding * 2) / frame.height);
 }
 
-function normalizedName(label: string) {
+export function normalizedName(label: string) {
   return label.normalize('NFC').replace(/\s+/gu, ' ').trim();
 }
 
 function weakRegions(targets: readonly ReadabilityTarget[]): string[][] | undefined {
-  if (targets.some(target => target.kind === 'group')) return undefined;
-  const nodes = new Map(targets.filter(target => target.kind === 'node').map(target => [target.id, new Set<string>()]));
+  const known = new Map(targets.map(target => [target.id, target.kind]));
+  if (known.size !== targets.length) return undefined;
+  const vertices = new Map(targets.filter(target => target.kind === 'node').map(target => [target.id, new Set<string>()]));
+  function endpoint(id: string) {
+    let neighbors = vertices.get(id);
+    if (!neighbors && known.get(id) === 'group') {
+      neighbors = new Set();
+      vertices.set(id, neighbors);
+    }
+    return neighbors;
+  }
   for (const edge of targets) {
     if (edge.kind !== 'edge') continue;
-    const from = edge.from && nodes.get(edge.from);
-    const to = edge.to && nodes.get(edge.to);
-    if (!from || !to || !edge.from || !edge.to) return undefined;
+    if (!edge.from || !edge.to) return undefined;
+    const from = endpoint(edge.from);
+    const to = endpoint(edge.to);
+    if (!from || !to) return undefined;
     from.add(edge.to);
     to.add(edge.from);
   }
   const regions: string[][] = [];
   const visited = new Set<string>();
-  for (const seed of nodes.keys()) {
+  for (const seed of vertices.keys()) {
     if (visited.has(seed)) continue;
     const region = [seed];
     visited.add(seed);
     for (let position = 0; position < region.length; position++) {
-      for (const next of nodes.get(region[position]) ?? []) {
+      for (const next of vertices.get(region[position]) ?? []) {
         if (visited.has(next)) continue;
         visited.add(next);
         region.push(next);

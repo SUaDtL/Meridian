@@ -54,6 +54,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [renameTarget, setRenameTarget] = useState<string>();
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
+  const [dismissedReadability, setDismissedReadability] = useState<ReadonlySet<string>>(new Set());
   const [readabilityOpen, setReadabilityOpen] = useState(false);
   const [comparison, setComparison] = useState<"design" | "layout">();
   const [storyOpen, setStoryOpen] = useState(false);
@@ -181,9 +182,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const readabilityTargets = useMemo(() => {
     if (!readabilityOpen || !currentFrame || !targetTable) return undefined;
     const elements = new Map(currentFrame.rendered.result.elements?.map(element => [element.key, element]));
+    const sourceIds = new Map(currentFrame.document.identity.elements.filter(item => item.status === "resolved")
+      .map(item => [item.id, item.binding.sourceId]));
     return targetTable.targets.map((target): ReadabilityTarget => {
       const element = elements.get(target.id);
-      return { id: target.id, kind: target.elementKind, label: target.label, from: target.sourceId, to: target.targetId,
+      return { id: target.id, kind: target.elementKind, label: target.label, sourceId: sourceIds.get(target.id), from: target.sourceId, to: target.targetId,
         typography: !!element?.capabilities.includes("typography"), measuredLabelSize: element?.appearance?.labelSizeInDiagram,
         solidTextPaint: element?.appearance?.solidTextPaint };
     });
@@ -403,7 +406,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return status;
         }} />}
       {readabilityTargets && currentFrame && targetTable && editor.current && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
-        token={targetTable.baseToken} editor={editor.current} canvas={canvasProfile} onClose={() => setReadabilityOpen(false)} onApply={proposal => {
+        token={targetTable.baseToken} editor={editor.current} canvas={canvasProfile}
+        dismissed={dismissedReadability} onDismissed={setDismissedReadability}
+        onRename={!editingUnavailable ? id => { setReadabilityOpen(false); renameFromOutline(id); } : undefined} onClose={() => setReadabilityOpen(false)} onApply={proposal => {
           const current = editor.current!;
           const status = current.applyContrast(proposal);
           if (status === "applied") setProject(current.snapshot());

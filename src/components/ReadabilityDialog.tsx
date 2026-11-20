@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import ReadabilityWorker from "../lib/authoring/readability.worker?worker&inline";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
-import type { BaseToken } from "../lib/authoring/base-token";
+import { canonicalDigest, type BaseToken } from "../lib/authoring/base-token";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { ReadyProposal } from "../lib/authoring/proposals";
-import { minimumAdvisoryLabelSize, viewingScale, type FrameGeometry, type ReadabilityFinding, type ReadabilityReport,
+import { minimumAdvisoryLabelSize, normalizedName, viewingScale, type FrameGeometry, type ReadabilityFinding, type ReadabilityReport,
   type ReadabilityTarget, type ViewingProfile } from "../lib/authoring/readability";
 import Modal from "./Modal";
 
@@ -13,22 +13,27 @@ const checkNames = { "QC-01": "Solid text contrast", "QC-03": "Viewed label size
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type ContrastPreview = NonNullable<ReturnType<Editor["readContrastPreview"]>>;
 
-export default function ReadabilityDialog({ frame, targets, token, editor, canvas, onApply, onClose }: {
+export default function ReadabilityDialog({ frame, targets, token, editor, canvas, dismissed, onDismissed, onRename, onApply, onClose }: {
   frame: FrameGeometry;
   targets: ReadabilityTarget[];
   token: BaseToken;
   editor: Editor;
   canvas?: ViewingProfile;
+  dismissed: ReadonlySet<string>;
+  onDismissed: Dispatch<SetStateAction<ReadonlySet<string>>>;
+  onRename?: (elementId: string) => void;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyContrast"]>;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState<"canvas" | "presentation" | "custom">(canvas ? "canvas" : "presentation");
   const [custom, setCustom] = useState(presentation);
-  const [result, setResult] = useState<ReadabilityReport>();
+  const [result, setResult] = useState<{ report: ReadabilityReport; findings: { finding: ReadabilityFinding; key: string }[] }>();
   const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState<"once" | "narrow">();
   const [error, setError] = useState("");
   const [fix, setFix] = useState<{ proposal: ReadyProposal; preview: ContrastPreview; url: string }>();
+  const [showDismissed, setShowDismissed] = useState(false);
+  const summary = useRef<HTMLParagraphElement>(null);
   const [imageReady, setImageReady] = useState(false);
   const active = useRef<AbortController | undefined>(undefined);
   const profile = mode === "canvas" && canvas ? canvas : mode === "custom" ? custom : presentation;
@@ -51,8 +56,11 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
       viewingScale(profile, frame);
       const report = await runAuthoringWorker<ReadabilityReport>(() => new ReadabilityWorker(), { targets, profile, frame },
         work.signal, "Checking the diagram", extended);
+      const findings = await Promise.all(report.findings.map(async finding => ({
+        finding, key: await canonicalDigest("meridian-quality-finding/v1", dismissalEvidence(finding)),
+      })));
       work.signal.throwIfAborted();
-      setResult(report);
+      setResult({ report, findings });
       setRetry(undefined);
     } catch (reason) {
       if (!work.signal.aborted) {
@@ -98,6 +106,32 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     }
   }
 
+  function dismissalEvidence(finding: ReadabilityFinding) {
+    if (finding.rule === "QC-05") {
+      return [finding.rule, 1, [...finding.targets].sort(), normalizedName(byId.get(finding.targets[0])?.label ?? "")];
+    }
+    if (finding.rule === "QC-06") {
+      return [finding.rule, 1, finding.regions.map(region => [...region].sort()).sort()];
+    }
+    return [1, finding, profile];
+  }
+
+  const findings = result?.findings ?? [];
+  const hiddenCount = findings.filter(item => dismissed.has(item.key)).length;
+
+  function toggleDismissal(key: string, restore: boolean) {
+    onDismissed(current => {
+      const next = new Set(current);
+      if (restore) next.delete(key);
+      else {
+        next.add(key);
+        if (next.size > 2_000) next.delete(next.values().next().value!);
+      }
+      return next;
+    });
+    requestAnimationFrame(() => summary.current?.focus());
+  }
+
   function findingText(finding: ReadabilityFinding) {
     if (finding.rule === "QC-01") {
       const name = byId.get(finding.target)?.label || "Unnamed label";
@@ -135,14 +169,34 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
       {error && <p role="alert">{error}</p>}
       {result && <section aria-label="Readability results" aria-busy={busy}>
         <h3>Coverage</h3>
-        <ul>{result.coverage.map(item => <li key={item.rule}>{checkNames[item.rule]} · {item.measured} measured · {item.unknown} unknown · {item.inapplicable} not applicable</li>)}</ul>
+        <ul>{result.report.coverage.map(item => <li key={item.rule}>{checkNames[item.rule]} · {item.measured} measured · {item.unknown} unknown · {item.inapplicable} not applicable</li>)}</ul>
         <p>Contrast measurements cover text with a verified solid backdrop. Gradients and unverified overlaps appear as unknown.</p>
         <h3>Findings</h3>
-        <p role="status">{result.findings.length} {result.findings.length === 1 ? "finding" : "findings"} from the checks above.</p>
-        <ul>{result.findings.map((finding, index) => <li key={`${finding.rule}-${index}`}>
+        <p ref={summary} tabIndex={-1} role="status">{findings.length - hiddenCount} {findings.length - hiddenCount === 1 ? "finding" : "findings"} from the checks above.
+          {hiddenCount ? ` ${hiddenCount} ignored this session.` : ""}</p>
+        {hiddenCount > 0 && <label className="check-label"><input type="checkbox" checked={showDismissed}
+          onChange={event => setShowDismissed(event.target.checked)} /> Show ignored findings</label>}
+        <ul>{findings.filter(item => showDismissed || !dismissed.has(item.key)).map(({ finding, key }) => <li key={key}>
           <strong>{checkNames[finding.rule]}</strong><p>{findingText(finding)}</p>
-          {finding.rule === "QC-01" && <button type="button" className="button secondary" disabled={busy}
+          {finding.rule === "QC-01" && !dismissed.has(key) && <button type="button" className="button secondary" disabled={busy}
             onClick={() => void previewFix(finding.target)}>Preview text contrast fix for {byId.get(finding.target)?.label || "unnamed label"}</button>}
+          {finding.rule === "QC-05" && <details><summary>Review elements with this name</summary>
+            <ul>{finding.targets.map((id, index) => {
+              const item = byId.get(id);
+              return <li key={id}>{item?.label || "Unnamed element"} · {item?.kind || "element"} {item?.sourceId || index + 1}
+                {item?.kind === "node" && onRename && !dismissed.has(key) && <button type="button" className="button quiet"
+                  disabled={busy} onClick={() => onRename(id)}>Edit label {index + 1}</button>}
+              </li>;
+            })}</ul>
+          </details>}
+          {finding.rule === "QC-06" && <details><summary>Review regions</summary>
+            <p>Regions follow declared connections.</p><ol>{finding.regions.map(region => <li key={region[0]}>
+              {region.map(id => byId.get(id)?.label || "Unnamed element").join(", ")}
+            </li>)}</ol>
+          </details>}
+          <button type="button" className="button quiet" disabled={busy} onClick={() => toggleDismissal(key, dismissed.has(key))}>
+            {dismissed.has(key) ? "Restore finding" : "Ignore for this session"}
+          </button>
         </li>)}</ul>
       </section>}
       {fix && <section aria-label="Proposed contrast fix" className="migration-preview">
