@@ -6,7 +6,7 @@ import { authorizeAssistRename, parseAssistSuggestion, type PendingAssistRequest
 import { canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } from './bulk-text';
 import { buildContrastCandidate, measureTargetContrast } from './contrast-fix';
-import { buildDesignRecipeCandidate, readDesignRecipe, type DesignRecipeId } from './design-recipes';
+import { buildDesignRecipeCandidate, buildScopedDesignRecipe, readDesignRecipe, verifyScopedDesign, type DesignRecipeId, type DesignScope } from './design-recipes';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
 import { prepareManualSource } from './manual-source';
@@ -55,7 +55,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   const designs = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3;
     dependency: string;
-    candidate: ReturnType<typeof buildDesignRecipeCandidate>;
+    candidate: ReturnType<typeof buildDesignRecipeCandidate> | ReturnType<typeof buildScopedDesignRecipe>;
     rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
   }>();
   const layouts = new WeakMap<ReadyProposal, {
@@ -178,12 +178,16 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     }
   }
 
-  async function prepareDesign(id: DesignRecipeId, signal?: AbortSignal) {
+  async function prepareDesign(id: DesignRecipeId, intent: DesignScope, signal?: AbortSignal) {
     if (closed) throw new Error('The project is closed.');
     signal?.throwIfAborted();
     const base = current.document;
-    const candidate = buildDesignRecipeCandidate(base, id);
-    const rendered = await renderMermaidProject(candidate.document, signal);
+    const scope = structuredClone(intent);
+    const accepted = scope.kind === 'diagram' ? undefined : await renderMermaidProject(base, signal);
+    if (closed || current.document !== base) throw new Error('The project changed. Refresh the design preview.');
+    const candidate = scope.kind === 'diagram' ? buildDesignRecipeCandidate(base, id) : buildScopedDesignRecipe(base, id, scope, accepted!);
+    const rendered = candidate.document === base && accepted ? accepted : await renderMermaidProject(candidate.document, signal);
+    if (accepted) verifyScopedDesign(accepted, rendered, candidate.proof);
     signal?.throwIfAborted();
     if (!rendered.targetTable) throw new Error('This design can only be previewed on a verified flowchart.');
     if (closed || current.document !== base) throw new Error('The project changed. Refresh the design preview.');
