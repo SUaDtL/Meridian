@@ -20,13 +20,14 @@ const emptyBranches = (): DecisionBranch[] => [
   { label: "", destination: { kind: "existing", id: "" } },
 ];
 
-export default function V3StructureEditor({ editor, nodes, edges, group, initialOperation = "addNode", initialTarget = "", onApply, onClose }: {
+export default function V3StructureEditor({ editor, nodes, edges, group, initialOperation = "addNode", initialTarget = "", deleteConnections, onApply, onClose }: {
   editor: Editor;
   nodes: NodeChoice[];
   edges: EdgeChoice[];
   group?: NodeChoice;
   initialOperation?: Operation;
   initialTarget?: string;
+  deleteConnections?: { ids: string[]; hidden: number };
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
   onClose: () => void;
 }) {
@@ -49,6 +50,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
   const [painted, setPainted] = useState(false);
   const work = useRef<AbortController | undefined>(undefined);
   const removingNode = operation === "removeNode";
+  const removingEdges = operation === "removeEdges";
+  const selectedEdges = deleteConnections?.ids.map(id => edges.find(edge => edge.id === id && edge.explicit));
   const grouping = operation === "addGroup";
   const ungrouping = operation === "removeGroup";
   const incident = removingNode && to ? edges.filter(edge => edge.sourceId === to || edge.targetId === to) : [];
@@ -90,6 +93,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
         : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label, direction: edgeDirection }
         : operation === "addGroup" ? { op: operation, memberIds: [...members], label }
         : operation === "removeNode" ? { op: operation, targetId: to, incidentEdgeIds: incident.map(edge => edge.id) }
+        : operation === "removeEdges" ? { op: operation, targetIds: deleteConnections?.ids ?? [] }
         : { op: operation, targetId: to };
       const proposal = await editor.prepareStructure(edit, controller.signal);
       const candidate = editor.readStructurePreview(proposal);
@@ -126,6 +130,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
     : operation === "addGroup" ? !!label && members.size > 0
     : operation === "removeGroup" ? !!to
     : (operation === "removeEdge" || operation === "setEdgeLabel") ? !!to
+    : removingEdges ? !!selectedEdges?.length && selectedEdges.every(Boolean)
     : operation === "removeNode" ? !!to && !unidentified.length : !!from && !!to && (!duplicateKey || approvedDuplicate === duplicateKey);
   const search = operation === "addEdge" ? nodeQuery.trim().toLowerCase() : "";
   const nodeOptions = nodes.filter(node => !search || node.id === from || node.id === to || node.label.toLowerCase().includes(search))
@@ -149,7 +154,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
             setBranches(emptyBranches());
             resetPreview();
           }}>
-            {group ? <option value="removeGroup">Ungroup</option> : <>
+            {removingEdges ? <option value="removeEdges">Delete selected connections</option>
+              : group ? <option value="removeGroup">Ungroup</option> : <>
               <option value="addNode">Add node</option>
               <option value="addNext" disabled={!nodes.length}>Add next</option>
               <option value="addDecision">Add decision</option>
@@ -195,7 +201,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
           </select>
         </label>}
         {!!unidentified.length && <p role="status">Each incident connection needs an explicit source ID before this node can be deleted.</p>}
-        {operation !== "removeEdge" && !removingNode && !ungrouping && <label>{(operation === "addEdge" || operation === "setEdgeLabel")
+        {operation !== "removeEdge" && !removingEdges && !removingNode && !ungrouping && <label>{(operation === "addEdge" || operation === "setEdgeLabel")
           ? "Connection label (optional)" : grouping ? "Group label" : operation === "addDecision" ? "Decision label" : "Node label"}
           <input value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
         </label>}
@@ -247,6 +253,11 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
           </label>)}
         </fieldset>}
         {ungrouping && <p>Ungroup {group?.label}. The member nodes and all connections will stay in the diagram.</p>}
+        {removingEdges && <section aria-label="Connections to delete">
+          <p>{deleteConnections?.ids.length} selected · {deleteConnections?.hidden} hidden in the outline</p>
+          <ul>{selectedEdges?.map((edge, index) => <li key={deleteConnections?.ids[index]}>{edge?.label || "Connection unavailable"}</li>)}</ul>
+          <p>The edit preserves the endpoint nodes. You can restore the connections with Undo.</p>
+        </section>}
         {operation === "addNext" && <>
           <label>Connection direction<select value={incoming ? "incoming" : "outgoing"} disabled={busy}
             onChange={event => { setIncoming(event.target.value === "incoming"); resetPreview(); }}>
@@ -268,8 +279,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
           </div>
         )}
         {preview?.impact && <section aria-label="Deletion impact">
-          <h3>{ungrouping ? "Group container to remove" : removingNode ? "Node to remove" : "Connection to remove"}</h3>
-          <p>{ungrouping ? group?.label : (removingNode ? nodes : edges).find(item => item.id === to)?.label}</p>
+          <h3>{removingEdges ? "Retained annotations" : ungrouping ? "Group container to remove" : removingNode ? "Node to remove" : "Connection to remove"}</h3>
+          {!removingEdges && <p>{ungrouping ? group?.label : (removingNode ? nodes : edges).find(item => item.id === to)?.label}</p>}
           {removingNode && <>
             <h4>Incident connections to remove ({incident.length})</h4>
             {!!incident.length && <ul>{incident.map(edge => <li key={edge.id}>{edge.label}</li>)}</ul>}

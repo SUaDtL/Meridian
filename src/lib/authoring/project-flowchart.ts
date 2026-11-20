@@ -9,6 +9,8 @@ import { retireElements } from './retire-elements';
 import type { FlowchartFragment } from './source-patches';
 import { validateMermaidProject } from './validate-mermaid-project';
 
+export const bulkConnectionLimit = 200;
+
 export type DecisionBranch = { label: string; destination: { kind: 'existing'; id: string } | { kind: 'new'; label: string } };
 
 /** The canvas operations currently supported by the pinned source proof. */
@@ -21,6 +23,7 @@ export type NativeFlowchartEdit =
   | { op: 'addGroup'; memberIds: readonly string[]; label: string }
   | { op: 'removeGroup'; targetId: string }
   | { op: 'removeNode'; targetId: string; incidentEdgeIds: readonly string[] }
+  | { op: 'removeEdges'; targetIds: readonly string[] }
   | { op: 'removeEdge'; targetId: string };
 
 export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit: NativeFlowchartEdit, signal?: AbortSignal) {
@@ -105,6 +108,16 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
       removal = [{ id: edit.targetId, legacyKey: `edge:id:${sourceId}` }];
       break;
     }
+    case 'removeEdges': {
+      if (!edit.targetIds.length || edit.targetIds.length > bulkConnectionLimit
+        || new Set(edit.targetIds).size !== edit.targetIds.length) {
+        throw new Error('Select one to 200 distinct explicit connections.');
+      }
+      const sourceIds = edit.targetIds.map(edgeSourceId);
+      intent = { op: 'removeEdges', sourceIds };
+      removal = edit.targetIds.map((id, index) => ({ id, legacyKey: `edge:id:${sourceIds[index]}` }));
+      break;
+    }
     case 'removeNode': {
       const sourceId = nodeSourceId(edit.targetId);
       const incidentEdgeIds = edit.incidentEdgeIds.map(edgeSourceId);
@@ -136,21 +149,22 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
     ? nextById.get(item.id)?.status === 'retired' : nextById.get(item.id) === item);
   const target = added.find(item => item.binding.sourceId === proof.sourceId
     && item.elementKind === (edit.op === 'addEdge' ? 'edge' : edit.op === 'addGroup' ? 'group' : 'node'));
-  const noNewIdentity = edit.op === 'setNodeLabel' || edit.op === 'setEdgeLabel' || edit.op === 'removeEdge' || edit.op === 'removeNode' || edit.op === 'removeGroup';
+  const noNewIdentity = edit.op === 'setNodeLabel' || edit.op === 'setEdgeLabel' || edit.op === 'removeEdge'
+    || edit.op === 'removeEdges' || edit.op === 'removeNode' || edit.op === 'removeGroup';
   const validAdded = noNewIdentity ? !added.length
     : edit.op === 'addNext' ? added.length === 2 && !!target && added.some(item => item.elementKind === 'edge' && item.binding.sourceId === proof.addedEdgeId)
     : added.length === 1 && !!target;
   if (!validPrior || !validAdded) {
     throw new Error('The edit could not preserve the project’s existing identities.');
   }
-  const elementId = noNewIdentity ? edit.targetId : target!.id;
+  const elementId = edit.op === 'removeEdges' ? undefined : noNewIdentity ? edit.targetId : target!.id;
   const roles = retired?.roles ?? document.roles;
   const candidate = validateMermaidProject({
     ...document,
     source: proof.source,
     identity: { ...document.identity, elements, orphans },
     design: retired?.design ?? document.design,
-    roles: edit.op === 'addNext' && edit.role ? [...roles, { elementId, role: edit.role }] : roles,
+    roles: edit.op === 'addNext' && edit.role ? [...roles, { elementId: target!.id, role: edit.role }] : roles,
     storyboard: retired?.storyboard ?? document.storyboard,
     revision: document.revision + 1,
     updatedAt: new Date().toISOString(),
