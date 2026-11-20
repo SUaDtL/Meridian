@@ -881,3 +881,23 @@
   max-width: 15rem;
   overflow-wrap: anywhere;
 }
+.project-outline > ul {
+  list-style: none;
+  padding: 0;
+  max-height: 42svh;
+  overflow: auto;
+  border-radius: 7px;
+}
+.project-outline > ul > li {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.project-outline > ul > li[data-current="true"] { border-color: #6b9783; }
+.project-outline > ul > li[aria-selected="true"] { background: #253f34; }
+.project-outline small { color: #aac4b9; }
+.migration-preview mark { background: #dcefae; color: #17241e; }

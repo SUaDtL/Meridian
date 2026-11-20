@@ -129,6 +129,15 @@ export function flowchartSubsetTopology(source: string) {
   };
 }
 
+export function flowchartSourceLocations(source: string) {
+  const { nodes, edges } = readSubset(source);
+  const location = ({ start, end }: RecordSpan) => ({ from: start, to: end });
+  return {
+    nodes: new Map(Array.from(nodes, ([id, record]) => [id, location(record)])),
+    edges: new Map(edges.flatMap(({ id, record }) => id ? [[id, location(record)] as const] : [])),
+  };
+}
+
 function replace(span: RecordSpan, replacement: string): SourcePatch {
   return { from: span.start, to: span.end, expectedText: span.text, replacement };
 }
