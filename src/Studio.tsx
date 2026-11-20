@@ -47,6 +47,7 @@ import DiagramStage from "./components/DiagramStage";
 import Inspector from "./components/Inspector";
 import Storyboard from "./components/Storyboard";
 import HeadingEditor from "./components/HeadingEditor";
+import { prepareHeadingProposal } from "./lib/authoring/proposals";
 import { useDiagram } from "./hooks/useDiagram";
 import { createDesign } from "./lib/design";
 import { DEFAULT_SETTINGS } from "./lib/themes";
@@ -1066,6 +1067,7 @@ export default function Studio({
           field={heading}
           revision={workspace.revision}
           outcome={workspace.proposalOutcome}
+          prepare={prepareHeadingProposal}
           onApply={workspace.applyProposal}
           onClose={closeHeading}
         />

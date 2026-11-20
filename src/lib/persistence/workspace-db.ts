@@ -96,7 +96,10 @@ export function listWorkspaceProjectIds(db: IDBDatabase): Promise<string[]> {
 
 /** Import the portable document as a separate project, preserving authored state. */
 export async function importWorkspaceProject(db: IDBDatabase, text: string): Promise<MermaidProjectV3> {
-  const original = parseMermaidProject(text);
+  return saveWorkspaceProjectCopy(db, parseMermaidProject(text));
+}
+
+export async function saveWorkspaceProjectCopy(db: IDBDatabase, original: MermaidProjectV3): Promise<MermaidProjectV3> {
   const imported = { ...original, id: crypto.randomUUID(), revision: 0 };
   await writeWorkspaceProject(db, imported, null);
   return imported;

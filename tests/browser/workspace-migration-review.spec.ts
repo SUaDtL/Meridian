@@ -106,7 +106,7 @@ test('round-trips and previews a portable v3 project before a later legacy migra
     const saved = JSON.parse(await download(destination, 'Download v3 copy of Migration example'));
     expect(saved.id).not.toBe(original.id);
     expect(saved).toEqual({ ...original, id: saved.id, revision: 0 });
-    await dialog.getByRole('button', { name: 'Preview Migration example' }).click();
+    await dialog.getByRole('button', { name: 'Open v3 project Migration example' }).click();
     const preview = destination.getByRole('dialog', { name: 'Migration example', exact: true });
     await expect.poll(() => preview.getByRole('img', { name: 'Diagram preview for Migration example' })
       .evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
@@ -128,4 +128,49 @@ test('round-trips and previews a portable v3 project before a later legacy migra
   } finally {
     await fresh.close();
   }
+});
+
+async function changeHeading(page: Page, title: string) {
+  await page.getByRole('button', { name: 'Edit heading', exact: true }).click();
+  const heading = page.getByRole('dialog', { name: 'Edit heading', exact: true });
+  await heading.getByRole('textbox', { name: 'Title', exact: true }).fill(title);
+  await heading.getByRole('button', { name: 'Apply heading', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: title, exact: true })).toBeVisible();
+}
+
+test('opens a live v3 project, saves reversible edits and recovers a second tab as a separate project', async ({ page, context }) => {
+  const { original, raw } = await seedWorkspace(page);
+  const list = await openReview(page);
+  await list.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await list.getByRole('button', { name: 'Open v3 project Migration example' }).click();
+  const second = await context.newPage();
+  await second.goto('/');
+  const secondList = await openReview(second);
+  await secondList.getByRole('button', { name: 'Open v3 project Migration example' }).click();
+  await expect(second.getByText('Saved in this browser.', { exact: true })).toBeVisible();
+
+  await changeHeading(page, 'First tab edit');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Migration example', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'First tab edit', exact: true })).toBeVisible();
+  await expect(page.getByText('Saved in this browser.', { exact: true })).toBeVisible();
+  const first = JSON.parse(await download(page, 'Download v3 project'));
+  expect(first).toMatchObject({ id: original.id, title: 'First tab edit', revision: 3, source });
+
+  await changeHeading(second, 'Second tab edit');
+  await expect(second.getByText('Changes are only in this session.')).toBeVisible();
+  await second.getByRole('button', { name: 'Back to v3 projects' }).click();
+  await expect(second.getByText(/Your latest changes are still in this session/)).toBeVisible();
+  await second.getByRole('button', { name: 'Reload saved version' }).click();
+  await second.getByRole('button', { name: 'Cancel reload' }).click();
+  const unsaved = JSON.parse(await download(second, 'Download my changes'));
+  expect(unsaved).toMatchObject({ id: original.id, title: 'Second tab edit', source });
+  await second.getByRole('button', { name: 'Save my changes as a new project' }).click();
+  await expect(secondList.getByRole('button', { name: 'Download v3 copy of Second tab edit' })).toBeEnabled();
+  const savedCopy = JSON.parse(await download(second, 'Download v3 copy of Second tab edit'));
+  expect(savedCopy.id).not.toBe(first.id);
+  expect(savedCopy).toEqual({ ...unsaved, id: savedCopy.id, revision: 0 });
+  expect(JSON.parse(await download(second, 'Download v3 copy of First tab edit'))).toEqual(first);
+  expect(await download(second, 'Download pre-migration backup')).toBe(raw);
 });

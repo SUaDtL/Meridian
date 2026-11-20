@@ -152,3 +152,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The v3 project list includes copies imported before migration. A later legacy migration adds only new records and commits the converted projects, receipt and original backup together. A capacity error or conflicting key aborts that transaction.
 - A saved v3 project can open a read-only diagram preview, display its exact Mermaid source and download a presentation when measured targets are available. The browser test rejects duplicate JSON keys, transfers a project into a fresh mobile-sized browser and verifies its contents after a later migration.
 - This advances Mermaid portability under PS06 and exercises the measured renderer through the application. The legacy editor is still the default. The v3 preview does not write editor changes.
+
+## Milestone 0 live v3 heading and save recovery
+
+[PR #17](https://github.com/SUaDtL/Meridian/pull/17) merged portable v3 import and preview as [`dea808e`](https://github.com/SUaDtL/Meridian/commit/dea808e601ddd533769cc636e7a26ed36d4ad6f2).
+
+- Projects opened through migration and recovery now use the durable v3 editor session. The same heading dialog prepares a baseline-checked proposal in either the legacy editor or the v3 session. The v3 session supports Undo and Redo as newer revisions.
+- The v3 session reports Saved only when the current revision reaches IndexedDB and attempts a checkpoint before leaving. A stale anchor retains the tab's authored changes and offers download, a separate saved copy or an explicit reload. Save errors also permit retry.
+- Browser coverage opens the same migrated project in two tabs, verifies reversible edits and exact saved revisions, and saves the second tab's conflicting changes as a separate project. The original project and legacy backup remain available. This advances PS01, PS02 and PS04. Structural canvas editing and a full v3 replacement for the default editor remain open.
