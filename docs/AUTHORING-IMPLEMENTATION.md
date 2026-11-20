@@ -119,3 +119,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The v3 editor can prepare Add Node, Rename Node or Connect for the supported flat grammar. Rename and Connect take resolved node UUIDs. The pinned Mermaid comparison verifies the exact source delta and visible label before the session can apply the candidate. A prepared candidate from an older snapshot cannot apply after another edit or Undo.
 - Apply preserves each existing identity and annotation. A successful Add or Connect creates one new identity. Source and identities enter history and autosave as one snapshot. Removing an element and retaining its annotations uses a separate operation and is outside this slice.
 - The Chromium fixture shows a v2 project with a BOM, CRLF, a source comment and a styled node migrating into v3, receiving all three operations, and reopening after Undo and Redo. This advances FN04, FN05, FN06 and FN10 for the tested subset. The browser fixture exercises the editor session directly. Canvas wiring, typed targets, recovery controls and studio/export parity still gate public activation.
+
+## Milestone 0 measured v3 render targets
+
+[PR #13](https://github.com/SUaDtL/Meridian/pull/13) merged the guarded v3 source edits as [`d150023`](https://github.com/SUaDtL/Meridian/commit/d150023fafaa08aadbd3496d877e17b4090e89e2).
+
+- The v3 flowchart renderer matches authored UUIDs to the detached Mermaid model before layout, then applies recipe styles and manual overrides. The result contains a `meridian-targets/v1` table with IDs, explicit kinds, group relationships, connector endpoints and direction, SVG-space bounds, the snapshot token and the render fingerprint.
+- Primary and owned SVG targets carry the same IDs as the measured table. Unresolved bindings do not gain interactive IDs. Contradictory group relationships, unresolved endpoints and missing geometry prevent an authoritative target table.
+- In Chromium, a migrated project with a styled node, a group and an authored connector yields matching target IDs, measured geometry and the migrated style. One Mermaid layout suffices. A heading-only edit advances the table's base token and reuses the measured render. This advances G02. Studio and offline storyboard playback still need to consume the same table and prove parity.
