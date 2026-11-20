@@ -37,6 +37,12 @@ test('checks the accepted drawing in a fixed viewing area without changing its s
   await expect(report.getByText(/Service measures .* CSS pixels/).first()).toBeVisible();
   await expect(report.getByText(/2 distinct elements share the name Service/)).toBeVisible();
   await expect(report.getByText('The diagram contains 2 regions with no connection between them.')).toBeVisible();
+  await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('document');
+  await check.getByRole('spinbutton', { name: 'Allocated width in CSS pixels' }).fill('125');
+  await expect(check.getByText('125 CSS pixels allocated · Fits width · Project revision 0')).toBeVisible();
+  await expect(report).toHaveCount(0);
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  await expect(report.getByText(/Service measures .* CSS pixels/).first()).toBeVisible();
   await check.getByRole('button', { name: 'Close dialog' }).click();
   await live.getByText('Mermaid source', { exact: true }).click();
   expect(await live.locator('pre').textContent()).toBe(source);

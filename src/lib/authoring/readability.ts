@@ -1,6 +1,6 @@
 import { solidTextContrast, type SolidTextPaint } from './solid-text-color';
 
-export type ViewingProfile = { width: number; height: number; padding: number };
+export type ViewingProfile = { width: number; height?: number; padding: number };
 export type FrameGeometry = { width: number; height: number; diagramScale: number };
 export type ReadabilityTarget = {
   id: string;
@@ -31,14 +31,15 @@ export const minimumAdvisoryLabelSize = 14;
 export const labelOverflowTolerance = 0.5;
 
 export function viewingScale(profile: ViewingProfile, frame: FrameGeometry): number {
-  if (!Number.isInteger(profile.width) || !Number.isInteger(profile.height) || !Number.isInteger(profile.padding)
-    || profile.width < 100 || profile.height < 100 || profile.width > 8192 || profile.height > 8192 || profile.padding < 0
-    || profile.padding * 2 >= Math.min(profile.width, profile.height)) throw new Error('Choose a viewing area between 100 and 8192 CSS pixels with room inside its padding.');
+  const validDimension = (value: number) => Number.isInteger(value) && value >= 100 && value <= 8192;
+  const { width, height, padding } = profile;
+  if (!validDimension(width) || (height !== undefined && !validDimension(height)) || !Number.isInteger(padding) || padding < 0
+    || padding * 2 >= Math.min(width, height ?? Infinity)) throw new Error('Choose a viewing area between 100 and 8192 CSS pixels with room inside its padding.');
   if (![frame.width, frame.height, frame.diagramScale].every(value => Number.isFinite(value) && value > 0)) {
     throw new Error('The current diagram did not provide stable viewing measurements.');
   }
-  return frame.diagramScale * Math.min((profile.width - profile.padding * 2) / frame.width,
-    (profile.height - profile.padding * 2) / frame.height);
+  const fitWidth = (width - padding * 2) / frame.width;
+  return frame.diagramScale * (height === undefined ? fitWidth : Math.min(fitWidth, (height - padding * 2) / frame.height));
 }
 
 export function normalizedName(label: string) {
