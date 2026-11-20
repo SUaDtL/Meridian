@@ -9,7 +9,8 @@ import { minimumAdvisoryLabelSize, normalizedName, viewingScale, type FrameGeome
 import Modal from "./Modal";
 
 const presentation: ViewingProfile = { width: 1280, height: 720, padding: 32 };
-const checkNames = { "QC-01": "Solid text contrast", "QC-03": "Viewed label size", "QC-05": "Duplicate names", "QC-06": "Separate regions" } as const;
+const checkNames = { "QC-01": "Solid text contrast", "QC-03": "Viewed label size", "QC-04": "Label containment",
+  "QC-05": "Duplicate names", "QC-06": "Separate regions" } as const;
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type ContrastPreview = NonNullable<ReturnType<Editor["readContrastPreview"]>>;
 
@@ -141,6 +142,11 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
       const name = byId.get(finding.target)?.label || "Unnamed label";
       return <>{name} measures {finding.pixels.toFixed(2)} CSS pixels in this viewing area. Labels under {minimumAdvisoryLabelSize} pixels can be difficult to read.</>;
     }
+    if (finding.rule === "QC-04") {
+      const name = byId.get(finding.target)?.label || "Unnamed label";
+      const sourceId = byId.get(finding.target)?.sourceId;
+      return <>{name}{sourceId && <> ({sourceId})</>} extends {finding.pixels.toFixed(2)} CSS pixels beyond its rectangular shape in this viewing area.</>;
+    }
     if (finding.rule === "QC-05") {
       const name = byId.get(finding.targets[0])?.label || "Unnamed element";
       return <>{finding.targets.length} distinct elements share the name {name}. Consider making their labels easier to tell apart.</>;
@@ -171,6 +177,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
         <h3>Coverage</h3>
         <ul>{result.report.coverage.map(item => <li key={item.rule}>{checkNames[item.rule]} · {item.measured} measured · {item.unknown} unknown · {item.inapplicable} not applicable</li>)}</ul>
         <p>Contrast measurements cover text with a verified solid backdrop. Gradients and unverified overlaps appear as unknown.</p>
+        <p>Label containment compares text bounds with square-corner node shapes. It flags spill greater than half a CSS pixel in the selected viewing area.</p>
         <h3>Findings</h3>
         <p ref={summary} tabIndex={-1} role="status">{findings.length - hiddenCount} {findings.length - hiddenCount === 1 ? "finding" : "findings"} from the checks above.
           {hiddenCount ? ` ${hiddenCount} ignored this session.` : ""}</p>

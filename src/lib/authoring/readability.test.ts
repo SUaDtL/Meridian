@@ -29,3 +29,17 @@ test('compares NFC and whitespace without changing display names or inventing co
   expect(analyzeReadability([...input, { id: 'broken', label: '', typography: false, kind: 'edge', from: 'g', to: 'a' }],
     profile, frame).coverage[2].unknown).toBe(1);
 });
+
+test('uses viewed CSS pixels for label containment and leaves unsupported geometry unknown', () => {
+  const input: ReadabilityTarget[] = [
+    { ...node('outside', 'Spill', 30), labelOverflowInDiagram: 1 },
+    { ...node('inside', 'Contained', 30), labelOverflowInDiagram: 0 },
+    node('unsupported', 'Round shape', 30),
+    { id: 'link', label: '', typography: false, kind: 'edge', from: 'outside', to: 'inside' },
+  ];
+  const result = analyzeReadability(input, profile, frame);
+  expect(result.findings).toContainEqual({ rule: 'QC-04', target: 'outside', pixels: 0.6 });
+  expect(result.coverage.find(item => item.rule === 'QC-04')).toEqual({ rule: 'QC-04', measured: 2, unknown: 1, inapplicable: 1 });
+  const smaller = analyzeReadability(input, { ...profile, width: 250 }, frame);
+  expect(smaller.findings.some(item => item.rule === 'QC-04')).toBe(false);
+});

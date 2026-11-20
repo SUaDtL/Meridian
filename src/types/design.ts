@@ -39,6 +39,7 @@ export interface RenderedAppearance {
   fontFamily?: string;
   fontWeight?: string;
   labelSizeInDiagram?: number;
+  labelOverflowInDiagram?: number;
   solidTextPaint?: SolidTextPaint;
 }
 

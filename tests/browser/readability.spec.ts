@@ -78,6 +78,32 @@ test('compares verified solid text and leaves the gradient node unmeasured', asy
   expect((await downloadProject(page, live)).design).toEqual(before.design);
 });
 
+test('measures rectangular label spill in a fixed viewing area at either pixel density', async ({ page, browser }, info) => {
+  const source = 'flowchart LR\n  A["This label exceeds its backing"]\n  B["Square"]\n  C(("Circle"))\n  A --> B\n  style A width:36px\n';
+  const project = { ...createDocument(), title: 'Label containment example', source };
+  project.design.elements['node:A'] = { shape: 'rect' };
+  project.design.elements['node:B'] = { shape: 'rect' };
+  async function measure(at: Page) {
+    const live = await openProject(at, project);
+    await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+    const check = at.getByRole('dialog', { name: 'Check readability' });
+    await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('presentation');
+    await check.getByRole('button', { name: 'Check diagram' }).click();
+    const report = check.getByRole('region', { name: 'Readability results' });
+    await expect(report.getByText('Label containment · 2 measured · 1 unknown · 1 not applicable')).toBeVisible();
+    const finding = report.getByText(/This label exceeds its backing \(A\) extends [\d.]+ CSS pixels beyond its rectangular shape/);
+    await expect(finding).toBeVisible();
+    return finding.textContent();
+  }
+  const expected = await measure(page);
+  const dense = await browser.newPage({ baseURL: info.project.use.baseURL, deviceScaleFactor: 2 });
+  try {
+    expect(await measure(dense)).toBe(expected);
+  } finally {
+    await dense.close();
+  }
+});
+
 test('reviews separate regions and keeps an ignored name finding across unrelated revision changes', async ({ page }, info) => {
   const source = 'flowchart LR\n A[Service]\n B[Service]\n C[Warehouse]\n A route@--> B\n';
   let live = await openProject(page, { ...createDocument(), title: 'Name review', source });
