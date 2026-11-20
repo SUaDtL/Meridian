@@ -352,7 +352,8 @@ export default function App() {
             )}
             {dialog === "guided" && (
               <GuidedProcessDialog draft={guidedDraft} onDraft={setGuidedDraft} onClose={closeDialog}
-                onCreated={(id) => {
+                onCreated={(id, draftRetained) => {
+                  if (draftRetained) notify("Project saved. The local draft could not be cleared.", "error");
                   setGuidedDraft({ title: "", text: "" });
                   setRequestedV3Project(id);
                   setDialog("migration");
