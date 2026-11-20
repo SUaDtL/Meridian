@@ -1,7 +1,8 @@
 import { projectBaseToken } from '../authoring/base-token';
 import { elementUuidPattern } from '../authoring/identities';
 import type { MermaidProjectV3 } from '../authoring/mermaid-project';
-import { validateMermaidProject } from '../authoring/validate-mermaid-project';
+import { parseMermaidProject, validateMermaidProject } from '../authoring/validate-mermaid-project';
+import { MAX_PROJECTS } from '../storage';
 
 export interface SavedAnchor {
   storageGeneration: string;
@@ -77,6 +78,30 @@ function sameAnchor(left: SavedAnchor, right: SavedAnchor): boolean {
   return left.storageGeneration === right.storageGeneration && left.stateDigest === right.stateDigest;
 }
 
+export function listWorkspaceProjectIds(db: IDBDatabase): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(documentsStore);
+    const request = tx.objectStore(documentsStore).getAllKeys(undefined, MAX_PROJECTS + 1);
+    tx.oncomplete = () => {
+      const keys = request.result;
+      if (keys.length > MAX_PROJECTS || !keys.every(key => typeof key === 'string' && elementUuidPattern.test(key))) {
+        reject(new Error('The saved Meridian project list is invalid.'));
+        return;
+      }
+      resolve(keys as string[]);
+    };
+    tx.onabort = () => reject(tx.error ?? new Error('Could not read the saved Meridian projects.'));
+  });
+}
+
+/** Import the portable document as a separate project, preserving authored state. */
+export async function importWorkspaceProject(db: IDBDatabase, text: string): Promise<MermaidProjectV3> {
+  const original = parseMermaidProject(text);
+  const imported = { ...original, id: crypto.randomUUID(), revision: 0 };
+  await writeWorkspaceProject(db, imported, null);
+  return imported;
+}
+
 /** Verify the payload against its durable anchor after the readonly transaction completes. */
 export async function readWorkspaceProject(db: IDBDatabase, id: string): Promise<StoredProject | undefined> {
   const stored = await new Promise<StoredProject | undefined>((resolve, reject) => {
@@ -126,7 +151,16 @@ export async function writeWorkspaceProject(
         tx.abort();
         return;
       }
-      documents.put(record);
+      if (existing !== undefined) documents.put(record);
+      else {
+        const count = documents.count();
+        count.onsuccess = () => {
+          if (count.result >= MAX_PROJECTS) {
+            failure = new Error(`Keep at most ${MAX_PROJECTS} v3 projects in this browser.`);
+            tx.abort();
+          } else documents.add(record);
+        };
+      }
     };
   });
 }

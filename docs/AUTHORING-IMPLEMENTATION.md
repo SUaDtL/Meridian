@@ -143,3 +143,12 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - Manage Projects opens a review of the saved migration receipt. Users can prepare v3 copies, see which legacy records need recovery, and download the checksum-verified original archive or individual verified v3 projects. The existing editing workspace continues to open v1/v2 projects.
 - A later legacy write updates the recovery notice. It leaves prior v3 copies and their pre-migration backup available separately. A failed migration keeps Download current legacy workspace available and permits a clean retry.
 - Built-app Chromium tests read the downloaded files, verify source and archive preservation after a second-tab write, and simulate a quota error after project writes have been requested within the transaction. This advances PS03 and PS04. Opening and editing v3 projects through the application and importing v3 files remain open.
+
+## Milestone 0 portable v3 project import and preview
+
+[PR #16](https://github.com/SUaDtL/Meridian/pull/16) merged workspace migration review as [`23be89d`](https://github.com/SUaDtL/Meridian/commit/23be89d16b5576c924b7d74dbfc97fde228be06c).
+
+- Migration and recovery accepts strictly validated, size-bounded v3 diagram files. An import creates a new project at revision zero with the same authored source, element identities, settings and annotations. The shared IndexedDB transaction enforces the workspace count for new projects.
+- The v3 project list includes copies imported before migration. A later legacy migration adds only new records and commits the converted projects, receipt and original backup together. A capacity error or conflicting key aborts that transaction.
+- A saved v3 project can open a read-only diagram preview, display its exact Mermaid source and download a presentation when measured targets are available. The browser test rejects duplicate JSON keys, transfers a project into a fresh mobile-sized browser and verifies its contents after a later migration.
+- This advances Mermaid portability under PS06 and exercises the measured renderer through the application. The legacy editor is still the default. The v3 preview does not write editor changes.

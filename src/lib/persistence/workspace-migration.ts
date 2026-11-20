@@ -166,8 +166,9 @@ function commitMigration(
           result = existingResult(previous, record.sourceKey, record.sourceChecksum);
           return;
         }
-        if (active.result !== undefined || count.result !== 0) {
-          throw new Error('Meridian already has a workspace in IndexedDB.');
+        if (active.result !== undefined) throw new Error('Meridian already has a workspace in IndexedDB.');
+        if (count.result + projects.length > MAX_PROJECTS) {
+          throw new Error(`The migration would exceed the ${MAX_PROJECTS}-project workspace limit.`);
         }
         const latest = readLegacy(storage);
         if (latest?.key !== original.key || latest.raw !== original.raw) {
