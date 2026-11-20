@@ -2,19 +2,20 @@ import type { RenderResult, StudioDocument } from '../../types';
 import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram } from '../render';
 import { canonicalJson } from './base-token';
-import { flowchartEngineShapes, type Shape } from './flowchart-source';
+import { flowchartEngineConnections, flowchartEngineShapes, type ConnectionDirection, type Shape } from './flowchart-source';
 import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval, type SourcePatch } from './source-patches';
 
 export type SourceIntent =
   | { op: 'addNode'; label: string; shape?: Shape }
   | { op: 'addNext'; anchor: string; label: string; shape: Shape; edgeLabel?: string; incoming: boolean }
   | { op: 'setNodeLabel' | 'setEdgeLabel'; sourceId: string; label: string }
-  | { op: 'addEdge'; from: string; to: string; label?: string }
+  | { op: 'addEdge'; from: string; to: string; label?: string; direction?: ConnectionDirection }
   | { op: 'addGroup'; members: readonly string[]; label: string }
   | { op: 'removeGroup'; sourceId: string }
   | { op: 'removeNode'; sourceId: string; incidentEdgeIds: readonly string[] }
   | { op: 'removeEdge'; sourceId: string };
 
+const directionsByEngineType = new Map(Object.entries(flowchartEngineConnections).map(([direction, type]) => [type, direction]));
 const shapesByEngineType = new Map(Object.entries(flowchartEngineShapes).map(([shape, type]) => [type, shape]));
 const mismatch = () => new Error('Mermaid read a different diagram than expected. Your source edit was not applied.');
 const inexactLabel = () => new Error('Mermaid could not display that label exactly. Choose a different label and preview again.');
@@ -48,7 +49,7 @@ function planSourceEdit(source: string, intent: SourceIntent): { sourceId: strin
   switch (intent.op) {
     case 'addNode': return planNodeAddition(source, intent.label, intent.shape);
     case 'addNext': return planAddNext(source, intent.anchor, intent.label, intent.shape, intent.edgeLabel, intent.incoming);
-    case 'addEdge': return planEdgeAddition(source, intent.from, intent.to, intent.label);
+    case 'addEdge': return planEdgeAddition(source, intent.from, intent.to, intent.label, intent.direction);
     case 'addGroup': return planGroupCreation(source, intent.members, intent.label);
     case 'removeGroup': return planGroupRemoval(source, intent.sourceId);
     case 'removeNode': return { sourceId: intent.sourceId, patches: planNodeRemoval(source, intent.sourceId, intent.incidentEdgeIds) };
@@ -81,7 +82,7 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
       edges: [...graph.edges, {
         id: sourceId, from: intent.from, to: intent.to,
         label: intent.label ?? '', labelType: intent.label ? 'string' : 'text',
-        type: 'arrow_point', stroke: 'normal', length: 1, interpolate: null, styles: [], classes: [],
+        type: flowchartEngineConnections[intent.direction ?? 'forward'], stroke: 'normal', length: 1, interpolate: null, styles: [], classes: [],
       }],
     };
     case 'addGroup':
@@ -139,7 +140,7 @@ export async function proveFlowchartEdit(
   const observedTopology = {
     direction: before.direction,
     nodes: before.nodes.map(({ id, shape }) => ({ id, shape })),
-    edges: before.edges.map(({ id, from, to }) => ({ id, from, to })),
+    edges: before.edges.map(({ id, from, to, type }) => ({ id, from, to, direction: directionsByEngineType.get(type ?? "") ?? null })),
   };
   if (canonicalJson(sourceTopology) !== canonicalJson(observedTopology)) throw mismatch();
   const output = source === document.source ? initial : await render(source);

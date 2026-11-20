@@ -1,6 +1,6 @@
 import { flowchartModelFor } from '../render';
 import { proveFlowchartEdit, type SourceIntent } from './flowchart-proof';
-import type { Shape } from './flowchart-source';
+import type { ConnectionDirection, Shape } from './flowchart-source';
 import { reconcileIdentities } from './identities';
 import { observeFlowchartIdentities } from './identity-observation';
 import type { MermaidProjectV3, SemanticRole } from './mermaid-project';
@@ -12,7 +12,7 @@ export type NativeFlowchartEdit =
   | { op: 'addNode'; label: string; shape: Shape }
   | { op: 'addNext'; anchorId: string; label: string; shape: Shape; edgeLabel?: string; incoming: boolean; role?: SemanticRole }
   | { op: 'setNodeLabel' | 'setEdgeLabel'; targetId: string; label: string }
-  | { op: 'addEdge'; sourceId: string; targetId: string; label?: string }
+  | { op: 'addEdge'; sourceId: string; targetId: string; label?: string; direction?: ConnectionDirection }
   | { op: 'addGroup'; memberIds: readonly string[]; label: string }
   | { op: 'removeGroup'; targetId: string }
   | { op: 'removeNode'; targetId: string; incidentEdgeIds: readonly string[] }
@@ -53,7 +53,7 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
       intent = { op: 'setEdgeLabel', sourceId: edgeSourceId(edit.targetId), label: edit.label };
       break;
     case 'addEdge':
-      intent = { op: 'addEdge', from: nodeSourceId(edit.sourceId), to: nodeSourceId(edit.targetId), label: edit.label };
+      intent = { op: 'addEdge', from: nodeSourceId(edit.sourceId), to: nodeSourceId(edit.targetId), label: edit.label, direction: edit.direction };
       break;
     case 'addGroup':
       intent = { op: 'addGroup', members: edit.memberIds.map(nodeSourceId), label: edit.label };

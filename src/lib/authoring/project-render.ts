@@ -1,6 +1,6 @@
 import type { RenderResult } from '../../types';
 import type { DesignState, ElementKind, ElementStyle, RenderElement } from '../../types/design';
-import type { FlowModel } from '../design';
+import { flowEdgeDirection, type FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram, renderFingerprint } from '../render';
 import { canonicalDigest, canonicalJson, projectBaseToken, type BaseToken } from './base-token';
 import { sourceBindingKey } from './identities';
@@ -97,11 +97,10 @@ export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: 
   let edgeIndex = 0;
   for (const item of observed) {
     if (item.elementKind !== 'edge') continue;
-    const { type, stroke, text } = model.edges[edgeIndex++];
+    const edge = model.edges[edgeIndex++];
     const id = bound.get(item.legacyKey);
-    if (id) edgeLabels.set(id, text ?? '');
-    directions.set(item.legacyKey, !type || type === 'arrow_open' || stroke === 'invisible' ? 'none'
-      : type.startsWith('double_arrow_') ? 'both' : 'forward');
+    if (id) edgeLabels.set(id, edge.text ?? '');
+    directions.set(item.legacyKey, flowEdgeDirection(edge));
   }
   const idFor = (key: string) => {
     const id = bound.get(key);

@@ -7,12 +7,12 @@ import type { SemanticRole } from "../lib/authoring/mermaid-project";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { ElementRemovalImpact } from "../lib/authoring/retire-elements";
-import { shapeDelimiters, type Shape } from "../lib/authoring/flowchart-source";
+import { shapeDelimiters, type ConnectionDirection, type Shape } from "../lib/authoring/flowchart-source";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Operation = NativeFlowchartEdit["op"];
 type NodeChoice = { id: string; label: string };
-type EdgeChoice = NodeChoice & { sourceId: string | null; targetId: string | null; explicit: boolean; text: string };
+type EdgeChoice = NodeChoice & { sourceId: string | null; targetId: string | null; explicit: boolean; text: string; direction: ConnectionDirection | null };
 type Preview = { proposal: ReadyProposal; url: string; impact?: ElementRemovalImpact };
 const nextRoles: readonly SemanticRole[] = ["process", "decision", "neutral", "service", "database", "queue", "external", "person"];
 
@@ -32,6 +32,9 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
   const [edgeLabel, setEdgeLabel] = useState("");
   const [incoming, setIncoming] = useState(false);
   const [role, setRole] = useState<SemanticRole | "">("");
+  const [nodeQuery, setNodeQuery] = useState("");
+  const [edgeDirection, setEdgeDirection] = useState<ConnectionDirection>("forward");
+  const [approvedDuplicate, setApprovedDuplicate] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState(initialOperation === "removeGroup" ? group?.id ?? "" : initialTarget);
   const [members, setMembers] = useState<ReadonlySet<string>>(new Set());
@@ -47,6 +50,12 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
   const unidentified = incident.filter(edge => !edge.explicit);
   const boundary = grouping ? edges.filter(edge =>
     members.has(edge.sourceId ?? "") !== members.has(edge.targetId ?? "")) : [];
+
+  const duplicateKey = operation === "addEdge" && from && to && edges.some(edge => {
+    const sameEndpoints = (edge.sourceId === from && edge.targetId === to)
+      || (edgeDirection !== "forward" && edge.sourceId === to && edge.targetId === from);
+    return sameEndpoints && edge.text === label && edge.direction === edgeDirection;
+  }) ? JSON.stringify([from, to, edgeDirection, label]) : "";
 
   useEffect(() => () => { work.current?.abort(); }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
@@ -67,7 +76,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
       const edit: NativeFlowchartEdit = operation === "addNode" ? { op: operation, shape, label }
         : operation === "addNext" ? { op: operation, anchorId: from, shape, label, edgeLabel, incoming, role: role || undefined }
         : (operation === "setNodeLabel" || operation === "setEdgeLabel") ? { op: operation, targetId: to, label }
-        : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label }
+        : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label, direction: edgeDirection }
         : operation === "addGroup" ? { op: operation, memberIds: [...members], label }
         : operation === "removeNode" ? { op: operation, targetId: to, incidentEdgeIds: incident.map(edge => edge.id) }
         : { op: operation, targetId: to };
@@ -104,8 +113,10 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
     : operation === "addGroup" ? !!label && members.size > 0
     : operation === "removeGroup" ? !!to
     : (operation === "removeEdge" || operation === "setEdgeLabel") ? !!to
-    : operation === "removeNode" ? !!to && !unidentified.length : !!from && !!to;
-  const nodeOptions = nodes.map(node => <option value={node.id} key={node.id}>{node.label}</option>);
+    : operation === "removeNode" ? !!to && !unidentified.length : !!from && !!to && (!duplicateKey || approvedDuplicate === duplicateKey);
+  const search = operation === "addEdge" ? nodeQuery.trim().toLowerCase() : "";
+  const nodeOptions = nodes.filter(node => !search || node.id === from || node.id === to || node.label.toLowerCase().includes(search))
+    .map(node => <option value={node.id} key={node.id}>{node.label}</option>);
   return (
     <Modal title="Edit flowchart" wide onClose={onClose}>
       <form className="heading-form" onSubmit={event => { event.preventDefault(); if (canPreview) void prepare(); }}>
@@ -115,6 +126,9 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
             setLabel("");
             setEdgeLabel("");
             setIncoming(false);
+            setEdgeDirection("forward");
+            setNodeQuery("");
+            setApprovedDuplicate("");
             setRole("");
             setFrom("");
             setTo("");
@@ -137,6 +151,9 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
           <select value={shape} disabled={busy} onChange={event => { setShape(event.target.value as Shape); resetPreview(); }}>
             {Object.keys(shapeDelimiters).map(value => <option key={value} value={value}>{value === "rect" ? "Rectangle" : value}</option>)}
           </select>
+        </label>}
+        {operation === "addEdge" && <label>Find connection endpoints
+          <input value={nodeQuery} maxLength={160} disabled={busy} onChange={event => setNodeQuery(event.target.value)} />
         </label>}
         {(operation === "addEdge" || operation === "addNext") && <label>{operation === "addNext" ? "Connect to this node" : "From"}
           <select value={from} disabled={busy} onChange={event => { setFrom(event.target.value); resetPreview(); }}>
@@ -166,6 +183,19 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
         {operation !== "removeEdge" && !removingNode && !ungrouping && <label>{(operation === "addEdge" || operation === "setEdgeLabel") ? "Connection label (optional)" : grouping ? "Group label" : "Node label"}
           <input value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
         </label>}
+        {operation === "addEdge" && <>
+          <label>Connection direction<select value={edgeDirection} disabled={busy} onChange={event => {
+            setEdgeDirection(event.target.value as ConnectionDirection);
+            resetPreview();
+          }}>
+            <option value="forward">From → To</option>
+            <option value="both">Both ways</option>
+            <option value="none">No arrows</option>
+          </select></label>
+          {from && from === to && <p>This connection returns to the same node.</p>}
+          {duplicateKey && <label className="check-label"><input type="checkbox" checked={approvedDuplicate === duplicateKey} disabled={busy}
+            onChange={event => { setApprovedDuplicate(event.target.checked ? duplicateKey : ""); resetPreview(); }} /> Add another identical connection</label>}
+        </>}
         {grouping && <fieldset className="guided-process-fieldset" disabled={busy}>
           <legend>Group members</legend>
           <p>Choose consecutive node declarations. Ungroup returns the nodes to the top level.</p>

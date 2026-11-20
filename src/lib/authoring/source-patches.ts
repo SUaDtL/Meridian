@@ -1,4 +1,4 @@
-import { authoringLimits, encodeMermaidLabel, shapeDelimiters, writeEdgeDeclaration, writeNodeDeclaration, type Shape } from './flowchart-source';
+import { authoringLimits, encodeMermaidLabel, shapeDelimiters, writeEdgeDeclaration, writeNodeDeclaration, type ConnectionDirection, type Shape } from './flowchart-source';
 
 export interface SourcePatch {
   from: number;
@@ -16,7 +16,8 @@ interface RecordSpan {
 const unsupported = () => new Error('This source uses syntax outside the supported editing subset. Edit it in the source panel.');
 const id = '[A-Za-z_][A-Za-z_0-9]*';
 const header = /^(?:flowchart|graph)[ \t]+(TB|TD|BT|LR|RL)$/;
-const edge = new RegExp(`^(${id})[ \t]+(?:(${id})@)?-->(\\|"[^"]*"\\|)?([ \t]+)(${id})$`);
+const edgeDirections = { '-->': 'forward', '<-->': 'both', '---': 'none' } as const;
+const edge = new RegExp(`^(${id})[ \t]+(?:(${id})@)?(<-->|-->|---)(\\|"[^"]*"\\|)?([ \t]+)(${id})$`);
 const subgraph = new RegExp(`^subgraph[ \t]+(${id})[ \t]+\\[(?:"[^"]*"|[A-Za-z0-9 _-]+)\\]$`);
 const node = new RegExp(`^(${id})(\\(\\[|\\[\\(|\\(\\(|\\{\\{|\\[|\\(|\\{)("[^"]*"|[A-Za-z0-9 _-]+)(\\]\\)|\\)\\]|\\)\\)|\\}\\}|\\]|\\)|\\})$`);
 const shapesByOpening = new Map(Object.entries(shapeDelimiters).map(([shape, [open, close]]) => [open, { shape: shape as Shape, close }]));
@@ -83,7 +84,7 @@ function readSubset(source: string) {
   const direction = first && header.exec(first.text)?.[1];
   if (!direction) throw unsupported();
   const nodes = new Map<string, RecordSpan & { shape: Shape; declaration: RecordSpan }>();
-  const edges: { id?: string; from: string; to: string; record: RecordSpan; label: RecordSpan }[] = [];
+  const edges: { id?: string; from: string; to: string; direction: ConnectionDirection; record: RecordSpan; label: RecordSpan }[] = [];
   const edgeIds = new Set<string>();
   const styles: { record: RecordSpan; indices: string }[] = [];
 
@@ -99,11 +100,11 @@ function readSubset(source: string) {
     }
     match = edge.exec(record.text);
     if (match) {
-      const [, from, edgeId, token = '', gap, to] = match;
+      const [, from, edgeId, arrow, token = '', gap, to] = match;
       if (edgeId && (edgeIds.has(edgeId) || reserved.has(edgeId))) throw unsupported();
       if (edgeId) edgeIds.add(edgeId);
       const end = record.end - gap.length - to.length;
-      edges.push({ id: edgeId, from, to, record, label: { start: end - token.length, end, text: token } });
+      edges.push({ id: edgeId, from, to, direction: edgeDirections[arrow as keyof typeof edgeDirections], record, label: { start: end - token.length, end, text: token } });
       continue;
     }
     match = indexedStyle.exec(record.text);
@@ -127,7 +128,7 @@ export function flowchartSubsetTopology(source: string) {
   return {
     direction,
     nodes: Array.from(nodes, ([id, node]) => ({ id, shape: node.shape })),
-    edges: edges.map(({ id, from, to }) => ({ id: id ?? null, from, to })),
+    edges: edges.map(({ id, from, to, direction }) => ({ id: id ?? null, from, to, direction })),
   };
 }
 
@@ -176,14 +177,14 @@ export function planNodeAddition(source: string, label: string, shape: Shape = '
   return { sourceId, patches: [appendStatements(source, writeNodeDeclaration(sourceId, label, shape))] };
 }
 
-export function planEdgeAddition(source: string, from: string, to: string, label?: string) {
+export function planEdgeAddition(source: string, from: string, to: string, label?: string, direction?: ConnectionDirection) {
   const { nodes, edges, edgeIds } = readSubset(source);
   if (!nodes.has(from) || !nodes.has(to)) throw new Error('Choose two declared nodes to connect.');
   if (edges.length >= authoringLimits.graphEdges || nodes.size > authoringLimits.graphNodes) {
     throw new Error('The diagram is too large for a generated edit.');
   }
   const sourceId = allocateSourceId('m_e', nodes, edgeIds);
-  return { sourceId, patches: [appendStatements(source, writeEdgeDeclaration(sourceId, from, to, label))] };
+  return { sourceId, patches: [appendStatements(source, writeEdgeDeclaration(sourceId, from, to, label, direction))] };
 }
 
 export function planAddNext(source: string, anchor: string, label: string, shape: Shape, edgeLabel: string | undefined, incoming: boolean) {

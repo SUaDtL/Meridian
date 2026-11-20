@@ -118,7 +118,7 @@ export async function buildAssistRequest(
       }),
       edges: scopedEdges.map(item => {
         const label = edgeLabels.get(item.id);
-        if (label === undefined || !item.sourceId || !item.targetId || item.direction !== 'forward'
+        if (label === undefined || !item.sourceId || !item.targetId || !item.direction
           || [...label].length > 200 || /[\u0000-\u001f\uD800-\uDFFF]/u.test(label)) {
           throw new Error('A selected relationship cannot be shared. Choose a smaller scope.');
         }
