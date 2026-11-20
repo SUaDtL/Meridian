@@ -213,7 +213,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       .map(record => [record.id, record.binding.sourceId]));
     return targetTable?.targets.flatMap(item => item.elementKind === "edge"
       ? [{ id: item.id, label: ids.has(item.id) ? `${item.label} (${ids.get(item.id)})` : item.label,
-        sourceId: item.sourceId, targetId: item.targetId, explicit: ids.has(item.id), text: edgeLabels?.get(item.id) ?? "" }] : []) ?? [];
+        sourceId: item.sourceId, targetId: item.targetId, direction: item.direction, explicit: ids.has(item.id), text: edgeLabels?.get(item.id) ?? "" }] : []) ?? [];
   }, [identities, targetTable, edgeLabels]);
   const removableGroup = useMemo(() => {
     const identity = identities?.find(record => record.status === "resolved" && record.elementKind === "group"

@@ -114,6 +114,12 @@ export interface FlowEdgeModel {
   id?: string; isUserDefinedId?: boolean; start: string; end: string; text?: string; style?: string[];
   type?: string; length?: number; stroke?: string; labelType?: string; interpolate?: string; classes?: string[];
 }
+export function flowEdgeDirection(edge: Pick<FlowEdgeModel, 'type' | 'stroke'>) {
+  const { type, stroke } = edge;
+  return !type || type === 'arrow_open' || stroke === 'invisible' ? 'none'
+    : type.startsWith('double_arrow_') ? 'both' : 'forward';
+}
+
 export interface FlowModel {
   vertices: Map<string, { id: string; text?: string; styles?: string[]; type?: string; labelType?: string; classes?: string[] }>;
   edges: FlowEdgeModel[];
@@ -344,7 +350,10 @@ export function decorateDesign(svg: SVGSVGElement, renderId: string, nodes: Rend
       const sourceLabel = labelsByNode.get(edge.start) ?? model.vertices.get(edge.start)?.text ?? edge.start;
       const targetLabel = labelsByNode.get(edge.end) ?? model.vertices.get(edge.end)?.text ?? edge.end;
       const labelText = Array.from(labels).map(label => label.textContent?.trim()).find(Boolean) || edge.text;
-      add(target, { key, kind: 'edge', sourceId: edgeId, label: labelText ? `${sourceLabel} → ${targetLabel} · ${labelText}` : `${sourceLabel} → ${targetLabel}`, capabilities, from: `${groupIds.has(edge.start) ? 'group' : 'node'}:${edge.start}`, to: `${groupIds.has(edge.end) ? 'group' : 'node'}:${edge.end}` });
+      const direction = flowEdgeDirection(edge);
+      const connector = direction === 'forward' ? '→' : direction === 'both' ? '↔' : '–';
+      const endpoints = `${sourceLabel} ${connector} ${targetLabel}`;
+      add(target, { key, kind: 'edge', sourceId: edgeId, label: labelText ? `${endpoints} · ${labelText}` : endpoints, capabilities, from: `${groupIds.has(edge.start) ? 'group' : 'node'}:${edge.start}`, to: `${groupIds.has(edge.end) ? 'group' : 'node'}:${edge.end}` });
       // Generous transparent hit area makes thin connectors operable by touch.
       const hit = target.cloneNode(false) as SVGPathElement;
       // This is an interaction aid owned by an edge, not another semantic edge.
