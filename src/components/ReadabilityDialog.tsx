@@ -6,7 +6,7 @@ import { minimumAdvisoryLabelSize, viewingScale, type FrameGeometry, type Readab
 import Modal from "./Modal";
 
 const presentation: ViewingProfile = { width: 1280, height: 720, padding: 32 };
-const checkNames = { "QC-03": "Viewed label size", "QC-05": "Duplicate names", "QC-06": "Separate regions" } as const;
+const checkNames = { "QC-01": "Solid text contrast", "QC-03": "Viewed label size", "QC-05": "Duplicate names", "QC-06": "Separate regions" } as const;
 
 export default function ReadabilityDialog({ frame, targets, revision, canvas, onClose }: {
   frame: FrameGeometry;
@@ -56,6 +56,10 @@ export default function ReadabilityDialog({ frame, targets, revision, canvas, on
   }
 
   function findingText(finding: ReadabilityFinding) {
+    if (finding.rule === "QC-01") {
+      const name = byId.get(finding.target)?.label || "Unnamed label";
+      return <>{name} has a contrast ratio of {Number(finding.ratio.toPrecision(6))} to 1. Aim for at least {finding.threshold} to 1 at this size.</>;
+    }
     if (finding.rule === "QC-03") {
       const name = byId.get(finding.target)?.label || "Unnamed label";
       return <>{name} measures {finding.pixels.toFixed(2)} CSS pixels in this viewing area. Labels under {minimumAdvisoryLabelSize} pixels can be difficult to read.</>;
@@ -89,6 +93,7 @@ export default function ReadabilityDialog({ frame, targets, revision, canvas, on
       {result && <section aria-label="Readability results" aria-busy={busy}>
         <h3>Coverage</h3>
         <ul>{result.coverage.map(item => <li key={item.rule}>{checkNames[item.rule]} · {item.measured} measured · {item.unknown} unknown · {item.inapplicable} not applicable</li>)}</ul>
+        <p>Contrast measurements cover text with a verified solid backdrop. Gradients and unverified overlaps appear as unknown.</p>
         <h3>Findings</h3>
         <p role="status">{result.findings.length} {result.findings.length === 1 ? "finding" : "findings"} from the checks above.</p>
         <ul>{result.findings.map((finding, index) => <li key={`${finding.rule}-${index}`}>

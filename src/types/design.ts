@@ -1,3 +1,5 @@
+import type { SolidTextPaint } from '../lib/authoring/solid-text-color';
+
 export type ElementKind = 'node' | 'edge' | 'group';
 export type DesignPresetId = 'custom' | 'executive' | 'infrastructure' | 'cyberpunk' | 'minimal' | 'technical-blueprint';
 export type ElementCapability = 'fill' | 'text' | 'typography' | 'shape' | 'stroke' | 'effects' | 'routing' | 'arrowhead';
@@ -37,6 +39,7 @@ export interface RenderedAppearance {
   fontFamily?: string;
   fontWeight?: string;
   labelSizeInDiagram?: number;
+  solidTextPaint?: SolidTextPaint;
 }
 
 export interface RenderElement {

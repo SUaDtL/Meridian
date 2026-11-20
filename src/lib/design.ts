@@ -1,6 +1,7 @@
 import type { DiagramTheme, RenderNode, StudioDocument, StudioSettings } from '../types';
 import type { DesignPresetId, DesignState, ElementCapability, ElementStyle, RenderElement } from '../types/design';
 import { DEFAULT_SETTINGS, getTheme } from './themes';
+import { boxesOverlap, measureSolidNodeText, svgTextFragments, type MeasuredSolidText } from './authoring/measure-solid-text';
 
 const NS = 'http://www.w3.org/2000/svg';
 const FORBIDDEN = new Set(['__proto__', 'prototype', 'constructor']);
@@ -379,8 +380,7 @@ export function decorateDesign(svg: SVGSVGElement, renderId: string, nodes: Rend
 }
 
 function labelSizeInDiagram(label: SVGElement | undefined, view: Window, inverse: DOMMatrix): number | undefined {
-  const fragments = Array.from(label?.querySelectorAll<SVGGraphicsElement>('text, tspan') ?? [])
-    .filter(text => Array.from(text.childNodes).some(node => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()));
+  const fragments = svgTextFragments(label);
   if (!fragments.length) return undefined;
   let smallest = Infinity;
   for (const text of fragments) {
@@ -409,6 +409,8 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
   const view = svg.ownerDocument.defaultView;
   const targets = new Map(Array.from(svg.querySelectorAll<SVGGraphicsElement>('[data-element-key]')).map(target => [target.getAttribute('data-element-key'), target]));
   const labels = new Map<string, SVGElement>();
+  const contrast = new Map<string, MeasuredSolidText>();
+  const canMeasurePaint = !elements.some(item => item.kind === 'group' || (item.kind === 'edge' && item.capabilities.includes('typography')));
   for (const label of svg.querySelectorAll<SVGElement>('g.edgeLabel[data-element-owner]')) labels.set(label.getAttribute('data-element-owner')!, label);
   const positive = (value: string | undefined) => {
     const number = Number.parseFloat(value ?? '');
@@ -418,7 +420,8 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
     const target = targets.get(item.key);
     if (!target) continue;
     if (view) {
-      const shape = shapesFor(target, item.kind)[0];
+      const shapes = shapesFor(target, item.kind);
+      const [shape] = shapes;
       const shapeStyle = shape ? view.getComputedStyle(shape) : undefined;
       const label = item.kind === 'edge' ? labels.get(item.key) : target;
       const text = label?.querySelector<SVGElement>('text tspan') ?? label?.querySelector<SVGElement>('text');
@@ -440,6 +443,10 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
         fontWeight: textStyle?.fontWeight,
         labelSizeInDiagram: labelSizeInDiagram(label, view, inverse),
       };
+      if (canMeasurePaint && item.kind === 'node' && shapes.length === 1 && item.appearance.labelSizeInDiagram !== undefined) {
+        const measured = measureSolidNodeText(svg, shape, label, view, inverse);
+        if (measured) contrast.set(item.key, measured);
+      }
     }
     try {
       const box = target.getBBox(), matrix = target.getScreenCTM();
@@ -449,6 +456,13 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
       const x = Math.min(...corners.map(point => point.x)), y = Math.min(...corners.map(point => point.y));
       item.bounds = { x, y, width: Math.max(...corners.map(point => point.x)) - x, height: Math.max(...corners.map(point => point.y)) - y };
     } catch { /* Native diagram elements without geometry simply cannot be camera targets. */ }
+  }
+  let pairs = 0;
+  for (const item of elements) {
+    const candidate = contrast.get(item.key);
+    if (!candidate || !item.appearance) continue;
+    if (elements.some(other => other !== item && (++pairs > 100_000 || !other.bounds || boxesOverlap(other.bounds, candidate.bounds)))) continue;
+    item.appearance.solidTextPaint = candidate.paint;
   }
 }
 

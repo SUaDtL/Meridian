@@ -1,3 +1,5 @@
+import { solidTextContrast, type SolidTextPaint } from './solid-text-color';
+
 export type ViewingProfile = { width: number; height: number; padding: number };
 export type FrameGeometry = { width: number; height: number; diagramScale: number };
 export type ReadabilityTarget = {
@@ -6,11 +8,13 @@ export type ReadabilityTarget = {
   label: string;
   typography: boolean;
   measuredLabelSize?: number;
+  solidTextPaint?: SolidTextPaint;
   from: string | null;
   to: string | null;
 };
 
 export type ReadabilityFinding =
+  | { rule: 'QC-01'; target: string; ratio: number; threshold: number }
   | { rule: 'QC-03'; target: string; pixels: number }
   | { rule: 'QC-05'; targets: string[] }
   | { rule: 'QC-06'; regions: string[][] };
@@ -70,31 +74,41 @@ export function analyzeReadability(targets: readonly ReadabilityTarget[], profil
   if (targets.length > 2_000) throw new Error('The diagram has too many targets for one readability check.');
   const scale = viewingScale(profile, frame);
   const findings: ReadabilityFinding[] = [];
-  const coverage: ReadabilityReport['coverage'] = [
-    { rule: 'QC-03', measured: 0, unknown: 0, inapplicable: 0 },
-    { rule: 'QC-05', measured: 0, unknown: 0, inapplicable: 0 },
-    { rule: 'QC-06', measured: 0, unknown: 0, inapplicable: 0 },
-  ];
+  const coverageFor = (rule: ReadabilityFinding['rule']) => ({ rule, measured: 0, unknown: 0, inapplicable: 0 });
+  const size = coverageFor('QC-03');
+  const names = coverageFor('QC-05');
+  const separation = coverageFor('QC-06');
+  const contrast = coverageFor('QC-01');
   const duplicateNames = new Map<string, string[]>();
   for (const item of targets) {
     const measured = item.measuredLabelSize;
-    if (!item.typography) coverage[0].inapplicable++;
-    else if (typeof measured !== 'number' || !Number.isFinite(measured) || measured <= 0) coverage[0].unknown++;
+    if (!item.typography) {
+      size.inapplicable++;
+      contrast.inapplicable++;
+    } else if (typeof measured !== 'number' || !Number.isFinite(measured) || measured <= 0) {
+      size.unknown++;
+      contrast.unknown++;
+    }
     else {
-      coverage[0].measured++;
+      size.measured++;
       const pixels = measured * scale;
       if (pixels < minimumAdvisoryLabelSize) findings.push({ rule: 'QC-03', target: item.id, pixels });
+      if (item.solidTextPaint) {
+        contrast.measured++;
+        const { ratio, threshold } = solidTextContrast(item.solidTextPaint, pixels);
+        if (ratio < threshold) findings.push({ rule: 'QC-01', target: item.id, ratio, threshold });
+      } else contrast.unknown++;
     }
     if (item.kind === 'edge') {
-      coverage[1].inapplicable++;
+      names.inapplicable++;
       continue;
     }
     const name = normalizedName(item.label);
     if (!name) {
-      coverage[1].inapplicable++;
+      names.inapplicable++;
       continue;
     }
-    coverage[1].measured++;
+    names.measured++;
     const key = `${item.kind}:${name}`;
     const group = duplicateNames.get(key) ?? [];
     group.push(item.id);
@@ -102,11 +116,11 @@ export function analyzeReadability(targets: readonly ReadabilityTarget[], profil
   }
   for (const group of duplicateNames.values()) if (group.length > 1) findings.push({ rule: 'QC-05', targets: group });
   const regions = weakRegions(targets);
-  if (regions === undefined) coverage[2].unknown = 1;
-  else if (!regions.length) coverage[2].inapplicable = 1;
+  if (regions === undefined) separation.unknown = 1;
+  else if (!regions.length) separation.inapplicable = 1;
   else {
-    coverage[2].measured = 1;
+    separation.measured = 1;
     if (regions.length > 1) findings.push({ rule: 'QC-06', regions });
   }
-  return { findings, coverage };
+  return { findings, coverage: [size, names, separation, contrast] };
 }
