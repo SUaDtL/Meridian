@@ -4,6 +4,7 @@ import type { RenderNode, RenderResult, StudioSettings } from '../types';
 import { getTheme } from './themes';
 import type { DesignState } from '../types/design';
 import { createDesign, decorateDesign, designRenderSource, measureDesignElements, type FlowModel } from './design';
+import { SourceDiagnosticError } from './authoring/source-diagnostics';
 import { RenderCache } from './render-cache';
 import { checkRenderSignal, latestRenderQueue, renderAborted } from './render-queue';
 
@@ -93,7 +94,7 @@ function prepareSource(source: string): { text: string; warnings: string[] } {
   // These can cause a resource request during Mermaid's measurement pass,
   // before the returned SVG can be sanitized. Block them before rendering.
   if (/@\{[^}]*\b(?:img|image)\s*:/i.test(text) || /<(?:img|image|iframe|object|embed|script)\b/i.test(text) || /!\[[^\]]*\]\s*\(/.test(text)) {
-    throw new Error('Images and embedded HTML are not supported. Use text labels and built-in Mermaid shapes. Your source has been kept.');
+    throw new SourceDiagnosticError('resource', 'Images and embedded HTML are not supported. Use text labels and built-in Mermaid shapes. Your source has been kept.');
   }
   // Decode CSS escapes for this check only, so an escaped spelling of url()
   // cannot fetch a resource in the renderer or an exported SVG.
@@ -102,7 +103,7 @@ function prepareSource(source: string): { text: string; warnings: string[] } {
     .replace(/\\([^\r\n])/g, '$1')
     .replace(/\/\*[\s\S]*?\*\//g, '');
   if (/\b(?:url|image-set|expression)\s*\(|@(?:import|font-face)\b|(?:behavior|-moz-binding)\s*:/i.test(resourceScan)) {
-    throw new Error('CSS URLs and external resources are not supported. Remove the resource reference to render this diagram.');
+    throw new SourceDiagnosticError('resource', 'CSS URLs and external resources are not supported. Remove the resource reference to render this diagram.');
   }
   if (/^[ \t]*click\s+\S+.*$/m.test(text)) {
     text = text.replace(/^[ \t]*click\s+\S+.*$/gm, '');

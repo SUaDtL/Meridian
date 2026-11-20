@@ -40,11 +40,12 @@ const display: Record<keyof RecipeSettings, string> = {
   spacing: 'Spacing', frame: 'Frame', padding: 'Padding', motion: 'Motion', background: 'Background', ambient: 'Ambient light', shadow: 'Shadows',
 };
 
-export type DesignScope = { kind: 'diagram' } | { kind: 'selection'; ids: readonly string[] } | { kind: 'role'; role: SemanticRole };
-type ScopedDesign = Exclude<DesignScope, { kind: 'diagram' }>;
+type ScopedDesign = ({ kind: 'selection'; ids: readonly string[] } | { kind: 'role'; role: SemanticRole }) & { preserveOverrides?: boolean };
+export type DesignScope = { kind: 'diagram' } | ScopedDesign;
 type Frame = Awaited<ReturnType<typeof renderMermaidProject>>;
 type RecipeChange = { label: string; before: unknown; after: unknown };
-type ScopeSummary = { eligible: number; total: number; protectedFields: number; exclusions: string[]; omitted: string[] };
+type ScopeSummary = { eligible: number; total: number; protectedFields: number; clearedFields: number; clearedTargets: number;
+  exclusions: string[]; omitted: string[] };
 type PaintProof = { targetId: string; field: PaintField; value: string };
 
 const paintFields = { fill: 'Fill', color: 'Text', stroke: 'Border' } as const;
@@ -68,7 +69,7 @@ export function buildDesignRecipeCandidate(base: MermaidProjectV3, id: DesignRec
   return { recipe, document, changes, scope: undefined, proof: [] as PaintProof[] };
 }
 
-/** Scope appearance to measured flat nodes. The separate metadata layer preserves manual overrides. */
+/** Scope appearance to measured flat nodes and clear only explicitly reviewed paint overrides. */
 export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipeId, intent: ScopedDesign, frame: Frame) {
   flowchartSubsetTopology(base.source);
   if (!frame.targetTable) throw new Error('Open a verified flowchart before styling a selection.');
@@ -79,11 +80,14 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
   const elements = new Map(frame.result.elements?.map(item => [item.key, item]));
   const bound = new Map(base.identity.elements.map(item => [item.id, item.binding.sourceId]));
   const recipeElements = { ...base.design.recipeElements };
+  const manualElements = { ...base.design.elements };
   const changes: RecipeChange[] = [];
   const exclusions: string[] = [];
   const proof: PaintProof[] = [];
   let eligible = 0;
   let protectedFields = 0;
+  let clearedFields = 0;
+  let clearedTargets = 0;
 
   for (const targetId of selected) {
     const element = elements.get(targetId);
@@ -94,22 +98,30 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
       continue;
     }
     const style: ElementStyle = { ...previous?.style };
+    const manualStyle = { ...manualElements[targetId] };
+    const clearedBefore = clearedFields;
     const start = proof.length;
     let hasEligiblePaint = false;
     for (const [field, label] of Object.entries(paintFields) as [PaintField, string][]) {
-      if (base.design.elements[targetId]?.[field] !== undefined) {
+      const before = element.appearance?.[field];
+      const measurable = Boolean(before) && element.capabilities.includes(capability[field]);
+      const override = manualStyle[field] !== undefined;
+      if (override && (intent.preserveOverrides !== false || !measurable)) {
         protectedFields++;
         continue;
       }
-      const before = element.appearance?.[field];
-      if (!before || !element.capabilities.includes(capability[field])) continue;
+      if (!measurable) continue;
       hasEligiblePaint = true;
       const value = recipe.nodeStyle[field];
-      if (before === value && previous?.recipe.id === recipe.id && previous.recipe.version === recipe.version
+      if (!override && before === value && previous?.recipe.id === recipe.id && previous.recipe.version === recipe.version
         && previous.style[field] === value) continue;
+      if (override) {
+        delete manualStyle[field];
+        clearedFields++;
+      }
       style[field] = value;
       proof.push({ targetId, field, value });
-      changes.push({ label: `${name} · ${label}`, before, after: value });
+      changes.push({ label: `${name} · ${label}${override ? ' · Clear user override' : ''}`, before, after: value });
     }
     if (!hasEligiblePaint) {
       exclusions.push(name);
@@ -117,13 +129,18 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
     }
     eligible++;
     if (proof.length > start) recipeElements[targetId] = { recipe: { id: recipe.id, version: recipe.version }, style };
+    if (clearedFields > clearedBefore) {
+      clearedTargets++;
+      if (Object.keys(manualStyle).length) manualElements[targetId] = manualStyle;
+      else delete manualElements[targetId];
+    }
   }
   if (!eligible) throw new Error('This scope has no eligible node paint. Choose another selection or role.');
   const scope: ScopeSummary = {
-    eligible, total: selected.size, protectedFields, exclusions, omitted: Object.values(display),
+    eligible, total: selected.size, protectedFields, clearedFields, clearedTargets, exclusions, omitted: Object.values(display),
   };
   const document = proof.length ? validateMermaidProject({
-    ...base, design: { ...base.design, recipeElements }, revision: base.revision + 1, updatedAt: new Date().toISOString(),
+    ...base, design: { ...base.design, recipeElements, elements: manualElements }, revision: base.revision + 1, updatedAt: new Date().toISOString(),
   }) : base;
   return { recipe, document, changes, scope, proof };
 }

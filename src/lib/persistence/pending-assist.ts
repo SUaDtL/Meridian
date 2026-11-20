@@ -1,4 +1,4 @@
-import { digestPattern, pendingAssistKey, requestIdPattern, type PendingAssistRequest } from '../authoring/assist-exchange';
+import { assistLabelOperations, digestPattern, pendingAssistKey, requestIdPattern, type PendingAssistRequest } from '../authoring/assist-exchange';
 import { elementUuidPattern } from '../authoring/identities';
 import common from '../authoring/schemas/common.schema.json';
 import { matchesBundledContract } from '../authoring/validate-mermaid-project';
@@ -21,7 +21,9 @@ export function validPendingAssist(value: unknown): value is PendingAssistReques
     || !Number.isSafeInteger(item.expiresAt) || !scope || !ids(scope.readContextIds, 320)
     || !ids(scope.writableElementIds, 320) || !ids(scope.attachmentPointIds, 0)
     || !scope.writableElementIds.length || !scope.writableElementIds.every(id => scope.readContextIds.includes(id))
-    || !Array.isArray(item.allowedOperations) || item.allowedOperations.length !== 1 || item.allowedOperations[0] !== 'setNodeLabel') {
+    || !Array.isArray(item.allowedOperations) || !item.allowedOperations.length
+    || new Set(item.allowedOperations).size !== item.allowedOperations.length
+    || !item.allowedOperations.every(operation => assistLabelOperations.includes(operation))) {
     return false;
   }
   try {

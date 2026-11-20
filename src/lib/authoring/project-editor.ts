@@ -1,9 +1,9 @@
+import type { StoryScene } from '../../types/storyboard';
 import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/project-save-queue';
 import { readPendingAssist } from '../persistence/pending-assist';
 import { readWorkspaceProject, writeWorkspaceProject, type SavedAnchor } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
-import type { StoryScene } from '../../types/storyboard';
-import { authorizeAssistRename, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
+import { authorizeAssistLabelEdit, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
 import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } from './bulk-text';
 import type { ComponentDefinition } from './component-definition';
@@ -20,6 +20,7 @@ import { renderMermaidProject, verifiedTopology } from './project-render';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
 import type { ViewingProfile } from './readability';
 import type { ElementRemovalImpact } from './retire-elements';
+import { SourceDiagnosticError } from './source-diagnostics';
 import { validateMermaidProject } from './validate-mermaid-project';
 
 const historyByteLimit = 8 * 1024 * 1024;
@@ -108,9 +109,10 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   async function prepareSource(source: string, expected: MermaidProjectV3, signal?: AbortSignal) {
     const base = current.document;
-    if (closed || base !== expected) throw new Error('The project changed. Reopen the source editor to review the current revision.');
+    const stale = () => new SourceDiagnosticError('stale', 'The project changed. Reopen the source editor to review the current revision.');
+    if (closed || base !== expected) throw stale();
     const { document, added, preserved } = await prepareManualSource(base, source, signal);
-    if (closed || current.document !== base) throw new Error('The project changed. Reopen the source editor to review the current revision.');
+    if (closed || current.document !== base) throw stale();
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     structure.set(proposal, { base, next: freezeSnapshot(document) });
     return { proposal, added, preserved };
@@ -186,18 +188,18 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const file = parseAssistSuggestion(text);
     const request = await readPendingAssist(db, file.requestId);
     const token = await projectBaseToken(base);
-    const operation = authorizeAssistRename(file, request, token);
+    const operation = authorizeAssistLabelEdit(file, request, token);
     signal?.throwIfAborted();
     const { document } = await prepareFlowchartCandidate(base, operation, signal);
     if (closed || current.document !== base) throw new Error('The project changed. Export a fresh request.');
-    if (document === base) throw new Error('The suggestion makes no change to the current node label.');
+    if (document === base) throw new Error('The suggestion makes no change to the current label.');
     const preview = await renderMermaidProject(document, signal);
     signal?.throwIfAborted();
     if (!preview.targetTable || closed || current.document !== base) throw new Error('The suggestion could not be verified against the current diagram.');
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     const next = freezeSnapshot(document);
     suggestions.set(proposal, { base, next, request });
-    return { proposal, next, preview, targetId: operation.targetId, label: operation.label };
+    return { proposal, next, preview, ...operation };
   }
 
   async function applyAssistSuggestion(proposal: ReadyProposal) {
