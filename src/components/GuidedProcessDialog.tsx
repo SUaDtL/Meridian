@@ -3,7 +3,8 @@ import Modal from "./Modal";
 import ProcessConnectionTable from "./ProcessConnectionTable";
 import { prepareGuidedProcess, type ProcessStep } from "../lib/authoring/guided-process";
 import { markProcessDecision, type ProcessConnections } from "../lib/authoring/process-connections";
-import { normalizeProcessInWorker, ProcessNormalizationTimeout } from "../lib/authoring/process-normalization";
+import { AuthoringWorkerTimeout } from "../lib/authoring/authoring-worker";
+import { normalizeProcessInWorker } from "../lib/authoring/process-normalization";
 import { buildExportFrame } from "../lib/export";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import { checkpointConnections, discardProcessCheckpoint, listProcessCheckpoints, saveProcessCheckpoint, type ProcessCheckpoint } from "../lib/persistence/process-drafts";
@@ -18,10 +19,11 @@ export type GuidedProcessDraft = {
 };
 type Review = { document: Awaited<ReturnType<typeof prepareGuidedProcess>>["document"]; url: string };
 
-export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose }: {
+export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelationshipTable, onClose }: {
   draft: GuidedProcessDraft;
   onDraft: Dispatch<SetStateAction<GuidedProcessDraft>>;
   onCreated: (id: string, draftRetained?: boolean) => void;
+  onRelationshipTable: () => void;
   onClose: () => void;
 }) {
   const [stage, setStage] = useState<"input" | "connections" | "review">("input");
@@ -89,8 +91,8 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
       void checkpoint(normalized);
     } catch (reason) {
       if (!attempt.signal.aborted) {
-        if (reason instanceof ProcessNormalizationTimeout) setNormalization(extended ? "narrow" : "retry");
-        setError(extended && reason instanceof ProcessNormalizationTimeout ? "Shorten your process list before trying again."
+        if (reason instanceof AuthoringWorkerTimeout) setNormalization(extended ? "narrow" : "retry");
+        setError(extended && reason instanceof AuthoringWorkerTimeout ? "Shorten your process list before trying again."
           : reason instanceof Error ? reason.message : "Check your process steps.");
         setBusy(undefined);
       }
@@ -183,6 +185,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
       <h3 tabIndex={-1} ref={stepHeading}>{stage === "input" ? "Process steps" : stage === "connections" ? "Connections" : "Review your process"}</h3>
       {stage === "input" && (
         <form className="heading-form" onSubmit={event => { event.preventDefault(); if (!busy && normalization === null) void showConnections(); }}>
+          <button type="button" className="button quiet" disabled={!!busy} onClick={onRelationshipTable}>Systems and relationships</button>
           {drafts.length > 0 && (
             <ul className="project-list">
               {drafts.map(saved => (

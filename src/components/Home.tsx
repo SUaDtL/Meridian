@@ -26,8 +26,8 @@ export function StartChoices({ onGuided, onBlank, onExamples, onImport }: StartA
       <button className="start-card start-blank start-guided" onClick={onGuided} aria-label="Build with guidance">
         <span className="start-icon"><ListTree size={25} /></span>
         <h2>Build with guidance</h2>
-        <p>Turn a list of process steps into a flowchart.</p>
-        <span className="start-cta">Build a process <ArrowRight size={17} /></span>
+        <p>Turn process steps or a relationship table into a flowchart.</p>
+        <span className="start-cta">Build a flowchart <ArrowRight size={17} /></span>
       </button>
       <button
         className="start-card"
