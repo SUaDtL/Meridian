@@ -5,6 +5,7 @@ import { flowchartModelFor, renderDiagram } from '../render';
 import { fitsProjectFile, serializeProject } from '../storage';
 import { observeFlowchartIdentities, type ObservedIdentity } from './identity-observation';
 import { elementUuidPattern, MAX_RETAINED_IDENTITY_RECORDS, reconcileIdentities, sourceBindingKey, type IdentityRecord } from './identities';
+import { validateMermaidProject } from './validate-mermaid-project';
 import type { MermaidProjectV3, OrphanAnnotation, OrphanSceneReference } from './mermaid-project';
 
 export type LegacySourceObservation =
@@ -142,7 +143,12 @@ export async function migrateLegacyProject(
       })),
     },
   };
-  return fitsProjectFile(serializeProject(migrated)) ? { status: 'migrated', document: migrated } : recovery('size');
+  if (!fitsProjectFile(serializeProject(migrated))) return recovery('size');
+  try {
+    return { status: 'migrated', document: validateMermaidProject(migrated) };
+  } catch {
+    return recovery('metadata');
+  }
 }
 
 /** Obtain migration evidence from the serialized renderer for this exact project. */

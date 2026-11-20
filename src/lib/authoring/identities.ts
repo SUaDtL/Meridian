@@ -11,7 +11,7 @@ export type IdentityRecord = SourceIdentity & {
   status: 'resolved' | 'missing' | 'ambiguous' | 'retired';
 };
 
-const maxResolved = 2_000;
+export const MAX_LIVE_IDENTITIES = 2_000;
 export const MAX_RETAINED_IDENTITY_RECORDS = 500;
 export const elementUuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
@@ -28,7 +28,7 @@ function parallelKey(binding: Extract<SourceIdentity['binding'], { type: 'legacy
 
 function enforceIdentityBudget(records: readonly IdentityRecord[], orphanCount: number) {
   const resolved = records.filter(record => record.status === 'resolved').length;
-  if (resolved > maxResolved || records.length - resolved + orphanCount > MAX_RETAINED_IDENTITY_RECORDS) {
+  if (resolved > MAX_LIVE_IDENTITIES || records.length - resolved + orphanCount > MAX_RETAINED_IDENTITY_RECORDS) {
     throw new Error('The project exceeds its identity and retained annotation limits. Export a recovery copy before resolving annotations.');
   }
 }
@@ -46,7 +46,7 @@ export function reconcileIdentities(
 ): readonly IdentityRecord[] {
   if (observed === null) return previous;
   if (!Number.isSafeInteger(orphanCount) || orphanCount < 0) throw new Error('Invalid orphan count.');
-  if (observed.length > maxResolved) throw new Error('The structural snapshot has too many elements.');
+  if (observed.length > MAX_LIVE_IDENTITIES) throw new Error('The structural snapshot has too many elements.');
   enforceIdentityBudget(previous, orphanCount);
 
   const ids = new Set<string>();

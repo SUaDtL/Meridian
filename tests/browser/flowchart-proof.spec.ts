@@ -89,3 +89,30 @@ test('migrates source and scene targets using the actual pinned flowchart model'
   await expect(page.evaluate(input => window.migrateLegacyFixture(input), { ...document, source: 'flowchart LR\nA[' }))
     .resolves.toMatchObject({ status: 'recovery', reason: 'source' });
 });
+
+test('two tabs writing the same saved anchor produce one committed IndexedDB project', async ({ page }) => {
+  const { createDocument } = await import('../../src/lib/storage');
+  const document = { ...createDocument(), source: 'flowchart LR\nA[One]\nB[Two]\nA edge1@--> B' };
+  const result = await page.evaluate(input => window.checkConcurrentWorkspaceSave(input), document);
+  expect(result.winners).toBe(1);
+  expect(result.rejected).toEqual(['StorageConflict']);
+  expect(['First tab', 'Second tab']).toContain(result.savedTitle);
+  expect(result.staleSameDigest).toBe('StorageConflict');
+});
+
+test('aborting at every IndexedDB migration write keeps the legacy workspace intact', async ({ page }) => {
+  const result = await page.evaluate(() => window.checkInterruptedMigration());
+  expect(result.interrupted).toEqual([1, 2, 3, 4].map(reached =>
+    ({ reached, projects: 0, hasArchive: false, hasActive: false })));
+  expect(result.changedBeforeCommit).toBe(true);
+  expect(result.backedUpExactly).toBe(true);
+  expect(result.bothLegacyKeysPreserved).toBe(true);
+  expect(result.statuses).toEqual(['migrated', 'already-migrated']);
+  expect(result.migratedCount).toBe(2);
+  expect(result.manifest).toMatchObject({
+    counts: { total: 3, migrated: 2, quarantined: 1 }, activeId: result.secondId,
+    quarantined: [{ index: 2, reason: 'source' }],
+  });
+  expect(result.activation).toMatchObject({ activeId: result.secondId, sourceChecksum: result.manifest.sourceChecksum });
+  expect(result.changedLater).toBe('legacy-changed');
+});
