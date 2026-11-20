@@ -43,6 +43,40 @@ test('checks the accepted drawing in a fixed viewing area without changing its s
   await expect(live.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 });
 
+test('cancels checking, terminates its worker, and lets the same diagram be checked again', async ({ page }) => {
+  await page.addInitScript(() => {
+    const post = Worker.prototype.postMessage;
+    const terminate = Worker.prototype.terminate;
+    let delayed: Worker | undefined;
+    Worker.prototype.postMessage = function (value, transfer) {
+      if (!delayed && Array.isArray(value?.targets) && value.frame && value.profile) {
+        delayed = this;
+        return;
+      }
+      Reflect.apply(post, this, transfer === undefined ? [value] : [value, transfer]);
+    };
+    Worker.prototype.terminate = function () {
+      if (this === delayed) document.documentElement.dataset.cancelledReadability = 'yes';
+      return terminate.call(this);
+    };
+  });
+  const source = 'flowchart LR\n A[First]\n B[Second]\n A --> B\n';
+  const live = await openProject(page, { ...createDocument(), title: 'Cancellable check', source });
+  await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  const run = check.getByRole('button', { name: 'Check diagram' });
+  await run.click();
+  await expect(check.getByRole('status')).toHaveText('Checking the current diagram…');
+  await check.getByRole('button', { name: 'Cancel check' }).click();
+  await expect(check.getByRole('status')).toHaveText('Readability work cancelled.');
+  await expect(page.locator('html')).toHaveAttribute('data-cancelled-readability', 'yes');
+  await expect(run).toBeFocused();
+  await expect(check.getByRole('region', { name: 'Readability results' })).toHaveCount(0);
+  await run.click();
+  await expect(check.getByRole('region', { name: 'Readability results' })).toBeVisible();
+  await expect(check.getByText('Readability work cancelled.')).toHaveCount(0);
+});
+
 test('compares verified solid text and leaves the gradient node unmeasured', async ({ page }) => {
   const source = 'flowchart LR\n  A["Low contrast"]\n  B["Gradient surface"]\n';
   const project = { ...createDocument(), title: 'Contrast example', source };
