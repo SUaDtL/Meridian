@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useRef } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import CodeMirror, { ExternalChange } from '@uiw/react-codemirror';
 import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-import { EditorView } from '@codemirror/view';
+import { EditorView, type ViewUpdate } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 
 const mermaidLanguage = StreamLanguage.define({
@@ -43,23 +43,76 @@ const highlighting = HighlightStyle.define([
 ]);
 
 const extensions = [mermaidLanguage, syntaxHighlighting(highlighting), EditorView.lineWrapping];
-const basicSetup = { foldGutter: false, highlightActiveLine: true, lineNumbers: true, autocompletion: false };
+const basicSetup = { foldGutter: false, highlightActiveLine: true, lineNumbers: true, autocompletion: false, history: false, historyKeymap: false };
 
-function SourceEditor({ source, onChange, focusRequest = 0 }: { source: string; onChange: (source: string) => void; focusRequest?: number }) {
-  const change = useRef(onChange);
-  change.current = onChange;
+function syncSource(view: EditorView, source: string) {
+  const insert = view.state.toText(source);
+  if (!insert.eq(view.state.doc)) {
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert },
+      annotations: ExternalChange.of(true),
+    });
+  }
+}
+
+interface SourceEditorProps {
+  source: string;
+  onChange: (source: string, group?: string) => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  focusRequest?: number;
+}
+
+function SourceEditor({ source, onChange, onUndo, onRedo, focusRequest = 0 }: SourceEditorProps) {
+  const actions = useRef({ onChange, onUndo, onRedo });
+  actions.current = { onChange, onUndo, onRedo };
   const editor = useRef<EditorView | null>(null);
+  const initialSource = useRef(source);
+  const latestSource = useRef(source);
+  latestSource.current = source;
   const requestedFocus = useRef(focusRequest);
   requestedFocus.current = focusRequest;
   const receiveEditor = useCallback((view: EditorView) => {
     editor.current = view;
+    syncSource(view, latestSource.current);
     if (requestedFocus.current) view.focus();
   }, []);
+  useLayoutEffect(() => {
+    // Apply Undo/Redo without the wrapper's typing delay so a following
+    // keystroke always starts from the accepted project's source.
+    if (editor.current) syncSource(editor.current, source);
+  }, [source]);
   useEffect(() => { if (focusRequest) editor.current?.focus(); }, [focusRequest]);
-  // Callback and extension identity changes reconfigure CodeMirror. Keep its
-  // state, selection, and undo history stable through unrelated studio updates.
-  const handleChange = useCallback((value: string) => change.current(value), []);
-  return <CodeMirror value={source} height="100%" theme={editorTheme} extensions={extensions} onChange={handleChange} onCreateEditor={receiveEditor}
+  const editorExtensions = useMemo(() => [...extensions, EditorView.domEventHandlers({
+    keydown(event, view) {
+      const key = event.key.toLowerCase();
+      if (view.composing || event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey)
+        || (key !== 'z' && key !== 'y')) return false;
+      if (key === 'y' || event.shiftKey) actions.current.onRedo();
+      else actions.current.onUndo();
+      return true;
+    },
+    beforeinput(event, view) {
+      if (view.composing || event.isComposing) return false;
+      if (event.inputType === 'historyRedo') actions.current.onRedo();
+      else if (event.inputType === 'historyUndo') actions.current.onUndo();
+      else return false;
+      return true;
+    },
+  })], []);
+  const handleChange = useCallback((value: string, update: ViewUpdate) => {
+    // UIW marks app-initiated changes and excludes them from this callback.
+    // Keep paste, drop and replacements distinct from ordinary typing/deletion.
+    const [transaction] = update.transactions;
+    let group: string | undefined;
+    if (update.transactions.length === 1) {
+      if (transaction.isUserEvent('input.type')) group = 'source:type';
+      else if (transaction.isUserEvent('delete.backward')) group = 'source:backspace';
+      else if (transaction.isUserEvent('delete.forward')) group = 'source:delete';
+    }
+    actions.current.onChange(value, group);
+  }, []);
+  return <CodeMirror value={initialSource.current} height="100%" theme={editorTheme} extensions={editorExtensions} onChange={handleChange} onCreateEditor={receiveEditor}
     aria-label="Mermaid source code" basicSetup={basicSetup} />;
 }
 

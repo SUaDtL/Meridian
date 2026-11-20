@@ -259,8 +259,8 @@ export default function Studio({
     [patch],
   );
   const changeSource = useCallback(
-    (source: string) => {
-      if (source.length <= 100_000) patch({ source }, "Edit source", "source");
+    (source: string, group?: string) => {
+      if (source.length <= 100_000) patch({ source }, "Edit source", group);
       else notify("Source is limited to 100,000 characters.", "error");
     },
     [patch, notify],
@@ -668,6 +668,8 @@ export default function Studio({
                 <SourceEditor
                   source={doc.source}
                   onChange={changeSource}
+                  onUndo={undo}
+                  onRedo={redo}
                   focusRequest={focusRequest}
                 />
               </Suspense>
