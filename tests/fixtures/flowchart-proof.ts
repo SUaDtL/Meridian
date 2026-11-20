@@ -168,3 +168,54 @@ declare global {
   }
 }
 window.checkInterruptedMigration = checkInterruptedMigration;
+
+async function seedProjectEditor(legacy: LegacyFixtureProject) {
+  const { STORAGE_KEY } = await import('../../src/lib/storage');
+  const { openWorkspaceDatabase } = await import('../../src/lib/persistence/workspace-db');
+  const { migrateWorkspace } = await import('../../src/lib/persistence/workspace-migration');
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 2, documents: [legacy], activeId: legacy.id }));
+  const db = await openWorkspaceDatabase();
+  try {
+    return (await migrateWorkspace(db)).status;
+  } finally {
+    db.close();
+  }
+}
+
+async function openProjectEditorFixture(id: string) {
+  const { openStoredProjectEditor } = await import('../../src/lib/authoring/project-editor');
+  const { openWorkspaceDatabase } = await import('../../src/lib/persistence/workspace-db');
+  const { projectBaseToken } = await import('../../src/lib/authoring/base-token');
+  const db = await openWorkspaceDatabase();
+  const editor = await openStoredProjectEditor(db, id, () => {});
+  const prepare = async (title: string) => editor.prepareHeading({
+    schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'canvas',
+    baseToken: await projectBaseToken(editor.snapshot()),
+    operations: [{ op: 'setHeading', title, subtitle: editor.snapshot().subtitle, showTitle: true }],
+  });
+  window.projectEditor = {
+    ...editor,
+    async edit(title: string) {
+      return editor.applyHeading(await prepare(title));
+    },
+    async applyStale(title: string) {
+      const proposal = await prepare(title);
+      editor.undo();
+      return editor.applyHeading(proposal);
+    },
+  };
+  return editor.snapshot();
+}
+
+declare global {
+  interface Window {
+    seedProjectEditor: typeof seedProjectEditor;
+    openProjectEditorFixture: typeof openProjectEditorFixture;
+    projectEditor: Awaited<ReturnType<typeof import('../../src/lib/authoring/project-editor').openStoredProjectEditor>> & {
+      edit(title: string): Promise<string>;
+      applyStale(title: string): Promise<string>;
+    };
+  }
+}
+window.seedProjectEditor = seedProjectEditor;
+window.openProjectEditorFixture = openProjectEditorFixture;

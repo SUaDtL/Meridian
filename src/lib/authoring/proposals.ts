@@ -2,8 +2,8 @@ import type { StudioDocument } from '../../types';
 import { fitsProjectFile, serializeProject } from '../storage';
 import { projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 
-export interface ProposalBase {
-  readonly document: StudioDocument;
+export interface ProposalBase<Project = StudioDocument> {
+  readonly document: Project;
   readonly revision: number;
 }
 
@@ -19,15 +19,8 @@ export interface ReadyProposal {
   readonly state: 'ready';
 }
 
-type PreparedCandidate = {
-  base: ProposalBase;
-  token: BaseToken;
-  document: StudioDocument;
-};
-
 export const staleHeadingMessage = 'This project changed while you were editing. Review the current heading before applying your draft.';
 const invalid = () => new Error('The heading proposal is invalid.');
-const prepared = new WeakMap<ReadyProposal, PreparedCandidate>();
 const digestPattern = /^[a-f0-9]{64}$/;
 const unpairedSurrogate = /[\uD800-\uDFFF]/u;
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -63,36 +56,53 @@ function readHeadingEnvelope(value: unknown) {
   return { id: envelope.id, token: { projectId, revision, contentHash, stateDigest }, heading };
 }
 
-export function workspaceBaseToken({ document, revision }: ProposalBase): Promise<BaseToken> {
+type HeadingDocument = Pick<StudioDocument, 'id' | 'source' | 'title' | 'subtitle' | 'settings' | 'updatedAt'>;
+
+export function workspaceBaseToken({ document, revision }: ProposalBase<HeadingDocument>): Promise<BaseToken> {
   return projectBaseToken({ ...document, documentKind: 'mermaid', revision });
 }
 
-/** Metadata can be previewed without Mermaid because headings are applied during framing. */
-export async function prepareHeadingProposal(base: ProposalBase, envelope: unknown): Promise<ReadyProposal> {
-  const { id, token, heading } = readHeadingEnvelope(envelope);
-  const snapshot = { ...base };
-  const verifiedToken = await workspaceBaseToken(snapshot);
-  if (!sameBaseToken(token, verifiedToken)) throw new Error(staleHeadingMessage);
-  // The portable download is indented JSON. Budget the actual export, in bytes.
-  const { document: current } = snapshot;
-  const { title, subtitle, showTitle } = heading;
-  const settings = showTitle === current.settings.showTitle ? current.settings : Object.freeze({ ...current.settings, showTitle });
-  const document: StudioDocument = title === current.title && subtitle === current.subtitle && settings === current.settings
-    ? current
-    : Object.freeze({ ...current, title, subtitle, settings, updatedAt: new Date().toISOString() });
+export function createHeadingProposalLane<Project extends HeadingDocument>(
+  finalize: (draft: Project, base: ProposalBase<Project>) => Project,
+) {
+  const prepared = new WeakMap<ReadyProposal, { base: ProposalBase<Project>; projectId: string; document: Project }>();
+
+  /** Headings are applied during framing and can be prepared without Mermaid. */
+  async function prepare(base: ProposalBase<Project>, envelope: unknown): Promise<ReadyProposal> {
+    const { id, token, heading } = readHeadingEnvelope(envelope);
+    const snapshot = { ...base };
+    const verifiedToken = await workspaceBaseToken(snapshot);
+    if (!sameBaseToken(token, verifiedToken)) throw new Error(staleHeadingMessage);
+    const { document: current } = snapshot;
+    const { title, subtitle, showTitle } = heading;
+    const settings = showTitle === current.settings.showTitle ? current.settings : Object.freeze({ ...current.settings, showTitle });
+    const draft = title === current.title && subtitle === current.subtitle && settings === current.settings
+      ? current
+      : { ...current, title, subtitle, settings, updatedAt: new Date().toISOString() };
+    const document = finalize(draft, snapshot);
+    const grant: ReadyProposal = Object.freeze({ id, state: 'ready' });
+    prepared.set(grant, { base: snapshot, projectId: verifiedToken.projectId, document });
+    return grant;
+  }
+
+  function resolve(proposal: ReadyProposal, document: Project, revision: number) {
+    const candidate = prepared.get(proposal);
+    if (!candidate) return { status: 'invalid' } as const;
+    if (candidate.projectId !== document.id || candidate.base.revision !== revision || candidate.base.document !== document) {
+      return { status: 'stale' } as const;
+    }
+    return { status: 'ready', document: candidate.document } as const;
+  }
+
+  return { prepare, resolve };
+}
+
+const legacyHeadingLane = createHeadingProposalLane<StudioDocument>((document, base) => {
   if (!fitsProjectFile(serializeProject(document))) {
     throw new Error('The result is too large to export and reopen as a Meridian project.');
   }
-  const grant: ReadyProposal = Object.freeze({ id, state: 'ready' });
-  prepared.set(grant, { base: snapshot, token: verifiedToken, document });
-  return grant;
-}
+  return document === base.document ? document : Object.freeze(document);
+});
 
-/** Apply can use object identity because workspace revisions own immutable snapshots. */
-export function resolvePreparedProposal(proposal: ReadyProposal, document: StudioDocument, revision: number) {
-  const candidate = prepared.get(proposal);
-  if (!candidate) return { status: 'invalid' } as const;
-  if (candidate.token.projectId !== document.id || candidate.token.revision !== revision
-    || candidate.base.document !== document) return { status: 'stale' } as const;
-  return { status: 'ready', document: candidate.document } as const;
-}
+export const prepareHeadingProposal = legacyHeadingLane.prepare;
+export const resolvePreparedProposal = legacyHeadingLane.resolve;
