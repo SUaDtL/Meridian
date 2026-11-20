@@ -16,7 +16,7 @@ interface RecordSpan {
 const unsupported = () => new Error('This source uses syntax outside the supported editing subset. Edit it in the source panel.');
 const id = '[A-Za-z_][A-Za-z_0-9]*';
 const header = /^(?:flowchart|graph)[ \t]+(TB|TD|BT|LR|RL)$/;
-const edge = new RegExp(`^(${id})[ \t]+(?:(${id})@)?-->(?:\\|"[^"]*"\\|)?[ \t]+(${id})$`);
+const edge = new RegExp(`^(${id})[ \t]+(?:(${id})@)?-->(\\|"[^"]*"\\|)?([ \t]+)(${id})$`);
 const subgraph = new RegExp(`^subgraph[ \t]+(${id})[ \t]+\\[(?:"[^"]*"|[A-Za-z0-9 _-]+)\\]$`);
 const node = new RegExp(`^(${id})(\\(\\[|\\[\\(|\\(\\(|\\{\\{|\\[|\\(|\\{)("[^"]*"|[A-Za-z0-9 _-]+)(\\]\\)|\\)\\]|\\)\\)|\\}\\}|\\]|\\)|\\})$`);
 const shapesByOpening = new Map(Object.entries(shapeDelimiters).map(([shape, [open, close]]) => [open, { shape: shape as Shape, close }]));
@@ -83,7 +83,7 @@ function readSubset(source: string) {
   const direction = first && header.exec(first.text)?.[1];
   if (!direction) throw unsupported();
   const nodes = new Map<string, RecordSpan & { shape: Shape; declaration: RecordSpan }>();
-  const edges: { id?: string; from: string; to: string; record: RecordSpan }[] = [];
+  const edges: { id?: string; from: string; to: string; record: RecordSpan; label: RecordSpan }[] = [];
   const edgeIds = new Set<string>();
   const styles: { record: RecordSpan; indices: string }[] = [];
 
@@ -99,10 +99,11 @@ function readSubset(source: string) {
     }
     match = edge.exec(record.text);
     if (match) {
-      const [, from, edgeId, to] = match;
+      const [, from, edgeId, token = '', gap, to] = match;
       if (edgeId && (edgeIds.has(edgeId) || reserved.has(edgeId))) throw unsupported();
       if (edgeId) edgeIds.add(edgeId);
-      edges.push({ id: edgeId, from, to, record });
+      const end = record.end - gap.length - to.length;
+      edges.push({ id: edgeId, from, to, record, label: { start: end - token.length, end, text: token } });
       continue;
     }
     match = indexedStyle.exec(record.text);
@@ -276,6 +277,14 @@ export function planNodeLabel(source: string, nodeId: string, label: string): So
   const literal = span.text.startsWith('"') ? span.text.slice(1, -1) : span.text;
   if (replacement === span.text || (label === literal && !literal.includes('#'))) return [];
   return [replace(span, replacement)];
+}
+
+/** Replace only the label token associated with the exact explicit edge ID. */
+export function planEdgeLabel(source: string, edgeId: string, label: string): SourcePatch[] {
+  const item = edgeId && readSubset(source).edges.find(edge => edge.id === edgeId);
+  if (!item) throw new Error('Choose a connection with an explicit source ID.');
+  const encoded = label ? `|${encodeMermaidLabel(label)}|` : '';
+  return item.label.text === encoded ? [] : [replace(item.label, encoded)];
 }
 
 /** Remove one explicitly identified edge and repair affected linkStyle ordinals. */

@@ -38,6 +38,7 @@ export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: 
   result: RenderResult;
   targetTable: RenderTargetTable | null;
   flowDirection?: string;
+  edgeLabels?: ReadonlyMap<string, string>;
 }> {
   signal?.throwIfAborted();
   const live = snapshot.identity.elements.filter(record => record.status === 'resolved');
@@ -86,10 +87,13 @@ export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: 
   const rawElements = new Map(result.elements?.map(item => [item.key, item]));
   if (bound.size !== live.length) throw mismatchedTarget();
   const directions = new Map<string, RenderTarget['direction']>();
+  const edgeLabels = new Map<string, string>();
   let edgeIndex = 0;
   for (const item of observed) {
     if (item.elementKind !== 'edge') continue;
-    const { type, stroke } = model.edges[edgeIndex++];
+    const { type, stroke, text } = model.edges[edgeIndex++];
+    const id = bound.get(item.legacyKey);
+    if (id) edgeLabels.set(id, text ?? '');
     directions.set(item.legacyKey, !type || type === 'arrow_open' || stroke === 'invisible' ? 'none'
       : type.startsWith('double_arrow_') ? 'both' : 'forward');
   }
@@ -158,5 +162,6 @@ export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: 
     },
     targetTable: { schema: 'meridian-targets/v1', baseToken, renderFingerprint: fingerprint, targets },
     flowDirection: model.direction,
+    edgeLabels,
   };
 }

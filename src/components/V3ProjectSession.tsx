@@ -192,13 +192,14 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     return targetTable?.targets.filter(item => item.elementKind === "node")
       .map(item => ({ id: item.id, label: `${item.label} (${ids.get(item.id)})` })) ?? [];
   }, [identities, targetTable]);
+  const edgeLabels = currentFrame?.rendered.edgeLabels;
   const edges = useMemo(() => {
     const ids = new Map(identities?.filter(record => record.status === "resolved" && record.binding.type === "edge-id")
       .map(record => [record.id, record.binding.sourceId]));
     return targetTable?.targets.flatMap(item => item.elementKind === "edge"
       ? [{ id: item.id, label: ids.has(item.id) ? `${item.label} (${ids.get(item.id)})` : item.label,
-        sourceId: item.sourceId, targetId: item.targetId, explicit: ids.has(item.id) }] : []) ?? [];
-  }, [identities, targetTable]);
+        sourceId: item.sourceId, targetId: item.targetId, explicit: ids.has(item.id), text: edgeLabels?.get(item.id) ?? "" }] : []) ?? [];
+  }, [identities, targetTable, edgeLabels]);
   const removableGroup = useMemo(() => {
     const identity = identities?.find(record => record.status === "resolved" && record.elementKind === "group"
       && record.binding.sourceId === ungroupSourceId);
@@ -294,6 +295,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "ungroup", title: "Ungroup", category: "Diagram", synonyms: ["remove container", "keep group members"],
       unavailable: busy ? "Wait for the current action to finish." : removableGroup ? undefined : "Open a rendered flowchart with one supported top-level group.",
       run: () => setEditFlowchart("removeGroup") },
+    { id: "rename-connection", title: "Edit connection label", category: "Diagram", synonyms: ["rename edge", "label relationship"],
+      unavailable: editingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined),
+      run: () => setEditFlowchart("setEdgeLabel") },
     { id: "remove-connection", title: "Delete connection", category: "Diagram", synonyms: ["remove edge", "delete edge"],
       unavailable: editingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined), run: () => setEditFlowchart("removeEdge") },
     { id: "remove-node", title: "Delete node", category: "Diagram", synonyms: ["remove step", "delete step"],
@@ -422,8 +426,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setDetachOpen(false);
           setProject(editor.current!.snapshot());
         }} />}
-      {assistOpen && project && targetTable && flatFlowchart && connection.current && editor.current && <Suspense>
-        <AssistExchangeDialog db={connection.current} editor={editor.current} project={project} table={targetTable}
+      {assistOpen && project && targetTable && edgeLabels && flatFlowchart && connection.current && editor.current && <Suspense>
+        <AssistExchangeDialog db={connection.current} editor={editor.current} project={project} table={targetTable} edgeLabels={edgeLabels}
           onClose={() => setAssistOpen(false)} onApplied={() => {
             setAssistOpen(false);
             setProject(editor.current!.snapshot());

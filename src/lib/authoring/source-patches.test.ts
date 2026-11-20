@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySourcePatches, planEdgeAddition, planEdgeRemoval, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval } from './source-patches';
+import { applySourcePatches, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval } from './source-patches';
 
 it('wraps a consecutive authored range and leaves comments and relationship lines byte-exact', () => {
   const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  %% Between declarations\r\n  B[Second] %% Keep this comment\r\n  C[Last]\r\n  A first@--> B\r\n  B second@--> C\r\n';
@@ -100,4 +100,14 @@ describe('bounded top-level source edit spike', () => {
     expect(() => applySourcePatches(source, [{ from: -1, to: 0, expectedText: '', replacement: '' }])).toThrow('changed');
     expect(() => applySourcePatches(source, [{ from: 0, to: 0, expectedText: '', replacement: ' '.repeat(100_000) }])).toThrow('limit');
   });
+});
+
+it('edits only the explicit connection label token and keeps comments and spacing exact', () => {
+  const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  B[Second]\r\n  A first@-->|"Old label"|  B %% retained\r\n  A second@--> B\r\n  A --> B\r\n  linkStyle 1 stroke:#123456\r\n';
+  const renamed = applySourcePatches(source, planEdgeLabel(source, 'first', 'New label'));
+  expect(renamed).toBe(source.replace('|"Old label"|', '|"New label"|'));
+  expect(applySourcePatches(renamed, planEdgeLabel(renamed, 'first', ''))).toBe(source.replace('|"Old label"|', ''));
+  expect(applySourcePatches(source, planEdgeLabel(source, 'second', 'Added'))).toBe(source.replace('second@-->', 'second@-->|"Added"|'));
+  expect(planEdgeLabel(source, 'second', '')).toEqual([]);
+  expect(() => planEdgeLabel(source, 'unknown', 'Label')).toThrow('explicit source ID');
 });

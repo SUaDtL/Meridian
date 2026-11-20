@@ -75,6 +75,7 @@ function uuidV7(now: number) {
 export async function buildAssistRequest(
   document: MermaidProjectV3,
   table: RenderTargetTable,
+  edgeLabels: ReadonlyMap<string, string>,
   chosen: ReadonlyMap<string, AssistSelection>,
   instruction: string,
   now = Date.now(),
@@ -116,13 +117,14 @@ export async function buildAssistRequest(
         };
       }),
       edges: scopedEdges.map(item => {
-        if (!item.sourceId || !item.targetId || item.direction !== 'forward'
-          || [...item.label].length > 200 || /[\u0000-\u001f\uD800-\uDFFF]/u.test(item.label)) {
+        const label = edgeLabels.get(item.id);
+        if (label === undefined || !item.sourceId || !item.targetId || item.direction !== 'forward'
+          || [...label].length > 200 || /[\u0000-\u001f\uD800-\uDFFF]/u.test(label)) {
           throw new Error('A selected relationship cannot be shared. Choose a smaller scope.');
         }
         return {
           id: item.id, elementKind: 'edge', sourceId: item.sourceId, targetId: item.targetId,
-          label: item.label, direction: item.direction, lineStyle: 'solid',
+          label, direction: item.direction, lineStyle: 'solid',
         };
       }),
       groups: [],
