@@ -191,9 +191,9 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 | --- | --- | --- |
 | Guided creation | Local worker review, explicit branching and normalized process/table checkpoints. [#22–26](https://github.com/SUaDtL/Meridian/pulls?q=is%3Apr+is%3Amerged+guided) | Insertion into an existing diagram and the full guided-entry accessibility gates |
 | Navigation and checks | Command search, typed outline and source locations, source suggestions at supported statement positions, label checks and supported rendered contrast. [#25](https://github.com/SUaDtL/Meridian/pull/25) · [#27](https://github.com/SUaDtL/Meridian/pull/27) · [#28](https://github.com/SUaDtL/Meridian/pull/28) · [#29](https://github.com/SUaDtL/Meridian/pull/29) | Source diagnostics and guarded suggested fixes |
-| Design and layout | Diagram-wide recipe previews and measured direction alternatives. [#30](https://github.com/SUaDtL/Meridian/pull/30) · [#31](https://github.com/SUaDtL/Meridian/pull/31) | Scoped design changes and routing verification |
+| Design and layout | Diagram-wide, selection and role recipe previews and measured direction alternatives. [#30](https://github.com/SUaDtL/Meridian/pull/30) · [#31](https://github.com/SUaDtL/Meridian/pull/31) · [#63](https://github.com/SUaDtL/Meridian/pull/63) | Override reset and routing verification |
 | Visual builder and stories | Atomic Add Next, explicit connection/node deletion with annotation recovery, reviewed group creation and removal for explicit declarations, and group- and path-based storyboard suggestions. [#32](https://github.com/SUaDtL/Meridian/pull/32) · [#33](https://github.com/SUaDtL/Meridian/pull/33) · [#34](https://github.com/SUaDtL/Meridian/pull/34) · [#36](https://github.com/SUaDtL/Meridian/pull/36) · [#40](https://github.com/SUaDtL/Meridian/pull/40) | Nested grouping, moving members, additional story tools and the remaining interaction gates |
-| Components | Local library with conflict-safe packs, reviewed projects from flat forward definitions and detachable instance bindings. [#35](https://github.com/SUaDtL/Meridian/pull/35) · [#51](https://github.com/SUaDtL/Meridian/pull/51) | Grouped generation, insertion, port binding, and extraction |
+| Components | Local library with conflict-safe packs, reviewed projects from flat forward definitions, detachable instance bindings and saving reviewed node selections. [#35](https://github.com/SUaDtL/Meridian/pull/35) · [#51](https://github.com/SUaDtL/Meridian/pull/51) · [#64](https://github.com/SUaDtL/Meridian/pull/64) | Grouped generation, insertion and port binding |
 
 ## Milestone 2 verified label contrast fixes
 
@@ -219,7 +219,7 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 
 - Engineering file reads one local OpenAPI 3.0 or 3.1 JSON file through a bounded worker. It presents operation IDs, declared tags and the scope excluded because of referenced path items or schema content. Select operations and review their display labels and optional primary tags before creating a new project.
 - Generated Mermaid links represent declared tag membership. Outline shows the exact virtual path and escaped JSON Pointer for each generated target. Chromium verifies filtered selection, reviewed generation and a portable export that retains provenance without examples, descriptions or remote URI content.
-- This advances IM05, IM06, IM07 and IM08 for the operation view. Restricted YAML, OpenAPI schema/reference views and checkpointed facts remain open.
+- This advances IM05, IM06, IM07 and IM08 for the operation view. OpenAPI schema/reference views and checkpointed facts remain open.
 
 ## Milestone 4 chart filter review
 
@@ -277,3 +277,27 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The supported proposal applies one node rename through the same source proof as native editing. The database compares the saved anchor and consumes the matching request atomically with the project write. A separate Undo restores the prior working project.
 - Chromium runs the exchange with networking disabled and verifies scoped disclosure, forged origin and digest rejection, a context-only rename rejection, exact Undo and replay refusal. This advances AI01, AI02, AI05, AI06 and AI09 for the supported rename. More operations and independent hosted pilot work require their separate gates. Hosting, identity, provider, spend and operation approvals remain open.
 - [Implementation PR #55](https://github.com/SUaDtL/Meridian/pull/55) · [Workflow and browser evidence](https://github.com/SUaDtL/Meridian/actions/runs/44824348209)
+
+## Exact connection label review
+
+- The structure dialog edits a single explicit connection ID. Chromium verifies a labeled parallel connection retains its stable identity, storyboard references, original line endings and adjacent indexed styles through edit, clear and Undo. This advances the connection label portion of VB03. [PR #59](https://github.com/SUaDtL/Meridian/pull/59) · [Workflow evidence](https://github.com/SUaDtL/Meridian/actions/runs/44826567038)
+
+## Duplicate names and disconnected regions
+
+- Quality Coach finds duplicate node and group names after normalizing Unicode and whitespace for comparison. A reviewed node rename uses the same structural proof as other source edits. The region check follows declared connections and reports unknown coverage when endpoints cannot be resolved. Browser fixtures verify separate region membership and session-only dismissals across a title change. This advances QC-05, QC-06 and QC-12. [PR #61](https://github.com/SUaDtL/Meridian/pull/61) · [Workflow evidence](https://github.com/SUaDtL/Meridian/actions/runs/44827300965)
+
+## Restricted OpenAPI YAML
+
+- The local operation importer accepts restricted single-document YAML with explicit key and scalar type checks. It rejects aliases, tags, duplicate keys and excess structure. Chromium verifies that a rejected file leaves the user in control of choosing a replacement. The generated project retains provenance and omits descriptions and examples. [PR #62](https://github.com/SUaDtL/Meridian/pull/62) · [Workflow evidence](https://github.com/SUaDtL/Meridian/actions/runs/44828433046)
+
+## Scoped design recipes
+
+- The recipe review applies eligible paint to a reviewed selection or to its selected semantic role. It discloses hidden selected elements and protects manual property overrides. Chromium checks unrelated elements and document settings, then verifies exact Undo. This advances F03 scoped recipe application. [PR #63](https://github.com/SUaDtL/Meridian/pull/63) · [Workflow evidence](https://github.com/SUaDtL/Meridian/actions/runs/44828939286)
+
+## Save a selection as a component
+
+- The outline action turns reviewed flat-flowchart nodes and internal connections into a local definition. Authors choose ports and label parameters. Chromium verifies the selected elements, unchanged original project and reopening the definition after reload. This advances F04 extraction for flat selections. [PR #64](https://github.com/SUaDtL/Meridian/pull/64) · [Workflow evidence](https://github.com/SUaDtL/Meridian/actions/runs/44830351027)
+
+## Chart table reading controls
+
+- The displayed-values and source-data tables support column selection, searching across pages and focused-row navigation. The saved offline HTML can search the local table and choose visible columns. Its runtime uses a matching script hash in the Content Security Policy. Chromium verifies results beyond the first 50 rows and offline use. This advances CH08. [PR #66](https://github.com/SUaDtL/Meridian/pull/66) · [Workflow evidence](https://github.com/SUaDtL/Meridian/actions/runs/44831176296)
