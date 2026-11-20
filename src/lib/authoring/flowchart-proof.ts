@@ -88,11 +88,15 @@ function verifyVisibleLabel(result: RenderResult, intent: SourceIntent, id: stri
  * Prove one narrow edit against the real serialized Mermaid renderer. Only the
  * expected source-semantic delta and exact visible label may change.
  */
-export async function proveFlowchartEdit(document: StudioDocument, intent: SourceIntent, signal?: AbortSignal) {
+export async function proveFlowchartEdit(
+  document: Pick<StudioDocument, 'source' | 'settings'> & Partial<Pick<StudioDocument, 'nodeAccents' | 'design'>>,
+  intent: SourceIntent,
+  signal?: AbortSignal,
+) {
   const sourceTopology = flowchartSubsetTopology(document.source);
   const plan = planSourceEdit(document.source, intent);
   const source = applySourcePatches(document.source, plan.patches);
-  const render = (text: string) => renderDiagram(text, document.settings, document.nodeAccents, document.design, { signal });
+  const render = (text: string) => renderDiagram(text, document.settings, document.nodeAccents ?? {}, document.design, { signal });
   const initial = await render(document.source);
   const before = readModel(flowchartModelFor(initial));
   const observedTopology = {

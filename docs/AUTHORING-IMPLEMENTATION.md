@@ -111,3 +111,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - `src/lib/persistence/project-save-queue.ts` schedules after 450 ms of quiet input and starts a checkpoint within two seconds of continuous edits when the writer is idle. It keeps the latest revision while a write is in flight, reports Saved only after the current revision commits, and preserves unsaved edits on storage error or conflict.
 - The Chromium fixture migrates an existing project, opens it in two tabs, applies and undoes a heading, rejects a stale proposal, and reopens the committed revision after reload. It checks that the stale tab retains its edit while the stored project and its source and identities stay intact.
 - This integrates one heading operation through FN04, FN05, PS02 and the save scheduler. The public editor still opens the legacy workspace. Typed render targets, structural Apply, recovery controls and export/reopen parity remain required before switching the public editor to v3.
+
+## Milestone 0 guarded v3 source edits
+
+[PR #12](https://github.com/SUaDtL/Meridian/pull/12) merged the v3 edit and reopen increment as [`e714848`](https://github.com/SUaDtL/Meridian/commit/e714848c2db66dc52ef6dc3d2f08ed1db53c076c).
+
+- The v3 editor can prepare Add Node, Rename Node or Connect for the supported flat grammar. Rename and Connect take resolved node UUIDs. The pinned Mermaid comparison verifies the exact source delta and visible label before the session can apply the candidate. A prepared candidate from an older snapshot cannot apply after another edit or Undo.
+- Apply preserves each existing identity and annotation. A successful Add or Connect creates one new identity. Source and identities enter history and autosave as one snapshot. Removing an element and retaining its annotations uses a separate operation and is outside this slice.
+- The Chromium fixture shows a v2 project with a BOM, CRLF, a source comment and a styled node migrating into v3, receiving all three operations, and reopening after Undo and Redo. This advances FN04, FN05, FN06 and FN10 for the tested subset. The browser fixture exercises the editor session directly. Canvas wiring, typed targets, recovery controls and studio/export parity still gate public activation.

@@ -157,3 +157,47 @@ test('a migrated v3 project applies, undoes and reopens a guarded edit across ta
   const reopened = await page.evaluate(id => window.openProjectEditorFixture(id), project.id);
   expect(reopened).toEqual({ ...original, revision: 2, updatedAt: reopened.updatedAt });
 });
+
+test('guarded v3 Add, Rename and Connect preserve source bytes and UUIDs through Undo and reopen', async ({ page }) => {
+  const { createDocument } = await import('../../src/lib/storage');
+  const source = '\uFEFFflowchart LR\r\n  %% Preserve this comment\r\n  A["Start"]\r\n';
+  const project = { ...createDocument(), source, nodeAccents: { A: '#159' } };
+  await expect(page.evaluate(input => window.seedProjectEditor(input), project)).resolves.toBe('migrated');
+  const original = await page.evaluate(id => window.openProjectEditorFixture(id), project.id);
+  const start = original.identity.elements.find(item => item.binding.sourceId === 'A');
+  if (!start) throw new Error('Missing source node.');
+  const changes = await page.evaluate(async id => {
+    const editor = window.projectEditor;
+    const stale = await editor.prepareStructure({ op: 'setNodeLabel', targetId: id, label: 'Discarded' });
+    const add = editor.applyStructure(await editor.prepareStructure({ op: 'addNode', label: 'Archive', shape: 'cylinder' }));
+    if (add.status !== 'applied' || !add.elementId) throw new Error('Node creation did not apply.');
+    const refused = editor.applyStructure(stale);
+    const rename = editor.applyStructure(await editor.prepareStructure({ op: 'setNodeLabel', targetId: id, label: 'Receive' }));
+    const connected = editor.applyStructure(await editor.prepareStructure({ op: 'addEdge', sourceId: id, targetId: add.elementId, label: 'Done' }));
+    const after = editor.snapshot();
+    const undone = editor.undo();
+    const withoutEdge = editor.snapshot();
+    const redone = editor.redo();
+    await editor.flush();
+    return { add, refused, rename, connected, after, undone, withoutEdge, redone, save: editor.saveState() };
+  }, start.id);
+  expect(changes.refused.status).toBe('stale');
+  expect(changes.rename).toMatchObject({ status: 'applied', elementId: start.id });
+  expect(changes.connected.status).toBe('applied');
+  expect(changes.after.source).toBe(source.replace('Start', 'Receive') + '  m_n1[("Archive")]\r\n  A m_e1@-->|"Done"| m_n1\r\n');
+  expect(changes.after.identity.elements).toEqual([
+    start,
+    { id: changes.add.elementId, status: 'resolved', elementKind: 'node', binding: { type: 'source-id', sourceId: 'm_n1' } },
+    { id: changes.connected.elementId, status: 'resolved', elementKind: 'edge', binding: { type: 'edge-id', sourceId: 'm_e1' } },
+  ]);
+  expect(changes.after.design).toEqual(original.design);
+  expect(changes.undone).toBe(true);
+  expect(changes.withoutEdge.source).toBe(source.replace('Start', 'Receive') + '  m_n1[("Archive")]\r\n');
+  expect(changes.redone).toBe(true);
+  expect(changes.save).toMatchObject({ phase: 'saved', savedRevision: 5 });
+
+  await page.reload();
+  await page.waitForFunction(() => 'openProjectEditorFixture' in window);
+  const reopened = await page.evaluate(id => window.openProjectEditorFixture(id), project.id);
+  expect(reopened).toEqual({ ...changes.after, revision: 5, updatedAt: reopened.updatedAt });
+});
