@@ -26,8 +26,9 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyContrast"]>;
   onClose: () => void;
 }) {
-  const [mode, setMode] = useState<"canvas" | "presentation" | "custom">(canvas ? "canvas" : "presentation");
+  const [mode, setMode] = useState<"canvas" | "presentation" | "document" | "custom">(canvas ? "canvas" : "presentation");
   const [custom, setCustom] = useState(presentation);
+  const [documentWidth, setDocumentWidth] = useState(720);
   const [result, setResult] = useState<{ report: ReadabilityReport; findings: { finding: ReadabilityFinding; key: string }[] }>();
   const [phase, setPhase] = useState<"check" | "findings" | "contrast">();
   const busy = phase !== undefined;
@@ -40,7 +41,9 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   const checkButton = useRef<HTMLButtonElement>(null);
   const [imageReady, setImageReady] = useState(false);
   const active = useRef<AbortController | undefined>(undefined);
-  const profile = mode === "canvas" && canvas ? canvas : mode === "custom" ? custom : presentation;
+  const profile: ViewingProfile = mode === "canvas" && canvas ? canvas
+    : mode === "document" ? { width: documentWidth, padding: 0 }
+    : mode === "custom" ? custom : presentation;
   const byId = new Map(targets.map(target => [target.id, target]));
 
   useEffect(() => () => active.current?.abort(), []);
@@ -181,14 +184,20 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
       <div className="heading-form">
         <label>Viewing profile<select value={mode} disabled={busy} onChange={event => { setMode(event.target.value as typeof mode); reset(); }}>
           {canvas && <option value="canvas">Canvas at fit</option>}
-          <option value="presentation">Presentation</option><option value="custom">Custom viewport</option>
+          <option value="presentation">Presentation</option><option value="document">Document width</option><option value="custom">Custom viewport</option>
         </select></label>
+        {mode === "document" && <label>Allocated width in CSS pixels
+          <input type="number" min={100} max={8192} step={1} disabled={busy} value={Number.isFinite(documentWidth) ? documentWidth : ""}
+            onChange={event => { setDocumentWidth(event.target.valueAsNumber); reset(); }} />
+        </label>}
         {mode === "custom" && (Object.keys(custom) as (keyof ViewingProfile)[]).map(field => (
           <label key={field}>{field === "width" ? "Width" : field === "height" ? "Height" : "Padding"} in CSS pixels
             <input type="number" min={field === "padding" ? 0 : 100} max={8192} step={1} value={Number.isFinite(custom[field]) ? custom[field] : ""} disabled={busy}
               onChange={event => { setCustom({ ...custom, [field]: event.target.valueAsNumber }); reset(); }} /></label>
         ))}
-        <p>{profile.width} × {profile.height} CSS pixels · {profile.padding} pixels of padding · Project revision {token.revision}</p>
+        <p>{profile.height === undefined
+          ? `${Number.isFinite(profile.width) ? profile.width : "—"} CSS pixels allocated · Fits width`
+          : `${profile.width} × ${profile.height} CSS pixels · ${profile.padding} pixels of padding`} · Project revision {token.revision}</p>
         <div className="dialog-actions"><button ref={checkButton} className="button primary" disabled={busy || retry === "narrow"} onClick={() => void check()}>
           {retry === "once" ? "Retry for five seconds" : "Check diagram"}
         </button>{busy && <button className="button quiet" type="button" onClick={cancel}>

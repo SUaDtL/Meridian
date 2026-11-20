@@ -14,6 +14,13 @@ test('fits viewed text once in CSS pixels and reports unknown measurements separ
   expect(() => viewingScale({ ...profile, padding: 300 }, frame)).toThrow(/room inside/);
 });
 
+test('uses the allocated document width for tall drawings', () => {
+  const tall = { ...frame, height: 8_000 };
+  expect(viewingScale({ width: 480, padding: 0 }, tall)).toBe(0.6);
+  expect(viewingScale({ width: 480, height: 480, padding: 0 }, tall)).toBe(0.075);
+  expect(() => viewingScale({ width: 0, padding: 0 }, tall)).toThrow(/Choose a viewing area/);
+});
+
 test('compares NFC and whitespace without changing display names or inventing connections', () => {
   const input: ReadabilityTarget[] = [node('a', 'Café API', 30), node('b', 'Cafe\u0301  API', 30), node('c', 'Warehouse', 30),
     { id: 'link', label: '', typography: false, kind: 'edge', from: 'b', to: 'a' }];
