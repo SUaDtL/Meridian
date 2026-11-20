@@ -10,7 +10,7 @@ async function download(page: Page, live: Locator, button: string) {
   return readFile(path, 'utf8');
 }
 
-test('appends reviewed group scenes, keeps ancestor containers scoped, and exports the same settled visibility', async ({ page, browser }) => {
+test('appends and edits ordinary group scenes, then exports the same settled visibility', async ({ page, browser }, info) => {
   const source = 'flowchart LR\n subgraph Outer [Outer group]\n   A[Start]\n   subgraph Inner [Inner group]\n     B[Selected input]\n     D[Selected output]\n   end\n   C[Finish]\n end\n E[External]\n A main@--> C\n B local@--> D\n A boundary@--> E\n';
   const existing = { ...createScene(), title: 'Manual overview' };
   const project = { ...createDocument(), title: 'Group story example', source, storyboard: { version: 1 as const, scenes: [existing], loop: false } };
@@ -52,17 +52,56 @@ test('appends reviewed group scenes, keeps ancestor containers scoped, and expor
   expect(saved.storyboard.scenes[1].flow).toEqual([bindings.get('local')]);
   expect(saved.storyboard.scenes[1].visible).not.toContain(bindings.get('A'));
 
+  await live.getByRole('button', { name: 'Edit saved scenes', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit saved scenes' });
+  await editor.getByRole('button', { name: /^2\. Inner group/ }).click();
+  await editor.getByRole('textbox', { name: 'Scene title' }).fill('Review handoff');
+  await editor.getByRole('spinbutton', { name: 'Duration in seconds' }).fill('8');
+  await editor.getByRole('spinbutton', { name: 'Entrance in seconds' }).fill('0.65');
+  await editor.getByRole('combobox', { name: 'Entrance easing' }).selectOption('ease-out');
+  await editor.getByRole('combobox', { name: 'Reveal order' }).selectOption('sequence');
+  await editor.getByRole('spinbutton', { name: 'Camera padding in diagram units' }).fill('12');
+  await expect(editor.getByRole('button', { name: 'Apply scene edit' })).toBeDisabled();
+  await editor.getByRole('button', { name: 'Preview scene edit' }).click();
+  const proposed = editor.getByRole('region', { name: 'Proposed scene' });
+  await expect(proposed.getByRole('button', { name: 'Preview Review handoff' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(proposed.getByRole('button', { name: 'Play story' })).toBeVisible();
+  await expect(proposed.locator(hidden)).toHaveAttribute('aria-hidden', 'true');
+  await expect(proposed.locator(shown)).toHaveAttribute('aria-hidden', 'false');
+  await page.screenshot({ path: info.outputPath('saved-scene-edit-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('saved-scene-edit-mobile.png') });
+  await editor.getByRole('button', { name: 'Apply scene edit' }).click();
+  await expect(editor.getByRole('button', { name: /^2\. Review handoff/ })).toBeFocused();
+  await expect(editor.getByRole('status')).toHaveText('Scene updated.');
+  await editor.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const edited = JSON.parse(await download(page, live, 'Download v3 project'));
+  const [manual, generated, other] = saved.storyboard.scenes;
+  expect(edited).toEqual({
+    ...saved, revision: saved.revision + 1, updatedAt: edited.updatedAt,
+    storyboard: { ...saved.storyboard, scenes: [manual, {
+      ...generated, title: 'Review handoff', duration: 8, transition: 0.65, easing: 'ease-out',
+      reveal: 'sequence', camera: { ...generated.camera, padding: 12 },
+    }, other] },
+  });
+
   const html = await download(page, live, 'Download HTML presentation');
   const offline = await browser.newContext({ offline: true, reducedMotion: 'reduce' });
   try {
     const presentation = await offline.newPage();
     await presentation.setContent(html);
+    await expect(presentation.getByLabel('Choose scene', { exact: true })).toContainText('Review handoff');
     await presentation.getByLabel('Choose scene', { exact: true }).selectOption('1');
     await expect(presentation.locator(hidden)).toHaveAttribute('aria-hidden', 'true');
     await expect(presentation.locator(shown)).toHaveAttribute('aria-hidden', 'false');
     await expect(presentation.locator(ancestor)).toHaveAttribute('aria-hidden', 'false');
   } finally { await offline.close(); }
 
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const beforeEdit = JSON.parse(await download(page, live, 'Download v3 project'));
+  expect(beforeEdit.storyboard).toEqual(saved.storyboard);
   await live.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const restored = JSON.parse(await download(page, live, 'Download v3 project'));
