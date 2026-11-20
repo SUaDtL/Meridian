@@ -1,4 +1,5 @@
 import type { StudioDocument, StudioSettings } from "../types";
+import { resolvePreparedProposal, type ReadyProposal } from "./authoring/proposals";
 
 export type DocumentPatch = Partial<
   Pick<
@@ -13,6 +14,11 @@ export type DocumentPatch = Partial<
   >
 >;
 type Entry = { document: StudioDocument; label: string; bytes: number };
+const historyBytes = 8 * 1024 * 1024;
+export interface ProposalOutcome {
+  id: string;
+  status: "applied" | "unchanged" | "invalid" | "stale" | "history-limit";
+}
 export interface WorkspaceState {
   documents: StudioDocument[];
   activeId: string | null;
@@ -21,6 +27,7 @@ export interface WorkspaceState {
   revision: number;
   group: string;
   editedAt: number;
+  proposalOutcome?: ProposalOutcome;
 }
 export type WorkspaceAction =
   | {
@@ -30,6 +37,7 @@ export type WorkspaceAction =
       at: number;
       group?: string;
     }
+  | { type: "proposal"; proposal: ReadyProposal; at: number }
   | { type: "settings"; patch: Partial<StudioSettings>; at: number }
   | { type: "open"; id: string }
   | { type: "add"; document: StudioDocument }
@@ -77,7 +85,7 @@ function bounded(entries: Entry[]): Entry[] {
   let start = entries.length;
   while (start > 0 && entries.length - start < 50) {
     const next = entries[start - 1].bytes;
-    if (bytes + next > 8_000_000) break;
+    if (bytes + next > historyBytes) break;
     bytes += next;
     start--;
   }
@@ -93,6 +101,24 @@ function replaceDocument(
   );
 }
 
+function commitEdit(
+  state: WorkspaceState,
+  document: StudioDocument,
+  before: Entry | null,
+  at: number,
+  group = "",
+): WorkspaceState {
+  return {
+    ...state,
+    documents: replaceDocument(state, document),
+    past: before ? bounded([...state.past, before]) : state.past,
+    future: [],
+    group,
+    editedAt: at,
+    revision: state.revision + 1,
+  };
+}
+
 export function workspaceReducer(
   state: WorkspaceState,
   action: WorkspaceAction,
@@ -101,7 +127,7 @@ export function workspaceReducer(
     (document) => document.id === state.activeId,
   );
   if (action.type === "replace")
-    return workspaceState(action.documents, action.activeId);
+    return { ...workspaceState(action.documents, action.activeId), revision: state.revision + 1 };
   if (action.type === "open") {
     if (
       action.id === state.activeId ||
@@ -149,6 +175,19 @@ export function workspaceReducer(
       group: "",
       revision: state.revision + 1,
     };
+  }
+  if (action.type === "proposal") {
+    const outcome = (status: ProposalOutcome["status"], next = state): WorkspaceState =>
+      ({ ...next, proposalOutcome: { id: action.proposal.id, status } });
+    if (!current) return outcome("stale");
+    const result = resolvePreparedProposal(action.proposal, current, state.revision);
+    if (result.status !== "ready") return outcome(result.status);
+    const { document } = result;
+    if (document === current) return outcome("unchanged");
+    const label = "Edit heading";
+    const before = entry(current, label);
+    if (before.bytes + entry(document, label).bytes > historyBytes) return outcome("history-limit");
+    return outcome("applied", commitEdit(state, document, before, action.at));
   }
   if (!current) return state;
   if (action.type === "undo" || action.type === "redo") {
@@ -212,15 +251,5 @@ export function workspaceReducer(
     ...patch,
     updatedAt: new Date(action.at).toISOString(),
   };
-  return {
-    ...state,
-    documents: replaceDocument(state, document),
-    past: coalesced
-      ? state.past
-      : bounded([...state.past, entry(current, label)]),
-    future: [],
-    group,
-    editedAt: action.at,
-    revision: state.revision + 1,
-  };
+  return commitEdit(state, document, coalesced ? null : entry(current, label), action.at, group);
 }

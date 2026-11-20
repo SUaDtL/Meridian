@@ -17,9 +17,11 @@ import {
   createDocument,
   downloadText,
   LEGACY_STORAGE_KEY,
+  MAX_PROJECT_FILE_BYTES,
   normalizeSource,
   parseProject,
   safeFilename,
+  serializeProject,
   STORAGE_KEY,
 } from "./lib/storage";
 import type { DiagramTemplate, StudioDocument } from "./types";
@@ -110,7 +112,7 @@ export default function App() {
     const project = workspaceRef.current.document;
     if (!project) return;
     downloadText(
-      JSON.stringify(project, null, 2),
+      serializeProject(project),
       `${safeFilename(project.title)}.meridian.json`,
     );
     notify("Project downloaded with source, styling, and presentation scenes.");
@@ -161,7 +163,7 @@ export default function App() {
     if (!file) return;
     setImporting(true);
     try {
-      if (file.size > 2_000_000)
+      if (file.size > MAX_PROJECT_FILE_BYTES)
         throw new Error("Choose a project or Mermaid file smaller than 2 MB.");
       const text = await file.text();
       let project: StudioDocument;

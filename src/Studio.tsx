@@ -254,10 +254,7 @@ export default function Studio({
     [],
   );
   const editTitle = useCallback(() => setHeading("title"), []);
-  const applyHeading = useCallback(
-    (value: DocumentPatch) => patch(value, "Edit heading"),
-    [patch],
-  );
+  const closeHeading = useCallback(() => setHeading(null), []);
   const changeSource = useCallback(
     (source: string, group?: string) => {
       if (source.length <= 100_000) patch({ source }, "Edit source", group);
@@ -1067,8 +1064,10 @@ export default function Studio({
         <HeadingEditor
           document={doc}
           field={heading}
-          onApply={applyHeading}
-          onClose={() => setHeading(null)}
+          revision={workspace.revision}
+          outcome={workspace.proposalOutcome}
+          onApply={workspace.applyProposal}
+          onClose={closeHeading}
         />
       )}
       {exportOpen && (

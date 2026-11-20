@@ -139,3 +139,40 @@ test('source history remains available from touch controls', async ({ browser })
     await context.close();
   }
 });
+
+test('a validated heading cannot overwrite an intervening edit', async ({ page }) => {
+  await importSource(page, 'flowchart LR\nA[Original]');
+  await page.getByRole('button', { name: 'Edit heading', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('textbox', { name: 'Title', exact: true }).fill('First heading');
+  await dialog.getByRole('button', { name: 'Apply heading', exact: true }).click();
+  await expect(page.locator('.heading-button')).toHaveText('First heading');
+
+  await page.getByRole('button', { name: 'Edit heading', exact: true }).click();
+  const title = dialog.getByRole('textbox', { name: 'Title', exact: true });
+  await title.fill('Pending heading');
+  await page.evaluate(() => {
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    let release!: () => void;
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    document.addEventListener('release-heading-digest', release, { once: true });
+    crypto.subtle.digest = async (...args) => {
+      await paused;
+      return digest(...args);
+    };
+  });
+  await dialog.getByRole('button', { name: 'Apply heading', exact: true }).click();
+  await expect(dialog).toHaveAttribute('aria-busy', 'true');
+  await page.locator('button[aria-label="Undo"]').dispatchEvent('click');
+  await expect(page.locator('.heading-button')).toHaveText('foundation');
+  await page.evaluate(() => document.dispatchEvent(new Event('release-heading-digest')));
+
+  await expect(dialog.getByRole('alert')).toContainText('This project changed');
+  await expect(title).toHaveValue('Pending heading');
+  await expect(dialog.getByRole('button', { name: 'Apply heading', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Keep editing my draft' }).click();
+  await dialog.getByRole('button', { name: 'Apply heading', exact: true }).click();
+  await expect(page.locator('.heading-button')).toHaveText('Pending heading');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.locator('.heading-button')).toHaveText('foundation');
+});
