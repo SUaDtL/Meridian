@@ -35,10 +35,11 @@ function truncate(text: string, limit: number) {
 export function describeChart(project: ChartProject, values: ChartProjection) {
   const { chartSpec: spec } = project;
   const label = (name: string, unit?: string) => unit ? `${name} (${unit})` : name;
-  const y = spec.aggregation === "countRows" ? "Row count" : values.y?.name || "Value";
+  const y = spec.aggregation === "countRows" ? "Row count"
+    : spec.aggregation === "countValues" ? `Present values of ${values.y?.name || "Y"}` : values.y?.name || "Value";
   const aggregation = spec.aggregation === "countRows" ? "row count" : spec.aggregation === "countValues" ? "present-value count" : spec.aggregation;
   const xText = label(values.x.name, spec.unitScale.x?.unitLabel || values.x.unit);
-  const yText = label(y, spec.unitScale.y?.unitLabel || values.y?.unit);
+  const yText = label(y, spec.aggregation === "countRows" || spec.aggregation === "countValues" ? undefined : spec.unitScale.y?.unitLabel || values.y?.unit);
   const parts = [
     `${spec.mark[0].toUpperCase() + spec.mark.slice(1)} chart of ${yText} by ${xText}.`,
     values.series ? `Series by ${values.series.name}.` : "",
@@ -64,8 +65,11 @@ export default function ChartFigure({ project, values, svgRef }: { project: Char
   const clip = `chart-clip-${uid}`;
   const { chartSpec: spec, frame } = project;
   const theme = getTheme(frame.theme);
-  const [width, height] = dimensions[frame.frame];
-  const padding = Math.max(20, Math.min(60, frame.padding));
+  const [baseWidth, baseHeight] = dimensions[frame.frame];
+  const padding = frame.padding;
+  const scale = Math.max(1, (2 * padding + 320) / baseHeight);
+  const width = baseWidth * scale;
+  const height = baseHeight * scale;
   const left = padding + 57;
   const right = width - padding;
   const top = frame.showTitle ? padding + (project.subtitle ? 74 : 56) : padding + 20;
@@ -141,7 +145,7 @@ export default function ChartFigure({ project, values, svgRef }: { project: Char
           : xTicks.map(tick => <text key={tick} x={xLinear(tick)} y={bottom + 17}>{tickText(tick)}</text>)}
       </g>
       <text x={(left + right) / 2} y={bottom + 37} fontSize="13" textAnchor="middle">{truncate(xText, 50)}</text>
-      <text transform={`translate(${padding - 4} ${(top + bottom) / 2}) rotate(-90)`}
+      <text transform={`translate(${padding + 13} ${(top + bottom) / 2}) rotate(-90)`}
         fontSize="13" textAnchor="middle">{truncate(yText, 39)}</text>
       {values.series && values.seriesKeys.map((key, index) => {
         const step = (right - left) / Math.min(6, values.seriesKeys.length);

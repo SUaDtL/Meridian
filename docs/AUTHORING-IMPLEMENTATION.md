@@ -205,7 +205,8 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 
 - Chart values in guided creation opens local delimited or JSON data, confirms column types, and previews an independent chart project. The parser keeps exact JSON number tokens until conversion. Confirmed chart drafts and saved projects use IndexedDB. Saved projects reopen from Chart projects and export portable JSON, SVG and offline HTML with a displayed-values table.
 - Chart number fixtures verify the golden sum, mean, null, rounding and precision examples. Portable chart tests verify date sorting, duplicate policy and persisted domain metadata. Chromium verifies a typed-data draft across reload, confirms a reviewed project, reopens it and reads its offline export. This advances CH01–CH06, CH08 and CH09.
-- Mapping and frame changes to saved projects, locale and conversion controls, the remaining accessibility controls, and the chart performance gates remain open.
+- Saved charts can preview and apply mapping, heading, frame, and custom Y-range changes with Undo and Redo. The chart save queue compares the previously observed durable anchor. A conflicting tab can retain its work as a separate chart. Preview and export show clipped data without changing the stored values.
+- Locale and conversion controls, custom X-range and filter controls, the remaining accessibility controls, and the chart performance gates remain open.
 
 ## Milestone 4 OpenAPI operation diagrams
 
