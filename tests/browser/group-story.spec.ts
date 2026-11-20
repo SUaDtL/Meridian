@@ -164,3 +164,51 @@ test('resumes a local path draft after reload and reviews it against the newer p
   await updated.getByRole('button', { name: 'Suggest scenes', exact: true }).click();
   await expect(dialog.getByRole('button', { name: 'Resume path story draft' })).toHaveCount(0);
 });
+
+test('opens a separate story copy and preserves the original project byte for byte', async ({ page }) => {
+  const existing = { ...createScene(), title: 'Manual original scene' };
+  const project = {
+    ...createDocument(), title: 'Original diagram', source: 'flowchart LR\n A[First] --> B[Second]\n',
+    storyboard: { version: 1 as const, scenes: [existing], loop: false },
+  };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(
+    key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] }),
+  ), { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Original diagram', exact: true }).click();
+  const original = page.getByRole('dialog', { name: 'Original diagram', exact: true });
+  await expect(original.getByRole('img', { name: 'Diagram preview for Original diagram' })).toBeVisible();
+  const before = await download(page, original, 'Download v3 project');
+
+  await original.getByRole('button', { name: 'Suggest scenes' }).click();
+  const story = page.getByRole('dialog', { name: 'Suggest scenes' });
+  await story.getByLabel('Apply to storyboard').selectOption('duplicate');
+  await story.getByRole('button', { name: 'Save story draft' }).click();
+  await expect(story.getByRole('status')).toContainText('Story choices saved');
+  await story.getByRole('button', { name: 'Close dialog' }).click();
+  await original.getByRole('button', { name: 'Suggest scenes' }).click();
+  await story.getByRole('button', { name: 'Resume group story draft' }).click();
+  await expect(story.getByLabel('Apply to storyboard')).toHaveValue('duplicate');
+  await story.getByRole('button', { name: 'Preview 1 scene' }).click();
+  await expect(story.getByRole('list', { name: 'Suggested scene coverage' })).toBeVisible();
+  await story.getByRole('button', { name: 'Save and open story copy' }).click();
+
+  const copy = page.getByRole('dialog', { name: 'Original diagram — story copy' });
+  await expect(copy.getByRole('img', { name: 'Diagram preview for Original diagram — story copy' })).toBeVisible();
+  await expect(copy.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  const { storyboard, ...copied } = JSON.parse(await download(page, copy, 'Download v3 project'));
+  const { storyboard: originalStoryboard, ...originalProject } = JSON.parse(before);
+  expect(copied.id).not.toBe(originalProject.id);
+  expect(copied).toEqual({
+    ...originalProject, id: copied.id, revision: 0, updatedAt: copied.updatedAt, title: 'Original diagram — story copy',
+  });
+  expect(storyboard.scenes).toHaveLength(1);
+  expect(storyboard.scenes[0].id).not.toBe(originalStoryboard.scenes[0].id);
+  await copy.getByRole('button', { name: 'Back to v3 projects' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Original diagram', exact: true }).click();
+  await expect(original.getByRole('img', { name: 'Diagram preview for Original diagram' })).toBeVisible();
+  expect(await download(page, original, 'Download v3 project')).toBe(before);
+});

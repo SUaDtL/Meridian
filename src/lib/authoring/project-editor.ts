@@ -1,7 +1,9 @@
 import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/project-save-queue';
-import { readWorkspaceProject, writeWorkspaceProject } from '../persistence/workspace-db';
+import { readPendingAssist } from '../persistence/pending-assist';
+import { readWorkspaceProject, writeWorkspaceProject, type SavedAnchor } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
-import { canonicalJson, sameBaseToken, type BaseToken } from './base-token';
+import { authorizeAssistRename, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
+import { canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } from './bulk-text';
 import { buildContrastCandidate, measureTargetContrast } from './contrast-fix';
 import { buildDesignRecipeCandidate, readDesignRecipe, type DesignRecipeId } from './design-recipes';
@@ -20,6 +22,7 @@ import { validateMermaidProject } from './validate-mermaid-project';
 const historyByteLimit = 8 * 1024 * 1024;
 const historyEntryLimit = 50;
 const encoder = new TextEncoder();
+export type StoryDestination = 'append' | 'replace' | 'duplicate';
 
 function freezeSnapshot<Value>(value: Value): Value {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -46,6 +49,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   const past: (typeof current)[] = [];
   const future: (typeof current)[] = [];
   const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId?: string; impact?: ElementRemovalImpact }>();
+  const suggestions = new WeakMap<ReadyProposal, {
+    base: MermaidProjectV3; next: MermaidProjectV3; request: PendingAssistRequest;
+  }>();
   const designs = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3;
     dependency: string;
@@ -64,12 +70,15 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     next: MermaidProjectV3;
     suggestions: ReturnType<typeof suggestGroupScenes>;
     rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
+    destination: StoryDestination;
+    savingCopy: boolean;
   }>();
   const contrast = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3; next: MermaidProjectV3; color: string; label: string; beforeRatio: number; afterRatio: number; threshold: number; svg: string;
   }>();
   const bulkText = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
   let closed = false;
+  let savingSuggestion = false;
 
   function prepareHeading(envelope: unknown) {
     return headingLane.prepare({ document: current.document, revision: current.document.revision }, envelope);
@@ -126,6 +135,47 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   function readStructureImpact(proposal: ReadyProposal) {
     const change = structure.get(proposal);
     return !closed && change?.base === current.document ? change.impact : undefined;
+  }
+
+  async function prepareAssistSuggestion(text: string, signal?: AbortSignal) {
+    const base = current.document;
+    const file = parseAssistSuggestion(text);
+    const request = await readPendingAssist(db, file.requestId);
+    const token = await projectBaseToken(base);
+    const operation = authorizeAssistRename(file, request, token);
+    signal?.throwIfAborted();
+    const { document } = await prepareFlowchartCandidate(base, operation, signal);
+    if (closed || current.document !== base) throw new Error('The project changed. Export a fresh request.');
+    if (document === base) throw new Error('The suggestion makes no change to the current node label.');
+    const preview = await renderMermaidProject(document, signal);
+    signal?.throwIfAborted();
+    if (!preview.targetTable || closed || current.document !== base) throw new Error('The suggestion could not be verified against the current diagram.');
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    const next = freezeSnapshot(document);
+    suggestions.set(proposal, { base, next, request });
+    return { proposal, next, preview, targetId: operation.targetId, label: operation.label };
+  }
+
+  async function applyAssistSuggestion(proposal: ReadyProposal) {
+    const change = suggestions.get(proposal);
+    if (closed || savingSuggestion || !change || change.base !== current.document) {
+      throw new Error('The project changed. Export a fresh request.');
+    }
+    const next = historyEntry(change.next);
+    if (current.bytes + next.bytes > historyByteLimit) throw new Error('The suggestion exceeds the Undo history budget.');
+    savingSuggestion = true;
+    try {
+      await queue.flush();
+      const saved = queue.state();
+      if (closed || change.base !== current.document || saved.phase !== 'saved' || !saved.anchor) {
+        throw new Error('Save the current project before applying this suggestion.');
+      }
+      const anchor = await writeWorkspaceProject(db, change.next, saved.anchor, change.request);
+      advanceHistory(next, anchor);
+      suggestions.delete(proposal);
+    } finally {
+      savingSuggestion = false;
+    }
   }
 
   async function prepareDesign(id: DesignRecipeId, signal?: AbortSignal) {
@@ -256,11 +306,13 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   async function prepareStory(
     intent: { strategy: 'groups'; options: GroupStoryOptions } | { strategy: 'path'; options: PathStoryOptions },
-    destination: 'append' | 'replace',
+    destination: StoryDestination,
     signal?: AbortSignal,
   ) {
     if (closed) throw new Error('The project is closed.');
-    if (destination !== 'append' && destination !== 'replace') throw new Error('Choose whether to append or replace scenes.');
+    if (destination !== 'append' && destination !== 'replace' && destination !== 'duplicate') {
+      throw new Error('Choose a storyboard destination.');
+    }
     signal?.throwIfAborted();
     const base = current.document;
     const choices = structuredClone(intent);
@@ -272,12 +324,24 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       ? suggestGroupScenes(rendered.targetTable, choices.options) : suggestPathScene(rendered.targetTable, choices.options);
     const existing = destination === 'append' ? base.storyboard.scenes : [];
     if (existing.length + suggestions.length > 50) throw new Error('Choose fewer scenes or review Replace. A story can contain at most 50 scenes.');
+    const orphans = destination === 'append' ? base.identity.orphans : base.identity.orphans.flatMap(orphan => {
+      if (!orphan.retained.sceneReferences?.length) return [orphan];
+      const { sceneReferences: removed, ...retained } = orphan.retained;
+      return retained.style || retained.role || retained.componentIds?.length ? [{ ...orphan, retained }] : [];
+    });
+    const suffix = ' — story copy';
+    const projectFields = destination === 'duplicate' ? {
+      id: crypto.randomUUID(),
+      title: (base.title.trim() || 'Untitled diagram').slice(0, 120 - suffix.length).replace(/[\uD800-\uDBFF]$/, '') + suffix,
+      revision: 0,
+    } : { revision: base.revision + 1 };
     const next = freezeSnapshot(validateMermaidProject({
-      ...base, storyboard: { ...base.storyboard, scenes: [...existing, ...suggestions.map(item => item.scene)] },
-      revision: base.revision + 1, updatedAt: new Date().toISOString(),
+      ...base, ...projectFields, identity: { ...base.identity, orphans },
+      storyboard: { ...base.storyboard, scenes: [...existing, ...suggestions.map(item => item.scene)] },
+      updatedAt: new Date().toISOString(),
     }));
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
-    stories.set(proposal, { base, next, suggestions: freezeSnapshot(suggestions), rendered });
+    stories.set(proposal, { base, next, suggestions: freezeSnapshot(suggestions), rendered, destination, savingCopy: false });
     return proposal;
   }
 
@@ -289,14 +353,38 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   function applyStory(proposal: ReadyProposal) {
     const change = stories.get(proposal);
-    if (closed || !change) return 'invalid';
+    if (closed || !change || change.destination === 'duplicate') return 'invalid';
     return change.base === current.document ? commit(change.next) : 'stale';
   }
 
+  async function saveStoryCopy(proposal: ReadyProposal) {
+    const change = stories.get(proposal);
+    if (closed || !change || change.destination !== 'duplicate' || change.savingCopy || change.base !== current.document) {
+      throw new Error('The project changed. Prepare the story preview again.');
+    }
+    change.savingCopy = true;
+    try {
+      await queue.flush();
+      if (closed || change.base !== current.document) throw new Error('The project changed. Prepare the story preview again.');
+      if (queue.state().phase !== 'saved') throw new Error('Save the original project before opening a separate story copy.');
+      await writeWorkspaceProject(db, change.next, null);
+      stories.delete(proposal);
+      return change.next.id;
+    } finally {
+      change.savingCopy = false;
+    }
+  }
+
   function commit(document: MermaidProjectV3) {
+    if (savingSuggestion) return 'invalid';
     if (document === current.document) return 'unchanged';
     const next = historyEntry(document);
     if (current.bytes + next.bytes > historyByteLimit) return 'history-limit';
+    advanceHistory(next);
+    return 'applied';
+  }
+
+  function advanceHistory(next: typeof current, anchor?: SavedAnchor) {
     past.push(current);
     future.length = 0;
     let bytes = next.bytes;
@@ -306,13 +394,13 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     }
     past.splice(0, start);
     current = next;
-    queue.edit(next.document);
-    return 'applied';
+    if (anchor) queue.adoptSaved(next.document, anchor);
+    else queue.edit(next.document);
   }
 
   function restore(from: typeof past, to: typeof past) {
     const previous = from.at(-1);
-    if (closed || !previous) return false;
+    if (closed || savingSuggestion || !previous) return false;
     const document = Object.freeze({ ...previous.document, revision: current.document.revision + 1, updatedAt: new Date().toISOString() });
     validateMermaidProject(document);
     to.push(current);
@@ -331,6 +419,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     readStructurePreview,
     readStructureImpact,
     applyStructure,
+    prepareAssistSuggestion,
+    applyAssistSuggestion,
     detachComponentInstance,
     prepareDesign,
     readDesignPreview,
@@ -346,6 +436,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareStory,
     readStoryPreview,
     applyStory,
+    saveStoryCopy,
     undo: () => restore(past, future),
     redo: () => restore(future, past),
     canUndo: () => past.length > 0,

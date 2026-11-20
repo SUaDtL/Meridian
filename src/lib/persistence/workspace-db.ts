@@ -1,3 +1,5 @@
+import { pendingAssistKey, type PendingAssistRequest } from '../authoring/assist-exchange';
+import { inactiveAssist, pendingAssistStore, validPendingAssist } from './pending-assist';
 import { projectBaseToken } from '../authoring/base-token';
 import type { ChartProject } from '../authoring/chart-data';
 import { validateChartProject } from '../authoring/chart-project';
@@ -50,7 +52,7 @@ export function openWorkspaceDatabase(factory = indexedDB): Promise<IDBDatabase>
         db.createObjectStore(documentsStore, { keyPath: 'id' });
         db.createObjectStore('datasets', { keyPath: 'digest' });
         db.createObjectStore('library', { keyPath: ['id', 'version'] });
-        for (const name of ['drafts', 'pendingAssist']) db.createObjectStore(name, { keyPath: 'id' });
+        for (const name of ['drafts', pendingAssistStore]) db.createObjectStore(name, { keyPath: 'id' });
         for (const name of ['migrations', 'metadata', 'previews']) db.createObjectStore(name, { keyPath: 'key' });
       }
       request.transaction!.objectStore(documentsStore).createIndex(kindIndex, 'document.documentKind');
@@ -145,12 +147,17 @@ export async function writeWorkspaceProject(
   db: IDBDatabase,
   document: WorkspaceProject,
   expected: SavedAnchor | null,
+  consumeAssist?: PendingAssistRequest,
 ): Promise<SavedAnchor> {
   if (expected !== null && !validAnchor(expected)) throw new Error('Invalid saved workspace anchor.');
   const expectedAnchor = expected && { ...expected };
   const record = await captureProjectWrite(document);
+  if (consumeAssist && (consumeAssist.baseToken.projectId !== record.id || !expectedAnchor
+    || consumeAssist.baseToken.stateDigest !== expectedAnchor.stateDigest
+    || consumeAssist.baseToken.revision + 1 !== document.revision)) throw inactiveAssist();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(documentsStore, 'readwrite');
+    const stores = consumeAssist ? [documentsStore, pendingAssistStore] : documentsStore;
+    const tx = db.transaction(stores, 'readwrite');
     const documents = tx.objectStore(documentsStore);
     let failure: Error | undefined;
     tx.oncomplete = () => resolve(record.anchor);
@@ -169,7 +176,21 @@ export async function writeWorkspaceProject(
         tx.abort();
         return;
       }
-      if (existing !== undefined) documents.put(record);
+      if (consumeAssist) {
+        const pending = tx.objectStore(pendingAssistStore);
+        const readPending = pending.get(consumeAssist.id);
+        readPending.onsuccess = () => {
+          const match = readPending.result;
+          if (!validPendingAssist(match) || match.expiresAt <= Date.now()
+            || pendingAssistKey(match) !== pendingAssistKey(consumeAssist)) {
+            failure = inactiveAssist();
+            tx.abort();
+            return;
+          }
+          documents.put(record);
+          pending.delete(consumeAssist.id);
+        };
+      } else if (existing !== undefined) documents.put(record);
       else {
         const count = documents.count();
         count.onsuccess = () => {

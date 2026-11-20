@@ -185,7 +185,7 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The transaction checks capacity and the exact previously observed checkpoint before replacing it. Discard is explicit. Successful project creation clears its checkpoint after the document commit, and a cleanup failure keeps the saved project available.
 - Browser tests cover reload, expiry disclosure, separation from unreviewed input, checkpoint cleanup, and a quota failure that leaves the session usable. This advances SC-05 and SC-08 for the linear process path. Durable branch decisions and systems or table drafts remain open.
 
-## Authoring progress through milestone 3
+## Authoring progress through milestones 1–3
 
 | Track | Implemented slice | Remaining work |
 | --- | --- | --- |
@@ -193,7 +193,7 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 | Navigation and checks | Command search, typed outline and source locations, source suggestions at supported statement positions, label checks and supported rendered contrast. [#25](https://github.com/SUaDtL/Meridian/pull/25) · [#27](https://github.com/SUaDtL/Meridian/pull/27) · [#28](https://github.com/SUaDtL/Meridian/pull/28) · [#29](https://github.com/SUaDtL/Meridian/pull/29) | Source diagnostics, bulk selection, and guarded suggested fixes |
 | Design and layout | Diagram-wide recipe previews and measured direction alternatives. [#30](https://github.com/SUaDtL/Meridian/pull/30) · [#31](https://github.com/SUaDtL/Meridian/pull/31) | Scoped design changes and routing verification |
 | Visual builder and stories | Atomic Add Next, explicit connection/node deletion with annotation recovery, reviewed group creation and removal for explicit declarations, and group- and path-based storyboard suggestions. [#32](https://github.com/SUaDtL/Meridian/pull/32) · [#33](https://github.com/SUaDtL/Meridian/pull/33) · [#34](https://github.com/SUaDtL/Meridian/pull/34) · [#36](https://github.com/SUaDtL/Meridian/pull/36) · [#40](https://github.com/SUaDtL/Meridian/pull/40) | Nested grouping, moving members, additional story tools and the remaining interaction gates |
-| Components | Local library with conflict-safe packs and reviewed projects from flat forward definitions. [#35](https://github.com/SUaDtL/Meridian/pull/35) | Grouped generation, insertion, port binding, and extraction |
+| Components | Local library with conflict-safe packs, reviewed projects from flat forward definitions and detachable instance bindings. [#35](https://github.com/SUaDtL/Meridian/pull/35) · [#51](https://github.com/SUaDtL/Meridian/pull/51) | Grouped generation, insertion, port binding, and extraction |
 
 ## Milestone 2 verified label contrast fixes
 
@@ -213,15 +213,41 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - Chart number fixtures verify the golden sum, mean, null, rounding and precision examples. Portable chart tests verify date sorting, duplicate policy and persisted domain metadata. Chromium verifies a typed-data draft across reload, confirms a reviewed project, reopens it and reads its offline export. This advances CH01–CH06, CH08 and CH09.
 - Saved charts can preview and apply mapping, heading, frame, and custom Y-range changes with Undo and Redo. The chart save queue compares the previously observed durable anchor. A conflicting tab can retain its work as a separate chart. Preview and export show clipped data without changing the stored values.
 - Delimited numeric columns let users choose decimal and grouping separators before conversion. JSON numeric tokens retain their standard interpretation. A localized exact-decimal fixture verifies that only the confirmed canonical values enter the project.
-- Invalid-value conversion options, custom X-range and filter controls, the remaining accessibility controls, and the chart performance gates remain open.
+- Invalid-value conversion options, remaining transforms and accessibility controls, and the chart performance gates remain open.
 
 ## Milestone 4 OpenAPI operation diagrams
 
 - Engineering file reads one local OpenAPI 3.0 or 3.1 JSON file through a bounded worker. It presents operation IDs, declared tags and the scope excluded because of referenced path items or schema content. Select operations and review their display labels and optional primary tags before creating a new project.
 - Generated Mermaid links represent declared tag membership. Outline shows the exact virtual path and escaped JSON Pointer for each generated target. Chromium verifies filtered selection, reviewed generation and a portable export that retains provenance without examples, descriptions or remote URI content.
-- This advances IM05, IM06, IM07 and IM08 for the operation view. Restricted YAML, multi-file resolution, schema/reference views, check-pointed facts and further adapters remain open.
+- This advances IM05, IM06, IM07 and IM08 for the operation view. Restricted YAML, OpenAPI schema/reference views and checkpointed facts remain open.
 
 ## Milestone 4 chart filter review
 
 - Chart mappings accept explicit typed filters and apply them before aggregation. Review and offline chart summaries show exclusion counts. The source table retains every row and identifies the first filter that excluded it.
 - Fixtures verify typed comparison and null predicates. Chromium verifies the reviewed preview, the portable filter, its unchanged dataset, and exact Undo.
+
+
+## Milestone 4 chart ranges and display units
+
+- Continuous X mappings accept reviewed numeric, date or datetime ranges. Numeric axes support exact decimal power-of-ten scaling and unit text. The mapping stores unit and range choices, while the source table preserves underlying typed values. Preview and export disclose clipped records and show the scaled table headings.
+- Chromium verifies that 2,500 remains the stored value when plotted as 2.5 at ×10⁻³, and that clipping uses the plotted value. This advances CH04 and CH06. A chart created before these fields were introduced still validates and opens with its original mapping.
+- [Implementation PR #50](https://github.com/SUaDtL/Meridian/pull/50) · [Workflow and browser evidence](https://github.com/SUaDtL/Meridian/actions/runs/44821053437)
+
+## Milestone 3 component instance detachment
+
+- Project details show the instance and its currently bound elements. Review detachment to remove the instance record, retaining its authored source, identities and presentation data. The revision-bound apply uses one project Undo entry.
+- Chromium compares the full portable project before detachment, after detachment and after Undo. This advances the detachment portion of F04. Insertion into an existing project and port binding remain open.
+- [Implementation PR #51](https://github.com/SUaDtL/Meridian/pull/51) · [Workflow and browser evidence](https://github.com/SUaDtL/Meridian/actions/runs/44821062375)
+
+## Milestone 4 Terraform inventory
+
+- The local worker reads supported Terraform show JSON 1.x plans and state. The scope review selects explicit resources and optionally includes known configuration references between selected endpoints. Planned inventory and state-only coverage are identified separately.
+- Browser and unit fixtures verify selected relationships, source paths and pointers, fresh project creation, and exclusion of values, outputs, changes, constants and indexed resource keys. This advances IM04–IM08. Indexed resources and broader configuration semantics remain open.
+- [Implementation PR #49](https://github.com/SUaDtL/Meridian/pull/49) · [Workflow and browser evidence](https://github.com/SUaDtL/Meridian/actions/runs/44820571241)
+
+## Milestone 4 JSON Schema relationships
+
+- Users review virtual paths for up to 20 local draft 2020-12 JSON Schema files. The resolver recognizes supplied logical IDs, anchors and JSON Pointers. It records direct references against one identity per schema location, including cycles, without fetching or recursively expanding referenced schemas.
+- The review offers declared property relationships, required-property facts, editable display labels and optional unresolved placeholders. Composition and dynamic semantics are disclosed as coverage limitations. A browser fixture confirms duplicate basename recovery, hidden selection, precise exported provenance, no raw description or unresolved URI retention, and no external request.
+- This advances IM01–IM03 and IM05–IM08 for the supported JSON Schema subset. Restricted YAML, broader dialect constructs, import checkpointing and the full accessible scope corpus remain open.
+- [Implementation PR #52](https://github.com/SUaDtL/Meridian/pull/52) · [Workflow and browser evidence](https://github.com/SUaDtL/Meridian/actions/runs/44822219196)
