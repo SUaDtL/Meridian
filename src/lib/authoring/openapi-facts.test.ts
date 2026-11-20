@@ -80,3 +80,41 @@ it('requires actual string values for OpenAPI IDs in either encoding', () => {
   expect(() => fromYaml('openapi: 3.1.0\npaths:\n  /sample:\n    get:\n      operationId: 123'))
     .toThrow(/operation ID exceeds/);
 });
+
+it('extracts direct schema references, preserves cycles, and omits unsupported reference content', () => {
+  const input = JSON.stringify({
+    openapi: '3.1.0',
+    components: { schemas: {
+      Account: { properties: {
+        'customer/id': { $ref: '#/components/schemas/Customer' },
+        missing: { $ref: 'https://example.invalid/private-name.json' },
+        dynamic: { $dynamicRef: '#private-anchor' },
+        otherBase: { $id: 'https://example.invalid/private-base', $ref: '#/components/schemas/Customer' },
+      }, examples: [{ $ref: '#/components/schemas/Account' }] },
+      Customer: { allOf: [{ $ref: '#/components/schemas/%41ccount' }] },
+      Boolean: false,
+    } },
+  });
+  const { operations, schemaView } = readOpenApiFacts(bytes(input), 'api/spec.json', undefined, 'schemas');
+  expect(operations).toEqual([]);
+  expect(schemaView).toEqual({
+    schemas: ['Account', 'Customer', 'Boolean'].map(key => ({ key, pointer: `/components/schemas/${key}` })),
+    references: [
+      { from: 'Account', to: 'Customer', pointer: '/components/schemas/Account/properties/customer~1id/$ref' },
+      { from: 'Customer', to: 'Account', pointer: '/components/schemas/Customer/allOf/0/$ref' },
+    ],
+    unresolved: 2, omitted: 1,
+  });
+  expect(JSON.stringify(schemaView)).not.toMatch(/example.invalid|private|examples/);
+});
+
+it('respects OpenAPI 3.0 reference siblings and reports unsupported 3.1 dialects', () => {
+  const schemas = { One: { $ref: '#/components/schemas/Two', items: { $ref: '#/components/schemas/One' } }, Two: {} };
+  function read(openapi: string, jsonSchemaDialect?: string) {
+    return readOpenApiFacts(bytes(JSON.stringify({ openapi, jsonSchemaDialect, paths: {}, components: { schemas } })),
+      'api.json', undefined, 'schemas').schemaView;
+  }
+  expect(read('3.0.3')?.references).toHaveLength(1);
+  expect(read('3.1.0')?.references).toHaveLength(2);
+  expect(read('3.1.0', 'https://example.invalid/custom')).toMatchObject({ references: [], omitted: 2 });
+});

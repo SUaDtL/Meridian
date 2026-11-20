@@ -88,3 +88,64 @@ test('recovers from invalid YAML and creates a reviewed operation diagram from o
     virtualPath: 'service.yaml', pointer: '/paths/~1entries~1{id}/get', relationship: 'Declared OpenAPI operation',
   }));
 });
+
+test('reviews same-file OpenAPI schema references with exact provenance and no external request', async ({ page }, info) => {
+  const requested: string[] = [];
+  await page.route('https://example.invalid/**', route => {
+    requested.push(route.request().url());
+    return route.abort();
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Engineering file' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Engineering file' });
+  await dialog.getByRole('combobox', { name: 'OpenAPI view' }).selectOption('schemas');
+  await dialog.getByLabel('OpenAPI specification').setInputFiles({
+    name: 'models.yaml', mimeType: 'application/yaml', buffer: Buffer.from([
+      'openapi: 3.1.0',
+      'components:',
+      '  schemas:',
+      '    Account:',
+      '      description: private-schema-description',
+      '      properties:',
+      '        customer/id:',
+      '          $ref: "#/components/schemas/Customer"',
+      '        remote:',
+      '          $ref: https://example.invalid/private-schema.json',
+      '    Customer:',
+      '      allOf:',
+      '        - $ref: "#/components/schemas/Account"',
+      '    Audit:',
+      '      type: object',
+    ].join('\n')),
+  });
+  await dialog.getByLabel('Virtual path').fill('services/models.yaml');
+  await dialog.getByRole('button', { name: 'Read schema facts' }).click();
+  await expect(dialog.getByText(/2 resolved references · 1 unresolved reference/)).toBeVisible();
+  await dialog.getByRole('checkbox', { name: 'Account', exact: true }).check();
+  await dialog.getByRole('textbox', { name: 'Display label' }).fill('Account record');
+  await dialog.getByRole('checkbox', { name: 'Customer', exact: true }).check();
+  await dialog.getByLabel('Find schemas').fill('audit');
+  await expect(dialog.getByRole('status')).toHaveText('2 selected · 2 selected outside visible rows · 2 selected references');
+  await dialog.getByRole('button', { name: 'Preview diagram' }).click();
+  await expect(dialog.getByRole('img', { name: 'Proposed OpenAPI schema diagram' })).toBeVisible();
+  await expect(dialog.getByText('2 nodes · 2 connections · 1 schema omitted')).toBeVisible();
+  await page.screenshot({ path: info.outputPath('openapi-schema-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('openapi-schema-mobile.png') });
+  await dialog.getByRole('button', { name: 'Create new diagram' }).click();
+  const live = page.getByRole('dialog', { name: 'OpenAPI schema relationships' });
+  const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+  const path = await file.path();
+  if (!path) throw new Error('Missing OpenAPI schema project download.');
+  const text = await readFile(path, 'utf8');
+  const project = JSON.parse(text);
+  expect(project.source).toContain('Account record');
+  expect(project.provenance).toContainEqual(expect.objectContaining({
+    adapter: 'openapi-schemas', virtualPath: 'services/models.yaml',
+    pointer: '/components/schemas/Account/properties/customer~1id/$ref', relationship: 'Declared OpenAPI schema reference',
+  }));
+  expect(project.provenance).toContainEqual(expect.objectContaining({ pointer: '/components/schemas/Customer/allOf/0/$ref' }));
+  expect(text).not.toMatch(/private-schema|example\.invalid|Audit/);
+  expect(requested).toEqual([]);
+});
