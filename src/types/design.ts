@@ -36,6 +36,7 @@ export interface RenderedAppearance {
   fontSize?: number;
   fontFamily?: string;
   fontWeight?: string;
+  labelSizeInDiagram?: number;
 }
 
 export interface RenderElement {
