@@ -3,6 +3,7 @@ import CodeMirror, { ExternalChange } from '@uiw/react-codemirror';
 import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { EditorView, type ViewUpdate } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
+import { mermaidSourceSuggestions } from '../lib/authoring/source-suggestions';
 
 const mermaidLanguage = StreamLanguage.define({
   token(stream) {
@@ -42,7 +43,7 @@ const highlighting = HighlightStyle.define([
   { tag: tags.punctuation, color: '#8aabb2' },
 ]);
 
-const extensions = [mermaidLanguage, syntaxHighlighting(highlighting), EditorView.lineWrapping];
+const extensions = [mermaidLanguage, syntaxHighlighting(highlighting), EditorView.lineWrapping, mermaidSourceSuggestions];
 const basicSetup = { foldGutter: false, highlightActiveLine: true, lineNumbers: true, autocompletion: false, history: false, historyKeymap: false };
 
 function syncSource(view: EditorView, source: string) {

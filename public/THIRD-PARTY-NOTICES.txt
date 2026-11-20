@@ -1,7 +1,7 @@
 MERIDIAN THIRD-PARTY DEPENDENCY NOTICES
 
 Application: @arbiterforge/meridian 0.1.0
-Lockfile SHA-256: 86ec0a4bfbe282249e13858b7bf96c13626661cd3e89ecbb53924c9458095454
+Lockfile SHA-256: 29f55a12f3c70d5af4c6cf8e2e173157742882d453a61a04cc8c073c8a10f5e3
 Inventory: 273 lockfile package locations; 243 installed; 248 notice files reproduced.
 
 Scope: every package recorded in package-lock.json, including development,
