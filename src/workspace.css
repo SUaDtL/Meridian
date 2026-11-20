@@ -785,3 +785,16 @@
     margin-bottom: 20px;
   }
 }
+.migration-preview img {
+  display: block;
+  width: 100%;
+  max-height: 55svh;
+  object-fit: contain;
+}
+.migration-preview details {
+  margin-block: 1rem;
+}
+.migration-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
