@@ -25,6 +25,7 @@ import { openWorkspaceDatabase, saveWorkspaceProjectCopy } from "../lib/persiste
 import { downloadText, safeFilename, serializeProject } from "../lib/storage";
 import type { ProposalOutcome } from "../lib/workspace";
 
+const SaveComponentDialog = lazy(() => import("./SaveComponentDialog"));
 const AssistExchangeDialog = lazy(() => import("./AssistExchangeDialog"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
@@ -49,6 +50,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [detachOpen, setDetachOpen] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<SourceDraft>();
   const [commandsOpen, setCommandsOpen] = useState(false);
+  const [componentHidden, setComponentHidden] = useState<number>();
   const [bulkTextHidden, setBulkTextHidden] = useState<number>();
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
@@ -223,7 +225,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
 
   useEffect(() => {
     if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen
-      || editHeading || editFlowchart || editSource || detachOpen || assistOpen || bulkTextHidden !== undefined) return;
+      || editHeading || editFlowchart || editSource || detachOpen || assistOpen || bulkTextHidden !== undefined || componentHidden !== undefined) return;
     const openCommands = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
         || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -233,7 +235,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
   }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading,
-    editFlowchart, editSource, detachOpen, assistOpen, bulkTextHidden]);
+    editFlowchart, editSource, detachOpen, assistOpen, bulkTextHidden, componentHidden]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
@@ -408,7 +410,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setComparisonSelection({ ids: [...outlineSelection], hidden });
           setOutlineOpen(false);
           setComparison("design");
-        } : undefined} />}
+        } : undefined} onSaveComponent={flatFlowchart ? setComponentHidden : undefined} />}
+      {componentHidden !== undefined && currentFrame && editor.current && connection.current && <Suspense>
+        <SaveComponentDialog db={connection.current} editor={editor.current} frame={currentFrame.rendered}
+          selection={outlineSelection} hidden={componentHidden} onClose={() => setComponentHidden(undefined)} />
+      </Suspense>}
       {bulkTextHidden !== undefined && currentFrame && editor.current && <BulkTextColorDialog
         editor={editor.current} frame={currentFrame.rendered} selection={outlineSelection} hidden={bulkTextHidden}
         onClose={() => setBulkTextHidden(undefined)} onApply={proposal => {

@@ -40,7 +40,7 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
   return rows;
 }
 
-export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onBulkText, onDesign, onClose }: {
+export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onBulkText, onDesign, onSaveComponent, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
   onSelection: Dispatch<SetStateAction<ReadonlySet<string>>>;
@@ -49,6 +49,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   onSource: (location: OutlineSourceLocation) => void;
   onBulkText: (hidden: number) => void;
   onDesign?: (hidden: number) => void;
+  onSaveComponent?: (hidden: number) => void;
   onClose: () => void;
 }) {
   const id = useId();
@@ -63,6 +64,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   const visible = rows.slice(0, limit);
   const active = visible.find(row => row.item.id === activeId) ?? visible[0];
   const hidden = selected.size - visible.filter(row => selected.has(row.item.id)).length;
+  const canSaveComponent = selected.size > 0 && selected.size <= 100
+    && items.filter(item => item.kind === "node" && selected.has(item.id)).length === selected.size;
 
   useEffect(() => {
     if (active && document.activeElement === list.current) {
@@ -142,6 +145,9 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           <button type="button" className="button secondary" disabled={!selected.size} onClick={() => onBulkText(hidden)}>Change selected text color</button>
           {onDesign && <button type="button" className="button secondary" disabled={!selected.size}
             onClick={() => onDesign(hidden)}>Explore designs for selection</button>}
+          {onSaveComponent && <button type="button" className="button secondary" disabled={!canSaveComponent}
+            title={canSaveComponent ? undefined : "Select one to 100 nodes"}
+            onClick={() => onSaveComponent(hidden)}>Save as component</button>}
         </div>
         <ul ref={list} role={relationships ? "listbox" : "tree"} aria-label={relationships ? "Relationships" : "Diagram elements"}
           aria-activedescendant={active && `${id}-${active.item.id}`} aria-multiselectable="true" tabIndex={visible.length ? 0 : -1} onKeyDown={keyboard}>
