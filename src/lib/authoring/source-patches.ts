@@ -81,7 +81,7 @@ function readSubset(source: string) {
   const [first, ...records] = scanRecords(source);
   const direction = first && header.exec(first.text)?.[1];
   if (!direction) throw unsupported();
-  const nodes = new Map<string, RecordSpan & { shape: Shape }>();
+  const nodes = new Map<string, RecordSpan & { shape: Shape; declaration: RecordSpan }>();
   const edges: { id?: string; from: string; to: string; record: RecordSpan }[] = [];
   const edgeIds = new Set<string>();
   const styles: { record: RecordSpan; indices: string }[] = [];
@@ -93,7 +93,7 @@ function readSubset(source: string) {
       const notation = shapesByOpening.get(open);
       if (!notation || notation.close !== close || reserved.has(name) || nodes.has(name)) throw unsupported();
       const start = record.start + name.length + open.length;
-      nodes.set(name, { start, end: start + label.length, text: label, shape: notation.shape });
+      nodes.set(name, { start, end: start + label.length, text: label, shape: notation.shape, declaration: record });
       continue;
     }
     match = edge.exec(record.text);
@@ -213,13 +213,43 @@ export function planEdgeRemoval(source: string, edgeId: string): SourcePatch[] {
   const { edges, styles } = readSubset(source);
   const removed = edgeId ? edges.findIndex(edge => edge.id === edgeId) : -1;
   if (removed === -1) throw unsupported();
-  const patches = [replace(edges[removed].record, '')];
+  return planEdgeRemovals(edges, styles, new Set([removed]));
+}
+
+/** Delete a declared node only when the supplied IDs cover every incident edge. */
+export function planNodeRemoval(source: string, nodeId: string, incidentIds: readonly string[]): SourcePatch[] {
+  const { nodes, edges, styles } = readSubset(source);
+  const node = nodes.get(nodeId);
+  if (!node) throw unsupported();
+  if (nodes.size === 1) throw new Error('Keep at least one node in the diagram.');
+  const expected = new Set(incidentIds);
+  const removed = new Set<number>();
+  edges.forEach((edge, index) => {
+    if (edge.from !== nodeId && edge.to !== nodeId) return;
+    if (!edge.id) throw new Error('An incident connection needs an explicit source ID before this node can be deleted.');
+    if (!expected.delete(edge.id)) throw new Error('Review all incident connections before deleting this node.');
+    removed.add(index);
+  });
+  if (expected.size || incidentIds.length !== removed.size) throw new Error('Review all incident connections before deleting this node.');
+  return [replace(node.declaration, ''), ...planEdgeRemovals(edges, styles, removed)];
+}
+
+function planEdgeRemovals(
+  edges: ReturnType<typeof readSubset>['edges'], styles: ReturnType<typeof readSubset>['styles'], removed: ReadonlySet<number>,
+): SourcePatch[] {
+  const patches: SourcePatch[] = [];
+  const ordinals = edges.map(({ record }, index) => {
+    if (!removed.has(index)) return index - patches.length;
+    patches.push(replace(record, ''));
+    return -1;
+  });
   for (const { record, indices } of styles) {
     if (indices === 'default') continue;
     const remaining = indices.split(',').flatMap(value => {
       const index = Number(value);
-      if (index === removed) return [];
-      return [index > removed ? String(index - 1) : value];
+      const next = ordinals[index];
+      if (next === -1) return [];
+      return [next === index ? value : String(next)];
     });
     const replacement = remaining.join(',');
     if (replacement === indices) continue;

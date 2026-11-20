@@ -3,13 +3,14 @@ import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram } from '../render';
 import { canonicalJson } from './base-token';
 import { flowchartEngineShapes, type Shape } from './flowchart-source';
-import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeRemoval, planNodeAddition, planNodeLabel, type SourcePatch } from './source-patches';
+import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeRemoval, planNodeAddition, planNodeLabel, planNodeRemoval, type SourcePatch } from './source-patches';
 
 export type SourceIntent =
   | { op: 'addNode'; label: string; shape?: Shape }
   | { op: 'addNext'; anchor: string; label: string; shape: Shape; edgeLabel?: string; incoming: boolean }
   | { op: 'setNodeLabel'; sourceId: string; label: string }
   | { op: 'addEdge'; from: string; to: string; label?: string }
+  | { op: 'removeNode'; sourceId: string; incidentEdgeIds: readonly string[] }
   | { op: 'removeEdge'; sourceId: string };
 
 const shapesByEngineType = new Map(Object.entries(flowchartEngineShapes).map(([shape, type]) => [type, shape]));
@@ -43,6 +44,7 @@ function planSourceEdit(source: string, intent: SourceIntent): { sourceId: strin
     case 'addNode': return planNodeAddition(source, intent.label, intent.shape);
     case 'addNext': return planAddNext(source, intent.anchor, intent.label, intent.shape, intent.edgeLabel, intent.incoming);
     case 'addEdge': return planEdgeAddition(source, intent.from, intent.to, intent.label);
+    case 'removeNode': return { sourceId: intent.sourceId, patches: planNodeRemoval(source, intent.sourceId, intent.incidentEdgeIds) };
     case 'removeEdge': return { sourceId: intent.sourceId, patches: planEdgeRemoval(source, intent.sourceId) };
     case 'setNodeLabel': return { sourceId: intent.sourceId, patches: planNodeLabel(source, intent.sourceId, intent.label) };
   }
@@ -69,11 +71,19 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
       }],
     };
     case 'removeEdge': return { ...graph, edges: graph.edges.filter(edge => edge.id !== sourceId) };
+    case 'removeNode': {
+      const removed = new Set(intent.incidentEdgeIds);
+      return {
+        ...graph,
+        nodes: graph.nodes.filter(node => node.id !== sourceId),
+        edges: graph.edges.filter(edge => !edge.id || !removed.has(edge.id)),
+      };
+    }
   }
 }
 
 function verifyVisibleLabel(result: RenderResult, intent: Exclude<SourceIntent, { op: 'addNext' }>, id: string) {
-  if ((intent.op === 'addEdge' && !intent.label) || intent.op === 'removeEdge') return;
+  if ((intent.op === 'addEdge' && !intent.label) || intent.op === 'removeEdge' || intent.op === 'removeNode') return;
   const svg = new DOMParser().parseFromString(result.svg, 'image/svg+xml');
   const targets = intent.op === 'addEdge' ? svg.querySelectorAll('g.edgeLabel[data-element-owner]') : svg.querySelectorAll('[data-node-key]');
   const attribute = intent.op === 'addEdge' ? 'data-element-owner' : 'data-node-key';

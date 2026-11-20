@@ -6,19 +6,20 @@ import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
 import type { SemanticRole } from "../lib/authoring/mermaid-project";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { ReadyProposal } from "../lib/authoring/proposals";
-import type { ConnectionRemovalImpact } from "../lib/authoring/retire-connection";
+import type { ElementRemovalImpact } from "../lib/authoring/retire-elements";
 import { shapeDelimiters, type Shape } from "../lib/authoring/flowchart-source";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Operation = NativeFlowchartEdit["op"];
 type NodeChoice = { id: string; label: string };
-type Preview = { proposal: ReadyProposal; url: string; impact?: ConnectionRemovalImpact };
+type EdgeChoice = NodeChoice & { sourceId: string | null; targetId: string | null; explicit: boolean };
+type Preview = { proposal: ReadyProposal; url: string; impact?: ElementRemovalImpact };
 const nextRoles: readonly SemanticRole[] = ["process", "decision", "neutral", "service", "database", "queue", "external", "person"];
 
 export default function V3StructureEditor({ editor, nodes, edges, initialOperation = "addNode", initialTarget = "", onApply, onClose }: {
   editor: Editor;
   nodes: NodeChoice[];
-  edges: NodeChoice[];
+  edges: EdgeChoice[];
   initialOperation?: Operation;
   initialTarget?: string;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
@@ -37,6 +38,9 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
   const work = useRef<AbortController | undefined>(undefined);
+  const removingNode = operation === "removeNode";
+  const incident = removingNode && to ? edges.filter(edge => edge.sourceId === to || edge.targetId === to) : [];
+  const unidentified = incident.filter(edge => !edge.explicit);
 
   useEffect(() => () => { work.current?.abort(); }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
@@ -57,7 +61,9 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
       const edit: NativeFlowchartEdit = operation === "addNode" ? { op: operation, shape, label }
         : operation === "addNext" ? { op: operation, anchorId: from, shape, label, edgeLabel, incoming, role: role || undefined }
         : operation === "setNodeLabel" ? { op: operation, targetId: to, label }
-        : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label } : { op: operation, targetId: to };
+        : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label }
+        : operation === "removeNode" ? { op: operation, targetId: to, incidentEdgeIds: incident.map(edge => edge.id) }
+        : { op: operation, targetId: to };
       const proposal = await editor.prepareStructure(edit, controller.signal);
       const candidate = editor.readStructurePreview(proposal);
       if (!candidate) throw new Error("The project changed. Prepare the preview again.");
@@ -88,7 +94,8 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
   const canPreview = operation === "addNode" ? !!label
     : operation === "addNext" ? !!label && !!from
     : operation === "setNodeLabel" ? !!label && !!to
-    : operation === "removeEdge" ? !!to : !!from && !!to;
+    : operation === "removeEdge" ? !!to
+    : operation === "removeNode" ? !!to && !unidentified.length : !!from && !!to;
   const nodeOptions = nodes.map(node => <option value={node.id} key={node.id}>{node.label}</option>);
   return (
     <Modal title="Edit flowchart" wide onClose={onClose}>
@@ -108,7 +115,8 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
             <option value="addNext" disabled={!nodes.length}>Add next</option>
             <option value="setNodeLabel" disabled={!nodes.length}>Rename node</option>
             <option value="addEdge" disabled={!nodes.length}>Connect nodes</option>
-            <option value="removeEdge" disabled={!edges.length}>Delete connection</option>
+            <option value="removeEdge" disabled={!edges.some(edge => edge.explicit)}>Delete connection</option>
+            <option value="removeNode" disabled={nodes.length < 2}>Delete node</option>
           </select>
         </label>
         {(operation === "addNode" || operation === "addNext") && <label>Shape
@@ -128,10 +136,16 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
         </label>}
         {operation === "removeEdge" && <label>Connection to delete
           <select value={to} disabled={busy} onChange={event => { setTo(event.target.value); resetPreview(); }}>
-            <option value="">Choose a connection</option>{edges.map(edge => <option value={edge.id} key={edge.id}>{edge.label}</option>)}
+            <option value="">Choose a connection</option>{edges.filter(edge => edge.explicit).map(edge => <option value={edge.id} key={edge.id}>{edge.label}</option>)}
           </select>
         </label>}
-        {operation !== "removeEdge" && <label>{operation === "addEdge" ? "Connection label (optional)" : "Node label"}
+        {removingNode && <label>Node to delete
+          <select value={to} disabled={busy} onChange={event => { setTo(event.target.value); resetPreview(); }}>
+            <option value="">Choose a node</option>{nodeOptions}
+          </select>
+        </label>}
+        {!!unidentified.length && <p role="status">Each incident connection needs an explicit source ID before this node can be deleted.</p>}
+        {operation !== "removeEdge" && !removingNode && <label>{operation === "addEdge" ? "Connection label (optional)" : "Node label"}
           <input value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
         </label>}
         {operation === "addNext" && <>
@@ -155,14 +169,18 @@ export default function V3StructureEditor({ editor, nodes, edges, initialOperati
           </div>
         )}
         {preview?.impact && <section aria-label="Deletion impact">
-          <h3>Connection to remove</h3>
-          <p>{edges.find(edge => edge.id === to)?.label}</p>
+          <h3>{removingNode ? "Node to remove" : "Connection to remove"}</h3>
+          <p>{(removingNode ? nodes : edges).find(item => item.id === to)?.label}</p>
+          {removingNode && <>
+            <h4>Incident connections to remove ({incident.length})</h4>
+            {!!incident.length && <ul>{incident.map(edge => <li key={edge.id}>{edge.label}</li>)}</ul>}
+          </>}
           {!!preview.impact.sceneReferenceCount && <>
             <p>{preview.impact.sceneReferenceCount} scene references will be kept as unresolved annotations.</p>
             <ul>{preview.impact.sceneTitles.map((name, index) => <li key={index}>{name}</li>)}</ul>
           </>}
-          {preview.impact.retainsStyle && <p>The connection’s appearance will be kept as an unresolved annotation.</p>}
-          {preview.impact.retainsRole && <p>The connection’s role will be kept as an unresolved annotation.</p>}
+          {!!preview.impact.styleCount && <p>Appearance settings for {preview.impact.styleCount} removed {preview.impact.styleCount === 1 ? "element" : "elements"} will be kept as unresolved annotations.</p>}
+          {!!preview.impact.roleCount && <p>Roles for {preview.impact.roleCount} removed {preview.impact.roleCount === 1 ? "element" : "elements"} will be kept as unresolved annotations.</p>}
         </section>}
         <div className="dialog-actions">
           <button className="button quiet" type="button" onClick={onClose}>Cancel</button>

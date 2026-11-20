@@ -9,7 +9,7 @@ import type { MermaidProjectV3 } from './mermaid-project';
 import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-flowchart';
 import { renderMermaidProject, type RenderTargetTable } from './project-render';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
-import type { ConnectionRemovalImpact } from './retire-connection';
+import type { ElementRemovalImpact } from './retire-elements';
 import { validateMermaidProject } from './validate-mermaid-project';
 
 const historyByteLimit = 8 * 1024 * 1024;
@@ -40,7 +40,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     writeWorkspaceProject(db, document, anchor), notify);
   const past: (typeof current)[] = [];
   const future: (typeof current)[] = [];
-  const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId: string; impact?: ConnectionRemovalImpact }>();
+  const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId: string; impact?: ElementRemovalImpact }>();
   const designs = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3;
     dependency: string;
