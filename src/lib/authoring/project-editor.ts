@@ -6,6 +6,7 @@ import { buildDesignRecipeCandidate, readDesignRecipe, type DesignRecipeId } fro
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
 import type { MermaidProjectV3 } from './mermaid-project';
+import { suggestPathScene, type PathStoryOptions } from './path-story';
 import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-flowchart';
 import { renderMermaidProject, type RenderTargetTable } from './project-render';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
@@ -168,17 +169,22 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return commit(change.candidate.document);
   }
 
-  async function prepareGroupStory(options: GroupStoryOptions, destination: 'append' | 'replace', signal?: AbortSignal) {
+  async function prepareStory(
+    intent: { strategy: 'groups'; options: GroupStoryOptions } | { strategy: 'path'; options: PathStoryOptions },
+    destination: 'append' | 'replace',
+    signal?: AbortSignal,
+  ) {
     if (closed) throw new Error('The project is closed.');
     if (destination !== 'append' && destination !== 'replace') throw new Error('Choose whether to append or replace scenes.');
     signal?.throwIfAborted();
     const base = current.document;
-    const choices = structuredClone(options);
+    const choices = structuredClone(intent);
     const rendered = await renderMermaidProject(base, signal);
     signal?.throwIfAborted();
     if (!rendered.targetTable) throw new Error('Render a verified flowchart before suggesting scenes.');
     if (closed || current.document !== base) throw new Error('The project changed. Prepare the story preview again.');
-    const suggestions = suggestGroupScenes(rendered.targetTable, choices);
+    const suggestions = choices.strategy === 'groups'
+      ? suggestGroupScenes(rendered.targetTable, choices.options) : suggestPathScene(rendered.targetTable, choices.options);
     const existing = destination === 'append' ? base.storyboard.scenes : [];
     if (existing.length + suggestions.length > 50) throw new Error('Choose fewer scenes or review Replace. A story can contain at most 50 scenes.');
     const next = freezeSnapshot(validateMermaidProject({
@@ -245,7 +251,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareLayout,
     readLayoutPreview,
     applyLayout,
-    prepareGroupStory,
+    prepareStory,
     readStoryPreview,
     applyStory,
     undo: () => restore(past, future),

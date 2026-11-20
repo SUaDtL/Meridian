@@ -200,3 +200,9 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - Chart values in guided creation opens local delimited or JSON data, confirms column types, and previews an independent chart project. The parser keeps exact JSON number tokens until conversion. Confirmed chart drafts and saved projects use IndexedDB. Saved projects reopen from Chart projects and export portable JSON, SVG and offline HTML with a displayed-values table.
 - Chart number fixtures verify the golden sum, mean, null, rounding and precision examples. Portable chart tests verify date sorting, duplicate policy and persisted domain metadata. Chromium verifies a typed-data draft across reload, confirms a reviewed project, reopens it and reads its offline export. This advances CH01–CH06, CH08 and CH09.
 - Mapping and frame changes to saved projects, locale and conversion controls, the remaining accessibility controls, and the chart performance gates remain open.
+
+## Milestone 3 path-based story suggestions
+
+- Follow a path starts from a selected node and uses individually chosen connections with explicit traversal direction. It stops after the first loop, retains only selected path content and optional one-hop context, and adds group containers without expanding unrelated descendants.
+- The shared story proposal and player preview exact coverage before append or replacement. Fixture coverage verifies loops and motion direction. Chromium verifies selection, settled visibility and one saved scene in the existing v3 workspace. This advances AS-02 and AS-06.
+- Branch scenes, multi-path ordering and persistent story drafts remain open.
