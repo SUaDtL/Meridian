@@ -1,8 +1,11 @@
 import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/project-save-queue';
 import { readWorkspaceProject, writeWorkspaceProject } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
+import { canonicalJson } from './base-token';
+import { buildDesignRecipeCandidate, readDesignRecipe, type DesignRecipeId } from './design-recipes';
 import type { MermaidProjectV3 } from './mermaid-project';
 import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-flowchart';
+import { renderMermaidProject } from './project-render';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
 import { validateMermaidProject } from './validate-mermaid-project';
 
@@ -35,6 +38,12 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   const past: (typeof current)[] = [];
   const future: (typeof current)[] = [];
   const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId: string }>();
+  const designs = new WeakMap<ReadyProposal, {
+    base: MermaidProjectV3;
+    dependency: string;
+    candidate: ReturnType<typeof buildDesignRecipeCandidate>;
+    rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
+  }>();
   let closed = false;
 
   function prepareHeading(envelope: unknown) {
@@ -67,6 +76,34 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   function readStructurePreview(proposal: ReadyProposal) {
     const change = structure.get(proposal);
     return !closed && change?.base === current.document ? change.next : undefined;
+  }
+
+  async function prepareDesign(id: DesignRecipeId, signal?: AbortSignal) {
+    if (closed) throw new Error('The project is closed.');
+    signal?.throwIfAborted();
+    const base = current.document;
+    const candidate = buildDesignRecipeCandidate(base, id);
+    const rendered = await renderMermaidProject(candidate.document, signal);
+    signal?.throwIfAborted();
+    if (!rendered.targetTable) throw new Error('This design can only be previewed on a verified flowchart.');
+    if (closed || current.document !== base) throw new Error('The project changed. Refresh the design preview.');
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    designs.set(proposal, { base, candidate: freezeSnapshot(candidate),
+      rendered, dependency: canonicalJson(candidate.recipe) });
+    return proposal;
+  }
+
+  function readDesignPreview(proposal: ReadyProposal) {
+    const change = designs.get(proposal);
+    if (closed || !change || change.base !== current.document) return undefined;
+    return { ...change.candidate, rendered: change.rendered };
+  }
+
+  function applyDesign(proposal: ReadyProposal) {
+    const change = designs.get(proposal);
+    if (closed || !change) return 'invalid';
+    if (change.base !== current.document || change.dependency !== canonicalJson(readDesignRecipe(change.candidate.recipe.id))) return 'stale';
+    return commit(change.candidate.document);
   }
 
   function commit(document: MermaidProjectV3) {
@@ -105,6 +142,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareStructure,
     readStructurePreview,
     applyStructure,
+    prepareDesign,
+    readDesignPreview,
+    applyDesign,
     undo: () => restore(past, future),
     redo: () => restore(future, past),
     canUndo: () => past.length > 0,
