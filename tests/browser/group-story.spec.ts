@@ -212,3 +212,63 @@ test('opens a separate story copy and preserves the original project byte for by
   await expect(original.getByRole('img', { name: 'Diagram preview for Original diagram' })).toBeVisible();
   expect(await download(page, original, 'Download v3 project')).toBe(before);
 });
+
+test('creates an explicit branch scene, reorders the paths, and resumes them after reload', async ({ page }, info) => {
+  const source = 'flowchart LR\n A[Start]\n B[Main]\n C[Alternate]\n X[Unrelated]\n A main@-->|"Main"| B\n A alternate@-->|"Branch"| C\n';
+  const project = { ...createDocument(), title: 'Branch story', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(
+    key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] }),
+  ), { key: STORAGE_KEY, project });
+  async function openProject(migrate = false) {
+    await page.getByRole('button', { name: 'Manage projects' }).click();
+    await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+    if (migrate) await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+    await page.getByRole('button', { name: 'Open v3 project Branch story' }).click();
+    const live = page.getByRole('dialog', { name: 'Branch story' });
+    await expect(live.getByRole('img', { name: 'Diagram preview for Branch story' })).toBeVisible();
+    return live;
+  }
+  await page.goto('/');
+  const live = await openProject(true);
+  const original = JSON.parse(await download(page, live, 'Download v3 project'));
+  const bindings = new Map(original.identity.elements.map((record: { binding: { sourceId: string }; id: string }) => [record.binding.sourceId, record.id]));
+  const dialog = page.getByRole('dialog', { name: 'Suggest scenes' });
+  await live.getByRole('button', { name: 'Suggest scenes', exact: true }).click();
+  await dialog.getByLabel('Scene strategy').selectOption('path');
+  await dialog.getByLabel('Start node').selectOption({ label: 'Start (A)' });
+  await dialog.getByLabel('Next connection from Start').selectOption({ label: 'Start → Main · Main · Along the arrow · main' });
+  await dialog.getByRole('button', { name: 'Add connection to path' }).click();
+  await dialog.getByLabel('Scene title').fill('Reviewed main');
+  await dialog.getByRole('combobox', { name: 'Branch starts at' }).selectOption({ label: 'Start (A)' });
+  await dialog.getByRole('button', { name: 'Add branch scene' }).click();
+  await dialog.getByLabel('Next connection from Start').selectOption({ label: 'Start → Alternate · Branch · Along the arrow · alternate' });
+  await dialog.getByRole('button', { name: 'Add connection to path' }).click();
+  await dialog.getByLabel('Scene title').fill('Reviewed branch');
+  await dialog.getByRole('button', { name: 'Move path scene 2 earlier' }).click();
+  await dialog.getByRole('button', { name: 'Save story draft' }).click();
+  await expect(dialog.getByRole('status')).toContainText('Story choices saved');
+  await page.reload();
+  await openProject();
+  await live.getByRole('button', { name: 'Suggest scenes', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Resume path story draft' }).click();
+  const order = dialog.getByRole('list', { name: 'Path scene order' });
+  await expect(order.getByRole('listitem').first()).toContainText('Reviewed branch');
+  await expect(order.getByRole('listitem').last()).toContainText('Reviewed main');
+  await dialog.getByRole('button', { name: 'Preview 2 scenes' }).click();
+  const coverage = dialog.getByRole('list', { name: 'Suggested scene coverage' });
+  await expect(coverage.getByRole('listitem').first()).toContainText('2 nodes, 1 connection, and 0 groups shown.');
+  await expect(coverage.getByRole('listitem').first()).toContainText('Reviewed branch');
+  await expect(dialog.locator(`[data-element-key="${bindings.get('X')}"]`)).toHaveAttribute('aria-hidden', 'true');
+  await page.screenshot({ path: info.outputPath('branch-scene-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('branch-scene-mobile.png') });
+  await dialog.getByRole('button', { name: 'Append suggested scenes' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const saved = JSON.parse(await download(page, live, 'Download v3 project'));
+  expect(saved.storyboard.scenes.map((item: { title: string }) => item.title)).toEqual(['Reviewed branch', 'Reviewed main']);
+  expect(new Set(saved.storyboard.scenes[0].visible)).toEqual(new Set([bindings.get('A'), bindings.get('C'), bindings.get('alternate')]));
+  expect(new Set(saved.storyboard.scenes[1].visible)).toEqual(new Set([bindings.get('A'), bindings.get('B'), bindings.get('main')]));
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  expect(JSON.parse(await download(page, live, 'Download v3 project')).storyboard).toEqual(original.storyboard);
+});

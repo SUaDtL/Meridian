@@ -12,7 +12,7 @@ export type PathStoryOptions = {
   animate: boolean;
   duration: number;
 };
-const maxSteps = 100;
+export const pathStepLimit = 200;
 
 function traverse(edge: StoryTarget | undefined, from: string, direction: PathStep['traversal']) {
   if (edge?.elementKind !== 'edge' || edge.direction === null) return undefined;
@@ -22,7 +22,7 @@ function traverse(edge: StoryTarget | undefined, from: string, direction: PathSt
 
 export function resolveStoryPath(table: RenderTargetTable, startId: string, steps: readonly PathStep[]) {
   if (table.targets.length > storyTargetLimit) throw new Error('Choose a diagram with at most 1,500 verified story targets.');
-  if (steps.length > maxSteps) throw new Error('Choose a path with up to 100 connections.');
+  if (steps.length > pathStepLimit) throw new Error(`Choose a path with up to ${pathStepLimit} connections.`);
   const byId = new Map(table.targets.map(item => [item.id, item]));
   const start = byId.get(startId);
   if (start?.elementKind !== 'node') throw new Error('Choose a current node as the path start.');
@@ -43,7 +43,7 @@ export function resolveStoryPath(table: RenderTargetTable, startId: string, step
     if (step.traversal === 'forward' && edge.direction === 'forward') motion.add(edge.id);
     endpoint = next;
   }
-  const following = loop || steps.length === maxSteps ? [] : table.targets.flatMap(edge => {
+  const following = loop || steps.length === pathStepLimit ? [] : table.targets.flatMap(edge => {
     if (edge.elementKind !== 'edge') return [];
     return (['forward', 'reverse'] as const).flatMap(traversal => {
       const nextId = traverse(edge, endpoint.id, traversal);
