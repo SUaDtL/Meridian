@@ -1,4 +1,4 @@
-export type TableDelimiter = ',' | '\t';
+export type TableDelimiter = ',' | '\t' | ';';
 
 export type DelimitedRow = {
   line: number;
@@ -12,8 +12,8 @@ export const tableInputLimits = {
   fieldCodeUnits: 8_192,
 } as const;
 
-export function readDelimitedRows(input: string, delimiter: TableDelimiter): DelimitedRow[] {
-  if (delimiter !== ',' && delimiter !== '\t') throw new Error('Choose commas or tabs as the delimiter.');
+export function readDelimitedRows(input: string, delimiter: TableDelimiter, extraHeaderRow = false): DelimitedRow[] {
+  if (delimiter !== ',' && delimiter !== '\t' && delimiter !== ';') throw new Error('Choose commas, tabs, or semicolons as the delimiter.');
   if (input.length > tableInputLimits.bytes || new TextEncoder().encode(input).byteLength > tableInputLimits.bytes) {
     throw new Error('Use a table no larger than 2,000,000 bytes.');
   }
@@ -44,7 +44,7 @@ export function readDelimitedRows(input: string, delimiter: TableDelimiter): Del
 
   function closeRow() {
     if (!hasContent) return;
-    if (rows.length === tableInputLimits.rows) fail('Use at most 10,000 table rows.');
+    if (rows.length === tableInputLimits.rows + Number(extraHeaderRow)) fail('Use at most 10,000 table rows.');
     closeField();
     rows.push({ line: rowStart, cells });
     cells = [];
