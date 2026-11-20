@@ -62,16 +62,14 @@ export function createStoryboardRuntime() {
     const baseMotion = Array.from(root.querySelectorAll<SVGElement>('[data-studio-motion]')).map(element => ({ element, style: element.getAttribute('style') }));
     for (const item of baseMotion) item.element.style.setProperty('display', 'none', 'important');
     const flowPaths: Array<{ key: string; path: SVGPathElement; display: boolean; opacity: string; offset: string }> = [];
-    const edgeSeen = new Set<string>();
-    for (const target of targets) {
-      if (!target.key.startsWith('edge:') || edgeSeen.has(target.key)) continue;
-      const edge = target.element.localName === 'path' ? target.element as SVGPathElement : target.element.querySelector<SVGPathElement>('path:not([data-studio-motion])');
+    for (const [key, element] of primary) {
+      if (element.getAttribute('data-element-kind') !== 'edge') continue;
+      const edge = element.localName === 'path' ? element as SVGPathElement : element.querySelector<SVGPathElement>('path:not([data-studio-motion])');
       if (!edge?.getAttribute('d')) continue;
-      edgeSeen.add(target.key);
       const path = document.createElementNS(namespace, 'path');
       path.setAttribute('d', edge.getAttribute('d')!);
       if (edge.hasAttribute('transform')) path.setAttribute('transform', edge.getAttribute('transform')!);
-      path.setAttribute('data-story-flow', target.key);
+      path.setAttribute('data-story-flow', key);
       path.setAttribute('aria-hidden', 'true');
       path.setAttribute('fill', 'none');
       path.setAttribute('pathLength', '100');
@@ -85,7 +83,7 @@ export function createStoryboardRuntime() {
       path.style.setProperty('fill', 'none', 'important');
       path.style.setProperty('display', 'none');
       edge.after(path);
-      flowPaths.push({ key: target.key, path, display: false, opacity: '', offset: '' });
+      flowPaths.push({ key, path, display: false, opacity: '', offset: '' });
     }
     // All membership and entrance-order work happens once, not on every frame.
     const plans = timeline.scenes.map(plan => {

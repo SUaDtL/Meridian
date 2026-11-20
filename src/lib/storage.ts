@@ -1,4 +1,5 @@
 import type { DiagramTemplate, StudioDocument, StudioSettings } from '../types';
+import type { MermaidProjectV3 } from './authoring/mermaid-project';
 import { DEFAULT_SETTINGS } from './themes';
 import { downloadBlob } from './download';
 export { safeFilename } from './download';
@@ -142,7 +143,7 @@ export function createDocument(template?: DiagramTemplate): StudioDocument {
   };
 }
 
-export function serializeProject(document: StudioDocument): string {
+export function serializeProject(document: StudioDocument | MermaidProjectV3): string {
   return JSON.stringify(document, null, 2);
 }
 

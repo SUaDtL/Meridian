@@ -46,7 +46,7 @@ function drawing(withEdge = false) {
   const b = new Svg('g', { 'data-element-key': 'node:b', tabindex: '0', role: 'button', 'aria-pressed': 'false' });
   b.box = { x: 160, y: 30, width: 40, height: 20 };
   root.append(a); root.append(b);
-  if (withEdge) root.append(new Svg('path', { 'data-element-key': 'edge:ab', d: 'M60 40L160 40' }));
+  if (withEdge) root.append(new Svg('path', { 'data-element-key': 'edge:ab', 'data-element-kind': 'edge', d: 'M60 40L160 40' }));
   return { root, a, b, svg: root as unknown as SVGSVGElement };
 }
 function story(): StoryboardState {
@@ -132,9 +132,14 @@ describe('shared storyboard playback', () => {
   it('keeps flow seeking deterministic, honors reduced motion, and restores original authored styles', () => {
     const { root, svg, b } = drawing(true);
     b.setAttribute('style', 'opacity:0.38');
-    const document: StoryboardState = { version: 1, loop: false, scenes: [{ ...createScene(), duration: 5, transition: 0, flow: ['edge:ab'] }] };
+    root.children.find(child => child.getAttribute('data-element-key') === 'edge:ab')!
+      .setAttribute('data-element-key', 'ebf7313c-9b57-46b3-9b94-47596f584cbb');
+    root.append(new Svg('path', { 'data-element-key': 'edge:not-a-connector', 'data-element-kind': 'node', d: 'M5 5L10 10' }));
+    const document: StoryboardState = { version: 1, loop: false, scenes: [{ ...createScene(), duration: 5, transition: 0, flow: ['ebf7313c-9b57-46b3-9b94-47596f584cbb', 'edge:not-a-connector'] }] };
     const player = createStoryboardPlayer(svg, document, { reducedMotion: false, initialPreview: 0 });
     const flow = root.children.find(child => child.hasAttribute('data-story-flow'))!;
+    expect(root.children.filter(child => child.hasAttribute('data-story-flow')).map(child => child.getAttribute('data-story-flow')))
+      .toEqual(['ebf7313c-9b57-46b3-9b94-47596f584cbb']);
     expect(flow).toBeDefined();
     expect(flow.style.values.get('display')).toBeUndefined();
     player.seek(1); const offset = flow.getAttribute('stroke-dashoffset');
