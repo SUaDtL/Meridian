@@ -116,3 +116,44 @@ test('aborting at every IndexedDB migration write keeps the legacy workspace int
   expect(result.activation).toMatchObject({ activeId: result.secondId, sourceChecksum: result.manifest.sourceChecksum });
   expect(result.changedLater).toBe('legacy-changed');
 });
+
+test('a migrated v3 project applies, undoes and reopens a guarded edit across tabs', async ({ page, context }) => {
+  const { createDocument } = await import('../../src/lib/storage');
+  const project = { ...createDocument(), title: 'Original', source: '\uFEFFflowchart LR\r\nA[One]\r\n' };
+  await expect(page.evaluate(input => window.seedProjectEditor(input), project)).resolves.toBe('migrated');
+  const original = await page.evaluate(id => window.openProjectEditorFixture(id), project.id);
+  const peer = await context.newPage();
+  await peer.goto(fixtureUrl);
+  await peer.waitForFunction(() => 'openProjectEditorFixture' in window);
+  await peer.evaluate(id => window.openProjectEditorFixture(id), project.id);
+
+  const edited = await page.evaluate(async () => {
+    const editor = window.projectEditor;
+    const applied = await editor.edit('Renamed');
+    const beforeSave = editor.saveState();
+    await editor.flush();
+    const afterSave = editor.saveState();
+    const stale = await editor.applyStale('Do not apply');
+    await editor.flush();
+    return { applied, beforeSave, afterSave, stale, undo: editor.saveState() };
+  });
+  expect(edited).toMatchObject({
+    applied: 'applied',
+    beforeSave: { phase: 'scheduled', savedRevision: 0, workingRevision: 1 },
+    afterSave: { phase: 'saved', savedRevision: 1 },
+    stale: 'stale',
+    undo: { phase: 'saved', savedRevision: 2 },
+  });
+  const conflict = await peer.evaluate(async () => {
+    const editor = window.projectEditor;
+    await editor.edit('Another tab');
+    await editor.flush();
+    return { ...editor.saveState(), retained: editor.snapshot().title };
+  });
+  expect(conflict).toMatchObject({ phase: 'conflict', savedRevision: 0, workingRevision: 1, retained: 'Another tab' });
+
+  await page.reload();
+  await page.waitForFunction(() => 'openProjectEditorFixture' in window);
+  const reopened = await page.evaluate(id => window.openProjectEditorFixture(id), project.id);
+  expect(reopened).toEqual({ ...original, revision: 2, updatedAt: reopened.updatedAt });
+});
