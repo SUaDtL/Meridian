@@ -40,13 +40,14 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
   return rows;
 }
 
-export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onClose }: {
+export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onBulkText, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
   onSelection: Dispatch<SetStateAction<ReadonlySet<string>>>;
   canRename: boolean;
   onRename: (id: string) => void;
   onSource: (location: OutlineSourceLocation) => void;
+  onBulkText: (hidden: number) => void;
   onClose: () => void;
 }) {
   const id = useId();
@@ -131,6 +132,14 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           <button type="button" className="button secondary" aria-pressed={relationships} onClick={() => setTab(true)}>Relationships</button>
         </div>
         <p role="status">{selected.size} selected · {hidden} hidden</p>
+        <div className="recovery-actions" role="group" aria-label="Outline selection">
+          <button type="button" className="button quiet" disabled={!visible.length}
+            onClick={() => onSelection(current => new Set([...current, ...visible.map(row => row.item.id)]))}>Select visible results</button>
+          <button type="button" className="button quiet" disabled={!items.length}
+            onClick={() => onSelection(new Set(items.map(item => item.id)))}>Select all diagram elements</button>
+          <button type="button" className="button quiet" disabled={!selected.size} onClick={() => onSelection(new Set())}>Clear selection</button>
+          <button type="button" className="button secondary" disabled={!selected.size} onClick={() => onBulkText(hidden)}>Change selected text color</button>
+        </div>
         <ul ref={list} role={relationships ? "listbox" : "tree"} aria-label={relationships ? "Relationships" : "Diagram elements"}
           aria-activedescendant={active && `${id}-${active.item.id}`} aria-multiselectable="true" tabIndex={visible.length ? 0 : -1} onKeyDown={keyboard}>
           {visible.map(({ item, depth, branch, expanded }) => (

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import BulkTextColorDialog from "./BulkTextColorDialog";
 import HeadingEditor from "./HeadingEditor";
 import CommandPalette from "./CommandPalette";
 import Modal from "./Modal";
@@ -48,6 +49,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [detachOpen, setDetachOpen] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<SourceDraft>();
   const [commandsOpen, setCommandsOpen] = useState(false);
+  const [bulkTextHidden, setBulkTextHidden] = useState<number>();
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [renameTarget, setRenameTarget] = useState<string>();
@@ -210,7 +212,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || editHeading || editFlowchart || editSource || detachOpen || assistOpen) return;
+    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen
+      || editHeading || editFlowchart || editSource || detachOpen || assistOpen || bulkTextHidden !== undefined) return;
     const openCommands = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
         || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -219,7 +222,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading, editFlowchart, editSource, detachOpen, assistOpen]);
+  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading,
+    editFlowchart, editSource, detachOpen, assistOpen, bulkTextHidden]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
@@ -386,7 +390,18 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
         canRename={!editingUnavailable} onClose={() => setOutlineOpen(false)}
-        onRename={renameFromOutline} onSource={jumpToSource} />}
+        onRename={renameFromOutline} onSource={jumpToSource} onBulkText={setBulkTextHidden} />}
+      {bulkTextHidden !== undefined && currentFrame && editor.current && <BulkTextColorDialog
+        editor={editor.current} frame={currentFrame.rendered} selection={outlineSelection} hidden={bulkTextHidden}
+        onClose={() => setBulkTextHidden(undefined)} onApply={proposal => {
+          const current = editor.current!;
+          const status = current.applyBulkText(proposal);
+          if (status === "applied") {
+            setOutlineOpen(false);
+            setProject(current.snapshot());
+          }
+          return status;
+        }} />}
       {readabilityTargets && currentFrame && targetTable && editor.current && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
         token={targetTable.baseToken} editor={editor.current} canvas={canvasProfile} onClose={() => setReadabilityOpen(false)} onApply={proposal => {
           const current = editor.current!;
