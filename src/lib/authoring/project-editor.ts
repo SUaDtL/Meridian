@@ -1,7 +1,9 @@
 import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/project-save-queue';
-import { readWorkspaceProject, writeWorkspaceProject } from '../persistence/workspace-db';
+import { readPendingAssist } from '../persistence/pending-assist';
+import { readWorkspaceProject, writeWorkspaceProject, type SavedAnchor } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
-import { canonicalJson, sameBaseToken, type BaseToken } from './base-token';
+import { authorizeAssistRename, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
+import { canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { buildContrastCandidate, measureTargetContrast } from './contrast-fix';
 import { buildDesignRecipeCandidate, readDesignRecipe, type DesignRecipeId } from './design-recipes';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
@@ -46,6 +48,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   const past: (typeof current)[] = [];
   const future: (typeof current)[] = [];
   const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId?: string; impact?: ElementRemovalImpact }>();
+  const suggestions = new WeakMap<ReadyProposal, {
+    base: MermaidProjectV3; next: MermaidProjectV3; request: PendingAssistRequest;
+  }>();
   const designs = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3;
     dependency: string;
@@ -71,6 +76,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     base: MermaidProjectV3; next: MermaidProjectV3; color: string; label: string; beforeRatio: number; afterRatio: number; threshold: number; svg: string;
   }>();
   let closed = false;
+  let savingSuggestion = false;
 
   function prepareHeading(envelope: unknown) {
     return headingLane.prepare({ document: current.document, revision: current.document.revision }, envelope);
@@ -127,6 +133,47 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   function readStructureImpact(proposal: ReadyProposal) {
     const change = structure.get(proposal);
     return !closed && change?.base === current.document ? change.impact : undefined;
+  }
+
+  async function prepareAssistSuggestion(text: string, signal?: AbortSignal) {
+    const base = current.document;
+    const file = parseAssistSuggestion(text);
+    const request = await readPendingAssist(db, file.requestId);
+    const token = await projectBaseToken(base);
+    const operation = authorizeAssistRename(file, request, token);
+    signal?.throwIfAborted();
+    const { document } = await prepareFlowchartCandidate(base, operation, signal);
+    if (closed || current.document !== base) throw new Error('The project changed. Export a fresh request.');
+    if (document === base) throw new Error('The suggestion makes no change to the current node label.');
+    const preview = await renderMermaidProject(document, signal);
+    signal?.throwIfAborted();
+    if (!preview.targetTable || closed || current.document !== base) throw new Error('The suggestion could not be verified against the current diagram.');
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    const next = freezeSnapshot(document);
+    suggestions.set(proposal, { base, next, request });
+    return { proposal, next, preview, targetId: operation.targetId, label: operation.label };
+  }
+
+  async function applyAssistSuggestion(proposal: ReadyProposal) {
+    const change = suggestions.get(proposal);
+    if (closed || savingSuggestion || !change || change.base !== current.document) {
+      throw new Error('The project changed. Export a fresh request.');
+    }
+    const next = historyEntry(change.next);
+    if (current.bytes + next.bytes > historyByteLimit) throw new Error('The suggestion exceeds the Undo history budget.');
+    savingSuggestion = true;
+    try {
+      await queue.flush();
+      const saved = queue.state();
+      if (closed || change.base !== current.document || saved.phase !== 'saved' || !saved.anchor) {
+        throw new Error('Save the current project before applying this suggestion.');
+      }
+      const anchor = await writeWorkspaceProject(db, change.next, saved.anchor, change.request);
+      advanceHistory(next, anchor);
+      suggestions.delete(proposal);
+    } finally {
+      savingSuggestion = false;
+    }
   }
 
   async function prepareDesign(id: DesignRecipeId, signal?: AbortSignal) {
@@ -307,9 +354,15 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   }
 
   function commit(document: MermaidProjectV3) {
+    if (savingSuggestion) return 'invalid';
     if (document === current.document) return 'unchanged';
     const next = historyEntry(document);
     if (current.bytes + next.bytes > historyByteLimit) return 'history-limit';
+    advanceHistory(next);
+    return 'applied';
+  }
+
+  function advanceHistory(next: typeof current, anchor?: SavedAnchor) {
     past.push(current);
     future.length = 0;
     let bytes = next.bytes;
@@ -319,13 +372,13 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     }
     past.splice(0, start);
     current = next;
-    queue.edit(next.document);
-    return 'applied';
+    if (anchor) queue.adoptSaved(next.document, anchor);
+    else queue.edit(next.document);
   }
 
   function restore(from: typeof past, to: typeof past) {
     const previous = from.at(-1);
-    if (closed || !previous) return false;
+    if (closed || savingSuggestion || !previous) return false;
     const document = Object.freeze({ ...previous.document, revision: current.document.revision + 1, updatedAt: new Date().toISOString() });
     validateMermaidProject(document);
     to.push(current);
@@ -344,6 +397,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     readStructurePreview,
     readStructureImpact,
     applyStructure,
+    prepareAssistSuggestion,
+    applyAssistSuggestion,
     detachComponentInstance,
     prepareDesign,
     readDesignPreview,
