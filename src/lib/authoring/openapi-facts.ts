@@ -59,7 +59,9 @@ function enforceStringBudget(root: unknown) {
 }
 
 /** Extract allowlisted declared operations. Raw descriptions and examples never leave the worker. */
-export function readOpenApiFacts(bytes: ArrayBuffer, virtualPath: string): OpenApiFacts {
+export function readOpenApiFacts(
+  bytes: ArrayBuffer, virtualPath: string, decode = (source: string) => decodeJson(source, 50_000, 'skip'),
+): OpenApiFacts {
   validateVirtualPath(virtualPath);
   if (bytes.byteLength > maxBytes) throw new Error('Choose an OpenAPI file no larger than 2,000,000 bytes.');
   let source: string;
@@ -68,10 +70,10 @@ export function readOpenApiFacts(bytes: ArrayBuffer, virtualPath: string): OpenA
   } catch {
     throw new Error('Choose an OpenAPI file encoded as UTF-8.');
   }
-  const base = decodeJson(source, 50_000, 'text');
+  const base = decode(source);
   enforceStringBudget(base);
   if (!record(base) || typeof base.openapi !== 'string' || base.openapi.trim() !== base.openapi || !supportedVersion.test(base.openapi)) {
-    throw new Error('Choose an OpenAPI 3.0 or 3.1 JSON document.');
+    throw new Error('Choose an OpenAPI 3.0 or 3.1 document.');
   }
   const sourcePaths = base.paths;
   if (!record(sourcePaths)) throw new Error('This OpenAPI document does not declare any paths in its root paths object.');

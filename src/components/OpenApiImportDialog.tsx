@@ -56,10 +56,11 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   function extract(extended = false) {
     if (!file) return;
     void run("Reading operations", async signal => {
-      if (file.size > 2_000_000) throw new Error("Choose an OpenAPI JSON file no larger than 2,000,000 bytes.");
+      if (file.size > 2_000_000) throw new Error("Choose an OpenAPI file no larger than 2,000,000 bytes.");
       const virtualPath = validateVirtualPath(path);
       const bytes = await file.arrayBuffer();
-      const parsed = await runAuthoringWorker<OpenApiFacts>(() => new OpenApiWorker(), { bytes, virtualPath }, signal, "Reading OpenAPI operations", extended);
+      const format = /\.ya?ml$/i.test(file.name) ? "yaml" : undefined;
+      const parsed = await runAuthoringWorker<OpenApiFacts>(() => new OpenApiWorker(), { bytes, virtualPath, format }, signal, "Reading OpenAPI operations", extended);
       signal.throwIfAborted();
       setFile(undefined);
       setFacts(parsed);
@@ -115,8 +116,8 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   return <Modal title="Engineering file" wide busy={busy === "Saving the new diagram"} onClose={onClose}>
     <h3 ref={heading} tabIndex={-1}>{review ? "Review your new diagram" : facts ? "Choose operation scope" : "New diagram from file"}</h3>
     {!facts && <form className="heading-form" onSubmit={event => { event.preventDefault(); extract(); }}>
-      <p>Import the declared operations in an OpenAPI 3.0 or 3.1 JSON file. Meridian reads the file in this browser and retains only selected facts in the new diagram.</p>
-      <label>OpenAPI JSON file<input type="file" accept=".json,application/json" disabled={!!busy} onChange={event => {
+      <p>Import the declared operations in an OpenAPI 3.0 or 3.1 JSON or restricted YAML file. Meridian reads the file in this browser and retains only selected facts in the new diagram.</p>
+      <label>OpenAPI specification<input type="file" accept=".json,.yaml,.yml,application/json,application/yaml,text/yaml" disabled={!!busy} onChange={event => {
         const selected = event.target.files?.[0];
         setFile(selected);
         setPath(selected?.name.replace(/[^A-Za-z0-9_.-]/g, "_") || "");

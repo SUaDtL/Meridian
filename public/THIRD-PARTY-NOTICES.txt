@@ -1,8 +1,8 @@
 MERIDIAN THIRD-PARTY DEPENDENCY NOTICES
 
 Application: @arbiterforge/meridian 0.1.0
-Lockfile SHA-256: 29f55a12f3c70d5af4c6cf8e2e173157742882d453a61a04cc8c073c8a10f5e3
-Inventory: 273 lockfile package locations; 243 installed; 248 notice files reproduced.
+Lockfile SHA-256: 129dd57339b4f7aa2e62636c7e6779c4315ba46951965819f6f119b8f5acc55a
+Inventory: 274 lockfile package locations; 244 installed; 249 notice files reproduced.
 
 Scope: every package recorded in package-lock.json, including development,
 build, test, transitive, and platform-specific optional dependencies. This
@@ -15216,3 +15216,26 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ----- END node_modules/yallist/LICENSE -----
+
+==============================================================================
+yaml @ 2.9.1
+Lockfile location: node_modules/yaml
+Declared license: ISC
+Dependency scope: runtime or transitive
+
+----- BEGIN node_modules/yaml/LICENSE -----
+Copyright Eemeli Aro <eemeli@gmail.com>
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+
+----- END node_modules/yaml/LICENSE -----
