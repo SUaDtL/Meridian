@@ -116,7 +116,7 @@ function readSubset(source: string) {
       throw unsupported();
     }
   }
-  return { direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles };
+  return { heading: first, direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles };
 }
 
 /** Only the source editor may handle undeclared nodes, groups or opaque directives. */
@@ -136,6 +136,16 @@ export function flowchartSourceLocations(source: string) {
     nodes: new Map(Array.from(nodes, ([id, record]) => [id, location(record)])),
     edges: new Map(edges.flatMap(({ id, record }) => id ? [[id, location(record)] as const] : [])),
   };
+}
+
+export type FlowchartDirection = 'TB' | 'BT' | 'LR' | 'RL';
+
+export function planFlowchartDirection(source: string, direction: FlowchartDirection): SourcePatch[] {
+  if (!['TB', 'BT', 'LR', 'RL'].includes(direction)) throw new Error('Choose a supported flowchart direction.');
+  const parsed = readSubset(source);
+  if (parsed.direction === direction) return [];
+  const to = parsed.heading.end;
+  return [{ from: to - 2, to, expectedText: source.slice(to - 2, to), replacement: direction }];
 }
 
 function replace(span: RecordSpan, replacement: string): SourcePatch {

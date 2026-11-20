@@ -4,7 +4,7 @@ import CommandPalette from "./CommandPalette";
 import Modal from "./Modal";
 import V3ProjectOutline from "./V3ProjectOutline";
 import ReadabilityDialog from "./ReadabilityDialog";
-import V3DesignDialog from "./V3DesignDialog";
+import V3ComparisonDialog from "./V3ComparisonDialog";
 import V3StructureEditor from "./V3StructureEditor";
 import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
@@ -42,7 +42,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const [renameTarget, setRenameTarget] = useState<string>();
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
   const [readabilityOpen, setReadabilityOpen] = useState(false);
-  const [designOpen, setDesignOpen] = useState(false);
+  const [comparison, setComparison] = useState<"design" | "layout">();
   const [canvasProfile, setCanvasProfile] = useState<ViewingProfile>();
   const previewImage = useRef<HTMLImageElement>(null);
   const sourceDetails = useRef<HTMLDetailsElement>(null);
@@ -183,7 +183,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || designOpen || editHeading || editFlowchart) return;
+    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || editHeading || editFlowchart) return;
     const openCommands = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
         || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -192,7 +192,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, designOpen, editHeading, editFlowchart]);
+  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, editHeading, editFlowchart]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
@@ -243,7 +243,9 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     { id: "check-readability", title: "Check readability", category: "Design", synonyms: ["quality", "label size"],
       unavailable: targetTable?.targets.length ? undefined : "A verified flowchart is needed for readability checks.", run: openReadability },
     { id: "explore-designs", title: "Explore designs", category: "Design", synonyms: ["design recipes", "compare styles"],
-      unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to compare designs.", run: () => setDesignOpen(true) },
+      unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to compare designs.", run: () => setComparison("design") },
+    { id: "compare-layouts", title: "Compare layouts", category: "Design", synonyms: ["direction", "spacing", "layout alternatives"],
+      unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to compare layouts.", run: () => setComparison("layout") },
     { id: "add-node", title: "Add node", category: "Diagram", unavailable: editingUnavailable, run: () => setEditFlowchart("addNode") },
     { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
     { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
@@ -281,7 +283,8 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
               <button className="button secondary" disabled={busy} aria-keyshortcuts="Control+K Meta+K" onClick={() => setCommandsOpen(true)}>Commands</button>
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setOutlineOpen(true)}>Outline</button>}
               {!!targetTable?.targets.length && <button className="button secondary" disabled={busy} onClick={openReadability}>Check readability</button>}
-              {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setDesignOpen(true)}>Explore designs</button>}
+              {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("design")}>Explore designs</button>}
+              {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
               <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
               {targetTable && flatFlowchart && (
                 <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
@@ -333,10 +336,11 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
         onRename={renameFromOutline} onSource={jumpToSource} />}
       {readabilityTargets && currentFrame && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
         revision={currentFrame.document.revision} canvas={canvasProfile} onClose={() => setReadabilityOpen(false)} />}
-      {designOpen && currentFrame && editor.current && <V3DesignDialog editor={editor.current} currentUrl={currentFrame.url}
-        currentSize={currentFrame.geometry} onClose={() => setDesignOpen(false)} onApply={proposal => {
+      {comparison && currentFrame && editor.current && <V3ComparisonDialog mode={comparison} allowDirection={flatFlowchart}
+        editor={editor.current} currentUrl={currentFrame.url}
+        currentSize={currentFrame.geometry} onClose={() => setComparison(undefined)} onApply={proposal => {
           const current = editor.current!;
-          const status = current.applyDesign(proposal);
+          const status = comparison === "layout" ? current.applyLayout(proposal) : current.applyDesign(proposal);
           if (status === "applied") setProject(current.snapshot());
           return status;
         }} />}

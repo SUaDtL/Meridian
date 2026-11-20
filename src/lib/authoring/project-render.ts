@@ -37,6 +37,7 @@ function hasBounds(bounds: RenderElement['bounds']): bounds is RenderTarget['bou
 export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: AbortSignal): Promise<{
   result: RenderResult;
   targetTable: RenderTargetTable | null;
+  flowDirection?: string;
 }> {
   signal?.throwIfAborted();
   const live = snapshot.identity.elements.filter(record => record.status === 'resolved');
@@ -156,5 +157,6 @@ export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: 
       svg: new XMLSerializer().serializeToString(svg),
     },
     targetTable: { schema: 'meridian-targets/v1', baseToken, renderFingerprint: fingerprint, targets },
+    flowDirection: model.direction,
   };
 }
