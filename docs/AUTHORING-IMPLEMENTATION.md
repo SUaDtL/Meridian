@@ -219,3 +219,8 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - Engineering file reads one local OpenAPI 3.0 or 3.1 JSON file through a bounded worker. It presents operation IDs, declared tags and the scope excluded because of referenced path items or schema content. Select operations and review their display labels and optional primary tags before creating a new project.
 - Generated Mermaid links represent declared tag membership. Outline shows the exact virtual path and escaped JSON Pointer for each generated target. Chromium verifies filtered selection, reviewed generation and a portable export that retains provenance without examples, descriptions or remote URI content.
 - This advances IM05, IM06, IM07 and IM08 for the operation view. Restricted YAML, multi-file resolution, schema/reference views, check-pointed facts and further adapters remain open.
+
+## Milestone 4 chart filter review
+
+- Chart mappings accept explicit typed filters and apply them before aggregation. Review and offline chart summaries show exclusion counts. The source table retains every row and identifies the first filter that excluded it.
+- Fixtures verify typed comparison and null predicates. Chromium verifies the reviewed preview, the portable filter, its unchanged dataset, and exact Undo.

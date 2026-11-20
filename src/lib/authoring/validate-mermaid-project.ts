@@ -14,6 +14,10 @@ interface Schema {
   enum?: readonly (string | number | boolean)[];
   anyOf?: readonly Schema[];
   oneOf?: readonly Schema[];
+  allOf?: readonly Schema[];
+  if?: Schema;
+  then?: Schema;
+  else?: Schema;
   required?: readonly string[];
   properties?: Readonly<Record<string, Schema>>;
   additionalProperties?: false | Schema;
@@ -38,7 +42,8 @@ const unpairedSurrogate = /[\uD800-\uDFFF]/u;
 const dateTime = /^(\d{4})-(\d\d)-(\d\d)T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i;
 const patterns = new Map<string, RegExp>();
 const supported = new Set([
-  '$ref', '$comment', '$id', '$schema', 'type', 'const', 'enum', 'anyOf', 'oneOf', 'required', 'properties', 'additionalProperties',
+  '$ref', '$comment', '$id', '$schema', 'type', 'const', 'enum', 'anyOf', 'oneOf', 'allOf', 'if', 'then', 'else',
+  'required', 'properties', 'additionalProperties',
   'propertyNames', 'items', 'pattern', 'format', 'minLength', 'maxLength', 'minItems', 'maxItems',
   'minProperties', 'maxProperties', 'minimum', 'maximum',
 ]);
@@ -62,7 +67,7 @@ function validDateTime(value: string) {
 
 function within(size: number, min = 0, max = Infinity) { return size >= min && size <= max; }
 
-/** The shipped Mermaid branch uses only these assertions. References never load files. */
+/** Validate the bundled contracts. References never load files. */
 function agrees(value: unknown, rule: Schema, source = false): boolean {
   for (const key of Object.keys(rule)) if (!supported.has(key)) throw new Error('Unsupported Meridian project schema assertion.');
   if (Array.isArray(rule.type)) return rule.type.some(type => agrees(value, { ...rule, type }, source));
@@ -75,7 +80,13 @@ function agrees(value: unknown, rule: Schema, source = false): boolean {
   if (rule.enum && !rule.enum.some(option => option === value)) return false;
   if (rule.anyOf && !rule.anyOf.some(option => agrees(value, option, source))) return false;
   if (rule.oneOf && rule.oneOf.filter(option => agrees(value, option, source)).length !== 1) return false;
-  switch (rule.type) {
+  if (rule.allOf && !rule.allOf.every(option => agrees(value, option, source))) return false;
+  if (rule.if) {
+    const condition = agrees(value, rule.if, source) ? rule.then : rule.else;
+    if (condition && !agrees(value, condition, source)) return false;
+  }
+  const assertionType = rule.type ?? (object(value) && rule.properties ? 'object' : undefined);
+  switch (assertionType) {
     case 'object': {
       if (!object(value)) return false;
       const keys = Reflect.ownKeys(value);

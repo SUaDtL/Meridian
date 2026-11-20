@@ -50,6 +50,7 @@ export function describeChart(project: ChartProject, values: ChartProjection) {
     spec.unitScale.x ? `X values are multiplied by 10^${spec.unitScale.x.power10}.` : "",
     spec.unitScale.y ? `Y values are multiplied by 10^${spec.unitScale.y.power10}.` : "",
     `${countLabel(values.counts.plotted, "observation")} from ${countLabel(values.counts.retained, "retained row")} of ${countLabel(values.counts.input, "input row")}.`,
+    spec.filters.length ? `Rows excluded by filters: ${values.counts.input - values.counts.retained}.` : "",
     values.counts.excludedMissing ? `Rows excluded for missing values: ${values.counts.excludedMissing}.` : "",
     values.counts.outside ? `Observations outside the chart range: ${values.counts.outside}.` : "",
     values.counts.nullY ? `Rows with missing Y values: ${values.counts.nullY}.` : "",
