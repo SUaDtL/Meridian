@@ -1,14 +1,62 @@
-import mermaid, { type MermaidConfig } from 'mermaid';
+import type { MermaidConfig } from 'mermaid';
 import DOMPurify from 'dompurify';
 import type { RenderNode, RenderResult, StudioSettings } from '../types';
 import { getTheme } from './themes';
 import type { DesignState } from '../types/design';
 import { createDesign, decorateDesign, designRenderSource, measureDesignElements, type FlowModel } from './design';
+import { RenderCache } from './render-cache';
+import { checkRenderSignal, latestRenderQueue, renderAborted } from './render-queue';
 
 const NS = 'http://www.w3.org/2000/svg';
 const MAX_SOURCE = 100_000;
 let serial = 0;
-let renderQueue: Promise<unknown> = Promise.resolve();
+const LAYOUT_SETTINGS = ['theme', 'layout', 'curve', 'spacing', 'font'] as const;
+const DECORATION_SETTINGS = ['finish', 'shadow', 'glow', 'motion', 'speed', 'edgeWidth'] as const;
+const GEOMETRY_STYLES = new Set(['shape', 'font', 'fontSize', 'fontWeight', 'routing']);
+
+function orderedEntries(value: Record<string, unknown>): Array<[string, unknown]> {
+  return Object.keys(value).sort().map(key => [key, value[key]]);
+}
+
+function designEntries(design: DesignState, geometryOnly = false) {
+  return Object.keys(design.elements).sort().flatMap(key => {
+    const entries = orderedEntries(design.elements[key] as Record<string, unknown>)
+      .filter(([property, value]) => value !== undefined && (!geometryOnly || GEOMETRY_STYLES.has(property)));
+    return entries.length ? [[key, entries]] : [];
+  });
+}
+
+/** Only inputs that affect the rendered diagram; framing and document metadata are separate. */
+export function renderFingerprint(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState = createDesign()): string {
+  return JSON.stringify([source, LAYOUT_SETTINGS.map(key => settings[key]), DECORATION_SETTINGS.map(key => settings[key]), orderedEntries(nodeAccents), design.preset === 'infrastructure', designEntries(design)]);
+}
+
+/** Appearance-only changes reuse Mermaid's measured layout. Theme remains a native Mermaid input. */
+export function layoutFingerprint(source: string, settings: StudioSettings, design: DesignState = createDesign()): string {
+  return JSON.stringify([source, LAYOUT_SETTINGS.map(key => settings[key]), design.preset === 'infrastructure', designEntries(design, true)]);
+}
+
+interface LayoutSnapshot {
+  id: string;
+  svg: string;
+  diagramType: string;
+  model?: FlowModel;
+  warnings: string[];
+}
+
+interface RenderInput {
+  source: string;
+  settings: StudioSettings;
+  nodeAccents: Record<string, string>;
+  design: DesignState;
+  prepared: ReturnType<typeof prepareSource>;
+  key: string;
+}
+
+// SVG strings dominate memory. Count their UTF-16 storage and the source-bearing
+// keys, and cap both bytes and entries so switching projects cannot grow forever.
+const layoutCache = new RenderCache<LayoutSnapshot>(6, 8 * 1024 * 1024);
+const resultCache = new RenderCache<RenderResult>(8, 12 * 1024 * 1024);
 
 /** A rendering copy only. The original Mermaid text is never rewritten. */
 function prepareSource(source: string): { text: string; warnings: string[] } {
@@ -96,10 +144,14 @@ function safeSvg(raw: string): SVGSVGElement {
   return svg;
 }
 
-async function performRender(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState): Promise<RenderResult> {
-  const { text, warnings } = prepareSource(source);
+async function performRender({ settings, nodeAccents, design, prepared, key }: RenderInput, signal: AbortSignal): Promise<RenderResult> {
+  checkRenderSignal(signal);
+  const { text } = prepared;
+  const warnings = [...prepared.warnings];
+  const layoutKey = layoutFingerprint(text, settings, design);
+  const cachedLayout = layoutCache.get(layoutKey);
   const theme = getTheme(settings.theme);
-  const id = `meridian-${++serial}`;
+  const id = cachedLayout?.id ?? `meridian-${++serial}`;
   const font = settings.font === 'mono' ? 'Consolas, "Liberation Mono", monospace' : 'Arial, Helvetica, sans-serif';
   const spacing = settings.spacing === 'compact' ? 30 : settings.spacing === 'airy' ? 78 : 50;
   const edgeWidth = numeric(settings.edgeWidth, 1.8, 0.5, 6);
@@ -185,27 +237,54 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
   const host = document.createElement('div');
   host.style.cssText = `position:absolute;left:-100000px;top:0;width:1600px;visibility:hidden;pointer-events:none;font-family:${font};`;
   host.setAttribute('aria-hidden', 'true');
+  host.setAttribute('data-meridian-render', cachedLayout ? 'decoration' : 'layout');
   document.body.append(host);
   try {
-    mermaid.initialize(config);
-    if (mermaid.detectType(text) === 'mindmap') {
-      // Mindmap's native radial layout is not the graph layout selected by the
-      // flowchart controls. In Mermaid 12, forcing ELK here can fail inside its
-      // generated layout code even for valid standard mindmap syntax.
-      mermaid.initialize({ ...config, layout: 'cose-bilkent' });
-      warnings.push('Mind maps use their native radial layout. The ELK and Dagre controls apply to graph diagrams.');
-    }
     let model: FlowModel | undefined;
-    let renderText = text;
-    if (mermaid.detectType(text).startsWith('flowchart')) {
-      const parsed = await mermaid.mermaidAPI.getDiagramFromText(text);
-      const database = parsed.db as unknown as { getVertices: () => FlowModel['vertices']; getEdges: () => FlowModel['edges']; getSubGraphs: () => FlowModel['groups'] };
-      model = { vertices: database.getVertices(), edges: database.getEdges(), groups: database.getSubGraphs() };
-      renderText = designRenderSource(text, design, model);
+    let rendered: { diagramType: string };
+    let svg: SVGSVGElement;
+    if (cachedLayout) {
+      model = cachedLayout.model;
+      rendered = cachedLayout;
+      // Only this module's already-sanitized snapshots enter the layout cache.
+      svg = new DOMParser().parseFromString(cachedLayout.svg, 'image/svg+xml').documentElement as unknown as SVGSVGElement;
+      warnings.push(...cachedLayout.warnings);
+    } else {
+      // Keep the welcome screen and source-boundary validation independent of
+      // Mermaid's initialization. Normal builds also split its diagram chunks.
+      const { default: mermaid } = await import('mermaid');
+      checkRenderSignal(signal);
+      mermaid.initialize(config);
+      const diagramType = mermaid.detectType(text);
+      const layoutWarnings: string[] = [];
+      if (diagramType === 'mindmap') {
+        // Mindmap's native radial layout is independent of graph layout choices.
+        mermaid.initialize({ ...config, layout: 'cose-bilkent' });
+        layoutWarnings.push('Mind maps use their native radial layout. The ELK and Dagre controls apply to graph diagrams.');
+      }
+      let renderText = text;
+      if (diagramType.startsWith('flowchart')) {
+        const parsed = await mermaid.mermaidAPI.getDiagramFromText(text);
+        checkRenderSignal(signal);
+        const database = parsed.db as unknown as { getVertices: () => FlowModel['vertices']; getEdges: () => FlowModel['edges']; getSubGraphs: () => FlowModel['groups'] };
+        // The Mermaid parser owns mutable databases. Cache a detached snapshot,
+        // so another diagram cannot replace the model behind a cached layout.
+        model = {
+          vertices: new Map(Array.from(database.getVertices(), ([vertexKey, vertex]) => [vertexKey, { id: vertex.id, text: vertex.text, styles: vertex.styles?.slice() }])),
+          edges: database.getEdges().map(edge => ({ ...edge, style: edge.style?.slice() })),
+          groups: database.getSubGraphs().map(group => ({ id: group.id, title: group.title, nodes: group.nodes.slice() })),
+        };
+        renderText = designRenderSource(text, design, model);
+      }
+      const output = await mermaid.render(id, renderText, host);
+      checkRenderSignal(signal);
+      rendered = output;
+      svg = safeSvg(output.svg);
+      if (/<foreignObject\b/i.test(output.svg)) layoutWarnings.push('This diagram contains HTML-only content that is omitted for portable SVG export. Text labels and built-in shapes work best.');
+      const clean = new XMLSerializer().serializeToString(svg);
+      layoutCache.set(layoutKey, { id, svg: clean, diagramType: output.diagramType, model, warnings: layoutWarnings }, clean.length * 2 + text.length * 2);
+      warnings.push(...layoutWarnings);
     }
-    const rendered = await mermaid.render(id, renderText, host);
-    const svg = safeSvg(rendered.svg);
-    if (/<foreignObject\b/i.test(rendered.svg)) warnings.push('This diagram contains HTML-only content that is omitted for portable SVG export. Text labels and built-in shapes work best.');
     const doc = svg.ownerDocument;
     svg.setAttribute('data-meridian', 'diagram');
     svg.setAttribute('xmlns', NS);
@@ -344,16 +423,26 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
     host.replaceChildren(svg);
     measureDesignElements(svg, elements);
     const otherEdges = svg.querySelectorAll('[data-et="message"], .relationshipLine, .messageLine0, .messageLine1').length;
-    return { svg: new XMLSerializer().serializeToString(svg), diagramType: rendered.diagramType, nodes, elements, edgeCount: uniqueEdges.length || otherEdges, width, height, warnings };
+    const result = { svg: new XMLSerializer().serializeToString(svg), diagramType: rendered.diagramType, nodes, elements, edgeCount: uniqueEdges.length || otherEdges, width, height, warnings };
+    resultCache.set(key, result, result.svg.length * 2 + JSON.stringify(elements).length * 2);
+    return result;
   } finally {
     host.remove();
   }
 }
 
-export function renderDiagram(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState = createDesign()): Promise<RenderResult> {
-  // Mermaid has a global configuration. Serializing the whole operation avoids
-  // a later theme selection changing the config of an in-flight render.
-  const task = renderQueue.then(() => performRender(source, settings, nodeAccents, design));
-  renderQueue = task.catch(() => undefined);
-  return task;
+const renderQueue = latestRenderQueue(performRender);
+
+export async function renderDiagram(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState = createDesign(), options: { signal?: AbortSignal } = {}): Promise<RenderResult> {
+  if (options.signal?.aborted) throw renderAborted();
+  // Validate synchronously before scheduling, lazy-loading Mermaid, or reading
+  // a cache. A rejected source must never touch the rendering DOM.
+  const prepared = prepareSource(source);
+  const key = renderFingerprint(source, settings, nodeAccents, design);
+  const cached = resultCache.get(key);
+  if (cached) {
+    renderQueue.cancel();
+    return cached;
+  }
+  return renderQueue.submit(key, { source, settings, nodeAccents, design, prepared, key }, options.signal);
 }

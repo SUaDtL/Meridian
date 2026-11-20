@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useCallback, useEffect, useRef } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { EditorView } from '@codemirror/view';
@@ -42,8 +42,25 @@ const highlighting = HighlightStyle.define([
   { tag: tags.punctuation, color: '#8aabb2' },
 ]);
 
-export default function SourceEditor({ source, onChange }: { source: string; onChange: (source: string) => void }) {
-  const extensions = useMemo(() => [mermaidLanguage, syntaxHighlighting(highlighting), EditorView.lineWrapping], []);
-  return <CodeMirror value={source} height="100%" theme={editorTheme} extensions={extensions} onChange={onChange}
-    aria-label="Mermaid source code" basicSetup={{ foldGutter: false, highlightActiveLine: true, lineNumbers: true, autocompletion: false }} />;
+const extensions = [mermaidLanguage, syntaxHighlighting(highlighting), EditorView.lineWrapping];
+const basicSetup = { foldGutter: false, highlightActiveLine: true, lineNumbers: true, autocompletion: false };
+
+function SourceEditor({ source, onChange, focusRequest = 0 }: { source: string; onChange: (source: string) => void; focusRequest?: number }) {
+  const change = useRef(onChange);
+  change.current = onChange;
+  const editor = useRef<EditorView | null>(null);
+  const requestedFocus = useRef(focusRequest);
+  requestedFocus.current = focusRequest;
+  const receiveEditor = useCallback((view: EditorView) => {
+    editor.current = view;
+    if (requestedFocus.current) view.focus();
+  }, []);
+  useEffect(() => { if (focusRequest) editor.current?.focus(); }, [focusRequest]);
+  // Callback and extension identity changes reconfigure CodeMirror. Keep its
+  // state, selection, and undo history stable through unrelated studio updates.
+  const handleChange = useCallback((value: string) => change.current(value), []);
+  return <CodeMirror value={source} height="100%" theme={editorTheme} extensions={extensions} onChange={handleChange} onCreateEditor={receiveEditor}
+    aria-label="Mermaid source code" basicSetup={basicSetup} />;
 }
+
+export default memo(SourceEditor);

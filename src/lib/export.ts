@@ -1,6 +1,7 @@
 import type { RenderResult, StudioDocument } from '../types';
 import { getTheme } from './themes';
-import { createStoryboardPlayer, validateStoryboard } from './storyboard';
+import { createStoryboardRuntime, validateStoryboard } from './storyboard';
+import { downloadBlob, safeFilename } from './download';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -31,7 +32,37 @@ function wrap(value: string, max: number): string[] {
   return lines;
 }
 
-export function buildExportSvg(result: RenderResult, doc: StudioDocument, opts: { transparent?: boolean; animated?: boolean; includeFrame?: boolean } = {}): string {
+let textMeasure: CanvasRenderingContext2D | null | undefined;
+function wrapHeading(value: string, characters: number, width: number, font: string): string[] {
+  const lines = wrap(value, characters);
+  textMeasure ??= document.createElement('canvas').getContext('2d');
+  if (!textMeasure) return lines;
+  textMeasure.font = font;
+  const measured: string[] = [];
+  for (const line of lines) {
+    let remaining = line;
+    while (remaining && textMeasure.measureText(remaining).width > width) {
+      let low = 1, high = remaining.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (textMeasure.measureText(remaining.slice(0, middle)).width <= width) low = middle;
+        else high = middle - 1;
+      }
+      const space = remaining.lastIndexOf(' ', low);
+      const end = space > 0 ? space : low;
+      measured.push(remaining.slice(0, end).trimEnd());
+      remaining = remaining.slice(end).trimStart();
+    }
+    if (remaining) measured.push(remaining);
+  }
+  return measured;
+}
+
+export interface ExportFrameOptions { transparent?: boolean; animated?: boolean; includeFrame?: boolean }
+export interface ExportFrame { svg: string; width: number; height: number }
+
+/** Build framing and dimensions together so the stage never reparses the result. */
+export function buildExportFrame(result: RenderResult, doc: StudioDocument, opts: ExportFrameOptions = {}): ExportFrame {
   const source = parseSvg(result.svg);
   const xml = source.ownerDocument;
   const settings = doc.settings;
@@ -57,8 +88,9 @@ export function buildExportSvg(result: RenderResult, doc: StudioDocument, opts: 
   source.style.removeProperty('height');
   const pad = framed ? Math.max(0, Math.min(240, Number.isFinite(settings.padding) ? settings.padding : 48)) : 12;
   let width = Math.max(result.width + 2 * pad, framed && settings.showTitle ? 640 : 120);
-  const titleLines = framed && settings.showTitle ? wrap(doc.title || 'Untitled diagram', Math.max(24, Math.floor((width - 2 * pad) / 16))) : [];
-  const subtitleLines = framed && settings.showTitle && doc.subtitle ? wrap(doc.subtitle, Math.max(36, Math.floor((width - 2 * pad) / 8.5))) : [];
+  const font = settings.font === 'mono' ? 'Consolas, "Liberation Mono", monospace' : 'Arial, Helvetica, sans-serif';
+  const titleLines = framed && settings.showTitle ? wrapHeading(doc.title || 'Untitled diagram', Math.max(24, Math.floor((width - 2 * pad) / 16)), width - 2 * pad, `600 28px ${font}`) : [];
+  const subtitleLines = framed && settings.showTitle && doc.subtitle ? wrapHeading(doc.subtitle, Math.max(36, Math.floor((width - 2 * pad) / 8.5)), width - 2 * pad, `15px ${font}`) : [];
   const headingHeight = titleLines.length ? titleLines.length * 34 + subtitleLines.length * 23 + 30 : 0;
   const footerHeight = framed && settings.showBrand ? 30 : 0;
   let height = result.height + 2 * pad + headingHeight + footerHeight;
@@ -93,14 +125,13 @@ export function buildExportSvg(result: RenderResult, doc: StudioDocument, opts: 
       outer.append(element(xml, 'rect', { width, height, fill: `url(#${ambientId})` }));
     }
   }
-  const font = settings.font === 'mono' ? 'Consolas, "Liberation Mono", monospace' : 'Arial, Helvetica, sans-serif';
   if (titleLines.length) {
     titleLines.forEach((line, index) => {
-      const node = element(xml, 'text', { x: pad, y: pad + 24 + index * 34, fill: theme.text, 'font-size': 28, 'font-weight': 600, 'font-family': font });
+      const node = element(xml, 'text', { x: pad, y: pad + 24 + index * 34, fill: theme.text, 'font-size': 28, 'font-weight': 600, 'font-family': font, 'data-frame-label': 'title' });
       node.textContent = line; outer.append(node);
     });
     subtitleLines.forEach((line, index) => {
-      const node = element(xml, 'text', { x: pad, y: pad + titleLines.length * 34 + 18 + index * 23, fill: theme.muted, 'font-size': 15, 'font-family': font });
+      const node = element(xml, 'text', { x: pad, y: pad + titleLines.length * 34 + 18 + index * 23, fill: theme.muted, 'font-size': 15, 'font-family': font, 'data-frame-label': 'subtitle' });
       node.textContent = line; outer.append(node);
     });
   }
@@ -114,35 +145,33 @@ export function buildExportSvg(result: RenderResult, doc: StudioDocument, opts: 
     const brand = element(xml, 'text', { x: width - pad, y: height - pad + 4, 'text-anchor': 'end', fill: theme.muted, 'font-size': 11, 'font-family': 'Arial, Helvetica, sans-serif', 'letter-spacing': 1.8 });
     brand.textContent = 'MERIDIAN / ARBITERFORGE'; outer.append(brand);
   }
-  return new XMLSerializer().serializeToString(outer);
+  return { svg: new XMLSerializer().serializeToString(outer), width, height };
+}
+
+export function buildExportSvg(result: RenderResult, doc: StudioDocument, opts: ExportFrameOptions = {}): string {
+  return buildExportFrame(result, doc, opts).svg;
 }
 
 function filename(value: string, extension: string): string {
-  const safe = value.replace(/\.(?:svg|png|html|mmd|json)$/i, '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim().slice(0, 120) || 'meridian-diagram';
-  return `${safe}.${extension}`;
-}
-
-function download(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url; link.download = name;
-  document.body.append(link); link.click(); link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return `${safeFilename(value.replace(/\.(?:svg|png|html|mmd|json)$/i, ''))}.${extension}`;
 }
 
 export function downloadSvg(svg: string, name: string): void {
-  download(new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${svg}`], { type: 'image/svg+xml;charset=utf-8' }), filename(name, 'svg'));
+  downloadBlob(new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${svg}`], { type: 'image/svg+xml;charset=utf-8' }), filename(name, 'svg'));
 }
 
-export async function exportPng(svg: string, name: string, scale: number): Promise<{ width: number; height: number }> {
-  const parsed = parseSvg(svg);
-  const naturalWidth = parseFloat(parsed.getAttribute('width') ?? '');
-  const naturalHeight = parseFloat(parsed.getAttribute('height') ?? '');
+export function pngDimensions(naturalWidth: number, naturalHeight: number, scale: number): { width: number; height: number } {
   if (!Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight) || naturalWidth <= 0 || naturalHeight <= 0) throw new Error('The diagram does not have valid export dimensions.');
   const wantedScale = Number.isFinite(scale) ? Math.max(1, Math.min(4, scale)) : 2;
   const actualScale = Math.min(wantedScale, 8192 / naturalWidth, 8192 / naturalHeight, Math.sqrt(32_000_000 / (naturalWidth * naturalHeight)));
   const width = Math.max(1, Math.floor(naturalWidth * actualScale));
   const height = Math.max(1, Math.floor(naturalHeight * actualScale));
+  return { width, height };
+}
+
+export async function exportPng(svg: string, name: string, scale: number): Promise<{ width: number; height: number }> {
+  const parsed = parseSvg(svg);
+  const { width, height } = pngDimensions(parseFloat(parsed.getAttribute('width') ?? ''), parseFloat(parsed.getAttribute('height') ?? ''), scale);
   const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
   try {
     const image = new Image();
@@ -156,7 +185,7 @@ export async function exportPng(svg: string, name: string, scale: number): Promi
       try { canvas.toBlob((value) => value ? resolve(value) : reject(new Error('PNG export exceeded the browser memory limit. Try 1× scale.')), 'image/png'); }
       catch { reject(new Error('The browser blocked PNG export. Use a diagram without external resources.')); }
     });
-    download(blob, filename(name, 'png'));
+    downloadBlob(blob, filename(name, 'png'));
     return { width, height };
   } finally { URL.revokeObjectURL(url); }
 }
@@ -197,24 +226,23 @@ export async function buildPresentationHtml(svg: string, doc: StudioDocument): P
     const sceneOptions = story.scenes.map((scene, index) => `<option value="${index}">${index + 1}. ${escapeHtml(scene.title || `Scene ${index + 1}`)}</option>`).join('');
     // This function has no closure dependencies. Its compiled text is used so
     // TypeScript syntax cannot escape into the portable presentation.
-    const runtime = createStoryboardPlayer.toString();
+    const runtime = createStoryboardRuntime.toString();
     const script = `
-const createPlayer=(${runtime});
+const createPlayer=(${runtime})().createPlayer;
 const story=${safeScriptJson(story)};
 const accent=${safeScriptJson(theme.accent)};
 const root=document.querySelector('main>svg'),playButton=document.getElementById('play'),seekInput=document.getElementById('seek'),sceneSelect=document.getElementById('scene'),timeOutput=document.getElementById('time'),sceneTitle=document.getElementById('scene-title');
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 function stamp(value){const seconds=Math.max(0,Math.floor(value));return Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')}
-function update(state){playButton.textContent=state.playing?'Pause':'Play';playButton.setAttribute('aria-label',state.playing?'Pause presentation':'Play presentation');seekInput.max=String(state.duration);seekInput.value=String(state.time);seekInput.setAttribute('aria-valuetext',stamp(state.time)+' of '+stamp(state.duration));timeOutput.textContent=stamp(state.time)+' / '+stamp(state.duration);sceneSelect.value=String(state.sceneIndex);const scene=story.scenes[state.sceneIndex];sceneTitle.textContent=scene?scene.title:'';document.getElementById('previous').disabled=state.sceneIndex<=0;document.getElementById('next').disabled=state.sceneIndex>=story.scenes.length-1}
-const player=createPlayer(root,story,{accent,reducedMotion:reduced.matches,onUpdate:update});
+function update(state){playButton.textContent=state.playing?'Pause':'Play';playButton.setAttribute('aria-label',state.playing?'Pause presentation':'Play presentation');seekInput.max=String(state.duration);seekInput.value=String(state.time);seekInput.setAttribute('aria-valuetext',state.preview?'Preview of scene '+(state.sceneIndex+1):stamp(state.time)+' of '+stamp(state.duration));timeOutput.textContent=state.preview?'Scene '+(state.sceneIndex+1)+' / '+story.scenes.length+' · Preview':stamp(state.time)+' / '+stamp(state.duration);sceneSelect.value=String(state.sceneIndex);const scene=story.scenes[state.sceneIndex];sceneTitle.textContent=scene?scene.title:'';document.getElementById('previous').disabled=state.sceneIndex<=0;document.getElementById('next').disabled=state.sceneIndex>=story.scenes.length-1}
+const player=createPlayer(root,story,{accent,reducedMotion:reduced.matches,initialPreview:0,onUpdate:update});
 reduced.addEventListener('change',event=>player.setReducedMotion(event.matches));
 function toggle(){if(player.getState().playing)player.pause();else player.play()}
 async function fullscreen(){try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{document.getElementById('status').textContent='Fullscreen is unavailable in this browser.'}}
 playButton.addEventListener('click',toggle);document.getElementById('previous').addEventListener('click',()=>player.previous());document.getElementById('next').addEventListener('click',()=>player.next());document.getElementById('replay').addEventListener('click',()=>player.restart());document.getElementById('fullscreen').addEventListener('click',fullscreen);
 // Capture user input before pause synchronously reports the previous playhead.
-seekInput.addEventListener('input',()=>{const requestedTime=Number(seekInput.value);player.pause();player.seek(requestedTime)});sceneSelect.addEventListener('change',()=>{const requestedTime=story.scenes.slice(0,Number(sceneSelect.value)).reduce((sum,scene)=>sum+scene.duration,0);player.pause();player.seek(requestedTime)});document.getElementById('loop').addEventListener('change',event=>{story.loop=event.target.checked});
+seekInput.addEventListener('input',()=>{const requestedTime=Number(seekInput.value);player.pause();player.seek(requestedTime)});sceneSelect.addEventListener('change',()=>{const requestedIndex=Number(sceneSelect.value);player.preview(requestedIndex)});document.getElementById('loop').addEventListener('change',event=>{story.loop=event.target.checked});
 document.addEventListener('keydown',event=>{if(event.target.closest('input,select,textarea,button,[contenteditable]'))return;if(event.code==='Space'){event.preventDefault();toggle()}else if(event.key==='ArrowRight'){event.preventDefault();player.next()}else if(event.key==='ArrowLeft'){event.preventDefault();player.previous()}else if(event.key.toLowerCase()==='r'){event.preventDefault();player.restart()}else if(event.key.toLowerCase()==='f'){event.preventDefault();fullscreen()}});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)player.pause()});
 `;
     html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(doc.title)} · Meridian</title>
@@ -233,5 +261,5 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)player.paus
 
 export async function exportPresentation(svg: string, doc: StudioDocument): Promise<void> {
   const html = await buildPresentationHtml(svg, doc);
-  download(new Blob([html], { type: 'text/html;charset=utf-8' }), filename(doc.title, 'html'));
+  downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), filename(doc.title, 'html'));
 }

@@ -3,6 +3,7 @@ import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
 import { THEMES } from '../../src/lib/themes';
 import { TEMPLATES } from '../../src/lib/templates';
+import { openExample } from './helpers';
 
 const DRAWING = '[data-testid="rendered-diagram"] svg[data-meridian="diagram"]';
 const LEGACY_URL = process.env.PLAYWRIGHT_REFERENCE_URL || 'http://127.0.0.1:4174';
@@ -58,7 +59,7 @@ test('all six themes retain their published visual appearance', async ({ page, b
   try {
     const reference = await context.newPage();
     await page.goto('/'); await reference.goto(LEGACY_URL);
-    await ready(page); await ready(reference);
+    await openExample(page); await ready(reference);
     for (const theme of THEMES) {
       await test.step(theme.name, async () => {
         await selectTheme(page, theme.name); await selectTheme(reference, theme.name);
@@ -75,14 +76,13 @@ test('every diagram family retains its published geometry and rendering', async 
   try {
     const reference = await context.newPage();
     await page.goto('/'); await reference.goto(LEGACY_URL);
-    await ready(page); await ready(reference);
+    await openExample(page); await ready(reference);
     for (const template of TEMPLATES) {
       await test.step(template.title, async () => {
         for (const target of [page, reference]) {
-          const previous = await target.locator(DRAWING).getAttribute('id');
           await target.getByRole('button', { name: 'Examples', exact: true }).click();
           await target.locator('.example-card').filter({ has: target.getByRole('heading', { name: template.title, exact: true }) }).click();
-          await expect.poll(() => target.locator(DRAWING).getAttribute('id').catch(() => null)).not.toBe(previous);
+          await expect(target.getByRole('dialog')).toHaveCount(0);
           await ready(target);
         }
         await comparePictures(page, reference, `family-${template.id}`);

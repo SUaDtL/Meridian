@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyStoryboard, createScene, duplicateScene, expandStorySelection, sceneStartTime, storyboardDuration, validateStoryboard } from './storyboard';
+import { createEmptyStoryboard, createScene, duplicateScene, expandStorySelection, missingStoryTargets, removeMissingStoryTargets, restoreMissingStoryTargets, sceneStartTime, storyboardDuration, validateStoryboard } from './storyboard';
 import type { RenderElement } from '../types/design';
 
 describe('portable storyboard boundary', () => {
@@ -74,6 +74,36 @@ describe('portable storyboard boundary', () => {
     expect(() => validateStoryboard({ version: 99, loop: false, scenes: [] })).toThrow(/version/);
     expect(() => validateStoryboard({ version: 1, loop: 'false', scenes: [] })).toThrow(/true or false/);
     expect(() => validateStoryboard({ version: 1, loop: false, scenes: Array.from({ length: 51 }, (_, index) => createScene(index)) })).toThrow(/50/);
+  });
+
+  it('reports missing targets once and removes them only through explicit reconciliation', () => {
+    const scene = createScene();
+    scene.visible = ['node:a', 'node:removed'];
+    scene.highlight = ['node:removed'];
+    scene.flow = ['edge:removed'];
+    scene.camera.keys = ['node:a', 'node:removed'];
+    const available = new Set(['node:a', 'node:b']);
+    const missing = missingStoryTargets(scene, available);
+    expect(missing.keys).toEqual(['node:removed', 'edge:removed']);
+    const cleaned = removeMissingStoryTargets(scene, available);
+    expect(cleaned.visible).toEqual(['node:a']);
+    expect(cleaned.highlight).toEqual([]);
+    expect(cleaned.flow).toEqual([]);
+    expect(cleaned.camera.keys).toEqual(['node:a']);
+    expect(scene.visible).toContain('node:removed');
+    expect(scene.flow).toEqual(['edge:removed']);
+  });
+
+  it('undoes missing-target removal without discarding later target additions', () => {
+    const scene = createScene(); scene.visible = ['node:a', 'node:removed']; scene.highlight = ['node:removed'];
+    const available = new Set(['node:a', 'node:b']);
+    const missing = missingStoryTargets(scene, available);
+    const cleaned = removeMissingStoryTargets(scene, available);
+    cleaned.visible!.push('node:b'); cleaned.highlight = ['node:b'];
+    const restored = restoreMissingStoryTargets(cleaned, missing);
+    expect(restored.visible).toEqual(['node:a', 'node:b', 'node:removed']);
+    expect(restored.highlight).toEqual(['node:b', 'node:removed']);
+    expect(restoreMissingStoryTargets({ ...cleaned, visible: null }, missing).visible).toBeNull();
   });
 
   it('rejects prototype fields at every structural level', () => {

@@ -13,6 +13,6 @@ export default defineConfig({
       return html.replace("script-src 'self';", "script-src 'self' 'unsafe-inline';").replace("connect-src 'self';", "connect-src 'self' ws: wss:;");
     },
   }],
-  build: { target: 'es2022', chunkSizeWarningLimit: 1800 },
+  build: { target: 'es2022', chunkSizeWarningLimit: 1800, manifest: true, modulePreload: false },
   server: { allowedHosts: true },
 });

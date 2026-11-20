@@ -7,6 +7,8 @@ This is the independent repository **SUaDtL/Meridian**. Its GitHub Pages workflo
 ## Features
 
 - React and TypeScript studio using pinned Mermaid 12.3.0.
+- A welcome screen with an empty-canvas start, searchable examples, file import, and recent-project continuation.
+- Direct canvas heading editing and bounded session undo/redo for source, design, headings, and scenes.
 - Live source editing with last-known-good recovery when syntax is incomplete.
 - Ten examples, six themes, node accents and spotlight, layout controls, pan/zoom, presentation mode, and replay.
 - Browser-local projects, autosave, `.mmd` import, and portable `.meridian.json` project files.
@@ -25,7 +27,7 @@ Projects now use `meridian/v2`. Version 1 files and the existing browser workspa
 
 ## Presentation storyboard
 
-Open **Storyboard** in the toolbar, or **Story** on mobile. Create a scene, choose its visible elements, and duplicate it to reveal more of the diagram in the next scene. Add a spotlight, choose the connectors that should show flow, and set a camera region. Arrange the scenes and adjust their duration, transition time, and easing.
+Open **Storyboard** in the side panel, or **Story** on mobile. Create a scene, choose its visible elements, and duplicate it to reveal more of the diagram in the next scene. Add a spotlight, choose the connectors that should show flow, and set a camera region. Arrange the scenes and adjust their duration, transition time, and easing. Selecting a scene shows its settled composition; playing shows the entrance transition. Timing fields commit on blur or Enter and cancel with Escape.
 
 The playhead previews the exact sequence; scrubbing pauses playback. **Present** plays the storyboard with the editing panels hidden. **Export → HTML** creates a self-contained presentation using the same playback engine, with previous/next scene, replay, timeline, loop, and fullscreen controls. Reduced-motion preferences suppress camera interpolation and moving flow while retaining the scene content and controls.
 
@@ -50,11 +52,13 @@ npm run verify:legacy
 npm test
 npm run build:pages
 npm run verify:artifact
+npm run build:standalone
+npm run verify:standalone
 npx playwright install --with-deps chromium
 npm run test:browser
 ```
 
-`npm run build:pages` typechecks the project, compiles from source, embeds the app and dependency notices into a single HTML file, and stages `site/index.html` with a checksum receipt. The browser suite tests this exact production artifact. It covers examples, error recovery, persistence, actual imports/downloads, presentation controls, mobile panels, reduced motion, and visual comparisons against the archived published application.
+`npm run build:pages` typechecks and compiles a split static site from source. The welcome screen loads a small entry bundle; the studio, editor, and Mermaid renderers load when needed. `site/build.json` records every published file's size and SHA-256 plus the initial dependency graph. The browser suite tests this exact production artifact, including onboarding, heading edits, undo, persistence and recovery, actual imports/downloads, presentation controls, mobile panels, performance work counts, and visual comparisons against the archived application. The separate standalone build is also tested without network access.
 
 Additional builds:
 
@@ -62,7 +66,7 @@ Additional builds:
 | --- | --- | --- |
 | `npm run build` | `dist/` | Standard Vite build with relative asset URLs |
 | `npm run build:standalone` | `standalone/Meridian.html` | Portable application in one HTML file |
-| `npm run build:pages` | `site/` | Exact standalone artifact used by GitHub Pages |
+| `npm run build:pages` | `site/` | Split hosted application with hashed local assets and an integrity receipt |
 | `npm run test:visual` | Browser report attachments | Published-reference comparisons across themes and diagram types |
 
 ## Source recovery and regression reference
@@ -75,4 +79,6 @@ The eight historical bundle pieces remain a frozen regression reference. Their o
 
 The workflow validates pull requests and deploys only a successful push or manual dispatch on `main`. The deploy job receives the exact artifact that passed verification; it does not rebuild it. GitHub Pages must use **GitHub Actions** as its source. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
-The preview remains `noindex`. There is no `CNAME` or custom-domain automation. The exported application has a restrictive Content Security Policy, an exact SHA-256 authorization for its inline module, and no runtime network connections. Autosaves remain in the visitor's browser.
+The preview remains `noindex`. There is no `CNAME` or custom-domain automation. Hosted code loads only from this site's local assets; the Content Security Policy disallows runtime data connections. The optional portable application instead authorizes its embedded module with an exact SHA-256 hash. Autosaves remain in the visitor's browser.
+
+See [the usability pass](docs/USABILITY.md) for workflow decisions and [performance evidence](docs/PERFORMANCE.md) for loading boundaries, caching, cancellation, and verification.

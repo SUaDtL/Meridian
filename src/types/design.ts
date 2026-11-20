@@ -25,6 +25,19 @@ export interface DesignState {
   elements: Record<string, ElementStyle>;
 }
 
+/** Read from the mounted SVG, so inspector values reflect source styles too. */
+export interface RenderedAppearance {
+  fill?: string;
+  fillKind?: 'solid' | 'gradient' | 'none';
+  color?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  lineStyle?: ElementStyle['lineStyle'];
+  fontSize?: number;
+  fontFamily?: string;
+  fontWeight?: string;
+}
+
 export interface RenderElement {
   /** Stable source-based identity, independent of Mermaid's per-render SVG IDs. */
   key: string;
@@ -32,6 +45,7 @@ export interface RenderElement {
   sourceId: string;
   label: string;
   capabilities: ElementCapability[];
+  appearance?: RenderedAppearance;
   /** Keys in this collection, useful for scoped presentation scenes. */
   members?: string[];
   parentKey?: string;

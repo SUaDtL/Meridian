@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Script } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { buildPresentationHtml } from './export';
+import { buildPresentationHtml, pngDimensions } from './export';
 import { createDocument } from './storage';
 import { createScene } from './storyboard';
 
@@ -19,6 +19,15 @@ function verifyScript(html: string) {
 }
 
 describe('self-contained presentation export', () => {
+  it('uses the same exact PNG dimensions for previews and downloads within browser limits', () => {
+    expect(pngDimensions(640, 360, 2)).toEqual({ width: 1280, height: 720 });
+    expect(pngDimensions(10_000, 100, 4)).toEqual({ width: 8192, height: 81 });
+    const square = pngDimensions(10_000, 10_000, 4);
+    expect(square.width).toBe(square.height);
+    expect(square.width * square.height).toBeLessThanOrEqual(32_000_000);
+    expect(pngDimensions(640, 360, NaN)).toEqual({ width: 1280, height: 720 });
+    expect(() => pngDimensions(0, 360, 2)).toThrow(/dimensions/);
+  });
   it('retains the legacy playback controls for a diagram without scenes', async () => {
     const html = await buildPresentationHtml(SVG, createDocument());
     verifyScript(html);

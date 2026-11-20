@@ -1,0 +1,182 @@
+# Rendering and loading performance
+
+This document describes the usability overhaul in the independent
+`SUaDtL/Meridian` repository. Performance is evaluated as observable work and
+downloaded bytes. It does not equate smaller bundles with a measured page-load
+time, or fewer layouts with a guaranteed frame rate on every device.
+
+## Baseline and measured build output
+
+The preceding release, commit
+`c4e7468d626b719bc8203f2fe4cd7870abd8da13`, served a self-contained application of
+6,845,074 bytes. Its SHA-256 was
+`67b377181dd21d13612e39bf97aa78caeb0a9984cd429a60637747267d7246d4`.
+Every visit downloaded all diagram renderers, the code editor, application code,
+styles, and dependency notices in that HTML file.
+
+The [initial production CI measurement](https://github.com/SUaDtL/Meridian/actions/runs/44677231584)
+for PR head `db45fbe06c18070b2e92d1d48a573ab6417c3409` measured 335,861
+uncompressed bytes in the welcome dependency graph, including HTML, CSS,
+JavaScript, and the favicon. That is 95.09% fewer initial bytes than the preceding
+single-file release. The complete split site contained 106 verified files and
+6,845,005 bytes; splitting defers work rather than claiming to remove every
+diagram capability from the application.
+
+The browser actually loaded three JavaScript files whose published uncompressed
+sizes totaled **281,368 bytes**, out of **5,994,358 JavaScript bytes** in the full
+site: **4.69%**. The welcome page initialized neither Mermaid layout nor the code
+editor. The browser's requested asset paths were matched to the verified build
+inventory; these numbers describe uncompressed asset content, not compressed
+network transfer size, elapsed loading time, or end-user frame rate.
+
+A subsequent local build with notification refinements measured 336,880 initial
+bytes, retaining approximately the same 95.1% reduction. The release's exact
+values are recorded in its generated `build.json`; measurements in this document
+identify their build rather than presenting a development snapshot as final
+deployed bytes.
+
+The hosted build and the portable build serve different purposes:
+
+| Output | Loading behavior | Integrity evidence |
+| --- | --- | --- |
+| `site/` | Lightweight welcome; studio, editor, export UI, and Mermaid diagram families load when needed | Every published file has a byte count and SHA-256 in `build.json`; the initial static dependency graph is listed separately |
+| `standalone/Meridian.html` | One complete application file for use without a server | Exactly one embedded module with its exact CSP script hash; no external application assets |
+| Exported presentation HTML | The diagram and its presentation runtime, without the full authoring app | Existing portable presentation tests exercise offline rendering, navigation, and reduced motion |
+
+Hosted JavaScript and styles are content-named local assets. The hosted CSP allows
+local module scripts, rejects inline application scripts, and sets
+`connect-src 'none'`. The standalone CSP still authorizes only its exact embedded
+script hash. The original archived bundle and its original checksum are unchanged.
+
+## Render work is split by what changed
+
+| Change | Required work |
+| --- | --- |
+| Title, subtitle, frame ratio, padding, background, ambient light, heading/signature visibility | Rebuild the lightweight export frame; do not invoke the diagram renderer |
+| Motion mode/speed, surface finish, shadows/glow, connector weight, accent colors, decorative element styles | Clone a cached, sanitized Mermaid layout and apply current decoration |
+| Mermaid source, native theme, layout engine, line shape, spacing, base font, element shape/typography/routing | Run Mermaid layout, then decorate |
+| Return to a recently rendered combination | Reuse the complete cached result |
+| Storyboard scene names, timing, visibility, camera targets, or playback progress | Update the presentation engine; keep the framed SVG DOM in place |
+| Canvas selection or spotlight | Update cached DOM targets using source-key maps |
+
+The invalidation functions are explicit and tested. A native Mermaid theme
+remains a layout input because different diagram families embed their appearance
+in native SVG output. The optimization does not attempt to recolor arbitrary
+renderer internals or change published geometry.
+
+### Latest-only scheduling
+
+Mermaid uses global configuration. The scheduler therefore allows one executing
+render and at most one waiting request. A newer request rejects superseded
+consumers with `AbortError` and replaces the waiting request. A running Mermaid
+layout cannot be interrupted safely; it finishes its current asynchronous call,
+then cancellation prevents the remaining decoration and measurement work. The
+next layout starts only after the previous call has settled.
+
+The scheduling regression submits one running request, 25 superseded edits, and
+one final edit. It verifies that only the first and final tasks execute, maximum
+concurrency is one, all superseded promises settle, shared consumers can cancel
+independently, and a parse failure does not poison subsequent requests.
+
+### Bounded reuse
+
+Layout snapshots have an LRU limit of six entries and an estimated 8 MiB byte budget.
+Complete results have eight entries and an estimated 12 MiB budget. Source-bearing keys and
+SVG strings count toward the budgets; oversized entries are not cached. The
+Mermaid parser's mutable flowchart database is copied before caching, so another
+diagram cannot change a retained model. Each decoration starts from a sanitized
+snapshot, rather than accumulating changes on a previous decorated SVG.
+
+### Stage and editor
+
+Framing returns SVG and dimensions together, eliminating a second XML parse.
+Frame memoization depends only on the fields used by the frame builder, so scene
+metadata and playback notifications do not rebuild it. Selection indexes and
+cached DOM target lists replace repeated array searches and selector scans.
+
+The stage keeps a synchronous camera for pointer calculations and commits React
+camera state at most once per animation frame. Pinch gestures reuse viewport
+geometry until scrolling or resizing invalidates it. Entering presentation fits
+the presentation view; leaving restores the editing camera and fitted state for
+the same project.
+
+The source editor has stable CodeMirror extensions, setup, and callback bridges.
+An explicit focus request reaches its `EditorView` even if the editor finishes
+lazy loading after the request. Unrelated studio updates do not recreate its
+configuration or discard editing history.
+
+## Verification
+
+The production browser suite measures actual hosted behavior through
+`tests/browser/performance.spec.ts`. It instruments SVG parsing and temporary
+renderer hosts in the test page, without adding analytics or a public diagnostics
+API to the app. It checks:
+
+- The welcome screen downloads only its entry graph, initializes neither a
+  Mermaid layout nor CodeMirror, loads under 500,000 uncompressed JavaScript
+  bytes, and uses less than 15% of the site's total JavaScript.
+- Direct heading edits and framing changes cause no new renderer invocation.
+- Changing motion causes one decoration pass and no Mermaid layout; returning
+  to the previous style causes neither pass.
+- Scene edits and playback do not parse another SVG or replace the diagram DOM.
+- The standalone authoring app opens through a `file:` URL and renders while
+  all HTTP requests are blocked.
+
+Each performance test attaches its counters or payload inventory to the browser
+report. The existing six-theme and ten-example comparisons still compare the
+production artifact with the immutable published reference in the same browser.
+
+### Observed production-browser work
+
+All four performance tests and both visual comparison suites passed in the
+initial CI measurement above. Its attached `render-work-counts` and
+`storyboard-work-counts` record the following work. Counts in the last three
+columns are additional work caused by that action, not cumulative totals.
+
+| Browser action | New Mermaid layouts | New decoration passes | New SVG parses |
+| --- | ---: | ---: | ---: |
+| Initial example render | 1 | Included in the layout pass | 2 |
+| Edit title and subtitle on the stage | 0 | 0 | 1 |
+| Change frame ratio | 0 | 0 | 1 |
+| Change connector effect from Flow to Pulse | 0 | 1 | 2 |
+| Return from Pulse to the cached Flow result | 0 | 0 | 1 |
+| Edit storyboard scene metadata and play/pause | 0 | 0 | 0 |
+
+Heading and framing changes still prepare a new frame. Motion changes still
+apply decoration and prepare that frame. The evidence demonstrates that those
+actions avoid expensive Mermaid layout; it does not describe them as doing no
+work. Storyboard editing and playback kept the exact same diagram DOM element,
+with cumulative counts unchanged at one layout, zero separate decoration passes,
+and two SVG parses. The same browser test verified that presentation restored a
+manually panned editing camera.
+
+The offline application test opened `standalone/Meridian.html` through a `file:`
+URL and rendered an example with all HTTP requests blocked. All six theme
+comparisons and all ten example comparisons stayed within the existing 0.2%
+changed-pixel limit against the archived reference, using the same browser and
+fonts for each pair.
+
+These are specific passed checks, not an assertion that the initial workflow was
+ready to release: that run passed 25 of 29 browser tests, with four design and
+storyboard functional checks requiring follow-up. The full workflow must be green before
+merging and deploying.
+
+Run the gates with:
+
+```sh
+npm test
+npm run verify:legacy
+npm run build:pages
+npm run verify:artifact
+npm run build:standalone
+npm run verify:standalone
+npm run test:browser
+```
+
+Local unit, hosted-build, portable-build, and static integrity gates passed during
+implementation. The measured CI run also passed all 81 unit tests. This managed
+workspace cannot launch Chromium: it fails before page creation with
+`socket() failed: Operation not permitted` in Chromium's process singleton, so
+the browser measurements above came from GitHub CI. CI installs the browser
+pinned by Playwright and deploys the exact verified `site/` artifact without
+rebuilding it after the complete workflow passes.

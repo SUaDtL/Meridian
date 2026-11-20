@@ -24,7 +24,9 @@ structure.
 
 | Layer | Responsibility |
 | --- | --- |
-| React studio | Source editing, active document, controls, dialogs, keyboard actions, viewport |
+| Application entry and welcome | Explicit scratch/example/import choice, recent projects, project management, lazy studio loading |
+| React studio | Source editing, controls, dialogs, keyboard actions, viewport, presentation coordination |
+| Workspace reducer and persistence hook | Atomic document patches, bounded/coalesced undo, dirty-only autosave, cross-tab conflict protection |
 | Mermaid | Grammar, diagram type, graph layout, standard shapes, labels, semantic relationships |
 | SVG adapter | Theme treatments, framing, supported node/edge styling, optional motion |
 | Storyboard | Versioned scene data, deterministic reveals/spotlight/flow, camera regions, timeline playback |
@@ -121,8 +123,8 @@ schema migration should read, validate, and preserve old data before replacing i
 
 ## Storyboard runtime and identities
 
-`src/lib/storyboard.ts` contains both pure validation/timeline helpers and the
-self-contained `createStoryboardPlayer` DOM runtime. The studio attaches the
+`src/lib/storyboard.ts` contains pure validation/timeline helpers and re-exports
+the self-contained `createStoryboardPlayer` DOM runtime from `storyboard-runtime.ts`. The studio attaches the
 player to the framed SVG only while previewing or presenting. It evaluates the
 scene at a specific time, changes element opacity and flow overlays, and animates
 the SVG viewBox between measured regions. It does not move the underlying nodes
@@ -132,7 +134,7 @@ captured styles, accessibility attributes, and original viewBox.
 The export module serializes that same compiled function into a portable HTML
 presentation and authorizes its exact bytes with a SHA-256 CSP hash. It escapes
 all scene titles and JSON data. The exported document needs no renderer, editor,
-remote assets, or network connections. The production browser suite opens the
+remote assets, or network connections. Scene plans, target indexes, and final states are cached when the player is created; static styles are not rewritten on every animation frame. The production browser suite opens the
 actual downloaded HTML in an offline context to test this boundary after bundling.
 
 Element references use canonical node, group, and edge keys supplied by the
@@ -180,3 +182,9 @@ separate approval.
 
 Exact acceptance results for this build belong in the validation report, not in
 architectural promises.
+
+## Render invalidation and loading
+
+`useDiagram` debounces source updates, aborts superseded consumers, and retains the last valid diagram after a parse failure. The renderer separates layout inputs from decorative inputs and document framing. A latest-only queue protects Mermaid's global configuration; bounded LRU caches hold sanitized layout snapshots and complete results. Heading and frame edits do not call the diagram renderer. Scene edits and playback keep the existing framed SVG DOM. See [PERFORMANCE.md](PERFORMANCE.md) for exact cache budgets and observable-work tests.
+
+The hosted entry does not import the diagram engine or code editor. The studio, source editor, export UI, and Mermaid families use lazy local chunks. The optional portable build folds those same sources into one application file. Both outputs are validated independently; the historical bundle remains immutable.

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Download, type Page } from '@playwright/test';
 import { TEMPLATES } from '../../src/lib/templates';
+import { continueProject, openExample } from './helpers';
 
 const DRAWING = '[data-testid="rendered-diagram"] svg[data-meridian="diagram"]';
 const SIMPLE_SOURCE = 'flowchart LR\n    alpha[Client] --> beta[Gateway]\n    beta --> gamma[(Store)]';
@@ -31,18 +32,17 @@ test.beforeEach(async ({ page }) => {
   // Each test starts in an isolated Playwright context, so it cannot alter a
   // developer's existing projects or rely on prior browser-local workspace data.
   await page.goto('/');
-  await ready(page);
+  await openExample(page);
 });
 
 test('every shipped example renders a dimensioned, safe SVG; flowchart nodes remain selectable', async ({ page }) => {
   test.setTimeout(120_000);
   for (const template of TEMPLATES) {
     await test.step(template.title, async () => {
-      const previous = await renderId(page);
       await page.getByRole('button', { name: 'Examples', exact: true }).click();
       await page.locator('.example-card').filter({ has: page.getByRole('heading', { name: template.title, exact: true }) }).click();
       await expect(page.getByRole('dialog')).toHaveCount(0);
-      await expect.poll(async () => page.locator(DRAWING).getAttribute('id').catch(() => null)).not.toBe(previous);
+      await expect(page.locator('.heading-button')).toContainText(template.title);
       await ready(page);
       const geometry = await page.locator('[data-meridian-export]').evaluate((svg) => ({
         width: Number(svg.getAttribute('width')),
@@ -97,6 +97,7 @@ test('source and selected theme survive an actual page reload', async ({ page })
   await expect(page.getByRole('button', { name: 'Porcelain', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.saved-state')).toHaveText('Saved locally');
   await page.reload();
+  await continueProject(page);
   await ready(page);
   await expect(page.locator('.cm-content')).toContainText('alpha[Client]');
   await expect(page.locator(`${DRAWING} [data-node-key="alpha"]`)).toBeVisible();
@@ -197,6 +198,7 @@ test('mobile panels and reduced-motion presentation remain usable', async ({ pag
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.reload();
+  await continueProject(page);
   await ready(page);
   await expect(page.locator('body')).toHaveJSProperty('scrollWidth', 390);
   await page.getByRole('button', { name: 'Source', exact: true }).click();

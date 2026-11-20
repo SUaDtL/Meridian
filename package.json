@@ -16,10 +16,11 @@
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run src",
     "test:browser": "playwright test",
-    "build:pages": "npm run build:standalone && node scripts/stage-pages.mjs",
+    "build:pages": "npm run build && node scripts/stage-pages.mjs",
     "typecheck": "tsc -b",
     "verify:legacy": "python3 scripts/assemble.py && python3 tests/validate.py",
     "verify:artifact": "python3 tests/validate.py --artifact site/index.html",
+    "verify:standalone": "python3 tests/validate.py --artifact standalone/Meridian.html --standalone",
     "test:visual": "playwright test visual.spec.ts"
   },
   "dependencies": {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyDesignPreset, createDesign, designRenderSource, DESIGN_PRESETS, edgeIdentities, suggestedLayout, validateDesign, type FlowModel } from './design';
+import { applyDesignPreset, colorToHex, createDesign, designRenderSource, DESIGN_PRESETS, edgeIdentities, matchesDesignPreset, patchElementStyle, suggestedLayout, suggestedNodeFills, validateDesign, type FlowModel } from './design';
+import { DEFAULT_SETTINGS, THEMES } from './themes';
 import type { RenderElement } from '../types/design';
 
 const model: FlowModel = {
@@ -24,6 +25,37 @@ describe('persistent design model', () => {
     expect(next.design.elements['node:A']).toEqual(design.elements['node:A']);
     expect(next.design.elements).not.toBe(design.elements);
   });
+  it('preserves heading visibility, signature, and chosen playback speed when applying a preset', () => {
+    const result = applyDesignPreset({ design: createDesign(), settings: { ...DEFAULT_SETTINGS, showTitle: false, showBrand: true, speed: 2.5 } }, 'minimal');
+    expect(result.settings).toMatchObject({ showTitle: false, showBrand: true, speed: 2.5, theme: 'porcelain', shadow: false });
+  });
+  it('marks a retained base preset as modified only when one of its controlled settings differs', () => {
+    const { settings, design } = applyDesignPreset({ design: createDesign() }, 'infrastructure');
+    expect(matchesDesignPreset(settings, design.preset)).toBe(true);
+    expect(matchesDesignPreset({ ...settings, frame: '16:9' }, design.preset)).toBe(false);
+    expect(matchesDesignPreset({ ...settings, motion: 'none' }, design.preset)).toBe(false);
+    expect(matchesDesignPreset({ ...settings, theme: 'porcelain' }, design.preset)).toBe(false);
+    expect(matchesDesignPreset({ ...settings, showTitle: false, showBrand: true, speed: 2 }, design.preset)).toBe(true);
+    expect(design.preset).toBe('infrastructure');
+    expect(matchesDesignPreset(settings, 'custom')).toBe(false);
+  });
+  it('resets one property independently and removes the final empty style entry', () => {
+    const original = createDesign();
+    original.elements['node:A'] = { fill: '#24686b', fontSize: 18, strokeWidth: 1.6 };
+    const next = patchElementStyle(original, 'node:A', { fontSize: undefined });
+    expect(next.elements['node:A']).toEqual({ fill: '#24686b', strokeWidth: 1.6 });
+    expect(original.elements['node:A'].fontSize).toBe(18);
+    const cleared = patchElementStyle(next, 'node:A', { fill: undefined, strokeWidth: undefined });
+    expect(cleared.elements).toEqual({});
+  });
+  it('does not add no-op styles and represents normal emphasis and source arrows as inheritance', () => {
+    const design = createDesign();
+    expect(patchElementStyle(design, 'node:A', { fill: undefined })).toBe(design);
+    expect(patchElementStyle(design, 'node:A', { emphasis: 'normal' })).toBe(design);
+    const changed = patchElementStyle(design, 'edge:A', { arrowhead: 'both', strokeWidth: 1.6 });
+    expect(patchElementStyle(changed, 'edge:A', { arrowhead: 'source' }).elements['edge:A']).toEqual({ strokeWidth: 1.6 });
+    expect(patchElementStyle(changed, 'edge:A', { strokeWidth: 1.6 })).toBe(changed);
+  });
   it.each([
     { fill: 'url(https://example.com)' }, { font: 'Arial; background:red' },
     { fontSize: 10000 }, { strokeWidth: 0 }, { glow: 'false' }, { unknown: true },
@@ -33,8 +65,27 @@ describe('persistent design model', () => {
   it('rejects prototype names, malformed keys, unknown presets and excessive sidecars', () => {
     expect(() => validateDesign(JSON.parse('{"preset":"custom","elements":{"__proto__":{"fill":"#ffffff"}}}'))).toThrow();
     expect(() => validateDesign({ preset: 'custom', elements: { 'not-an-element': {} } })).toThrow();
+    expect(() => validateDesign({ preset: 'custom', elements: { 'node:': {} } })).toThrow();
     expect(() => validateDesign({ preset: 'alien', elements: {} })).toThrow();
     expect(() => validateDesign({ preset: 'custom', elements: Object.fromEntries(Array.from({ length: 2001 }, (_, i) => [`node:${i}`, {}])) })).toThrow();
+  });
+  it('converts rendered solid colors accurately without treating gradients or transparency as solid hex', () => {
+    expect(colorToHex('rgb(36, 104, 107)')).toBe('#24686b');
+    expect(colorToHex('rgb(36 104 107)')).toBe('#24686b');
+    expect(colorToHex('#AbC')).toBe('#aabbcc');
+    expect(colorToHex('rgba(36, 104, 107, 0.5)')).toBeUndefined();
+    expect(colorToHex('url(#surface)')).toBeUndefined();
+    expect(colorToHex('not a color')).toBeUndefined();
+  });
+  it('offers quick fills with readable contrast against every theme’s default text', () => {
+    const luminance = (hex: string) => [1, 3, 5].map(index => {
+      const channel = Number.parseInt(hex.slice(index, index + 2), 16) / 255;
+      return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+    }).reduce((sum, channel, index) => sum + channel * [.2126, .7152, .0722][index], 0);
+    for (const theme of THEMES) for (const fill of suggestedNodeFills(theme)) {
+      const foreground = luminance(theme.text), background = luminance(fill);
+      expect((Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 
@@ -62,6 +113,12 @@ describe('source-safe identity and layout overrides', () => {
   it('does not add missing nodes for stale styles or reinterpret punctuation as Mermaid commands', () => {
     const design = createDesign(); design.elements['node:missing'] = { shape: 'circle' }; design.elements['node:A;X-->Y'] = { fontSize: 40 };
     expect(designRenderSource('flowchart LR\nA-->B', design, model)).toBe('flowchart LR\nA-->B');
+  });
+  it('keeps authored group colors and border styles when measuring a typography override', () => {
+    const grouped = { ...model, vertices: new Map([...model.vertices, ['network', { id: 'network', styles: ['fill:#123456', 'stroke:#aabbcc', 'stroke-width:2.3px'] }]]) };
+    const design = createDesign(); design.elements['group:network'] = { fontSize: 22 };
+    const source = 'flowchart LR\nsubgraph network[Network]\n A-->B\nend\nstyle network fill:#123456,stroke:#aabbcc,stroke-width:2.3px';
+    expect(designRenderSource(source, design, grouped)).toContain('style network fill:#123456,stroke:#aabbcc,stroke-width:2.3px,font-size:22px');
   });
   it('chooses routes around grouped graphs and generous spacing for simple flows', () => {
     expect(suggestedLayout([])).toEqual({ layout: 'dagre', spacing: 'airy', curve: 'basis' });
