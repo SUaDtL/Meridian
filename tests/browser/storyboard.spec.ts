@@ -103,6 +103,8 @@ test('preview, timeline, camera, flow and portable HTML use the same offline pla
   await expect(page.locator(NODE('gateway'))).toHaveCSS('opacity', '0');
   await expect(page.locator(NODE('gateway'))).toHaveAttribute('tabindex', '-1');
   await expect(page.locator(NODE('client'))).toHaveAttribute('tabindex', '-1');
+  await page.locator(NODE('client')).click();
+  await expect(page.locator('.selection-toolbar')).toHaveCount(0);
   await panel.getByLabel('Storyboard playhead', { exact: true }).focus();
   await page.keyboard.press('End');
   await expect(page.locator(FRAME)).toHaveAttribute('data-story-scene', 'route');
@@ -143,6 +145,11 @@ test('preview, timeline, camera, flow and portable HTML use the same offline pla
     const svg = presentation.locator('main > svg');
     await expect(svg).toHaveAttribute('data-story-scene', 'opening');
     await expect(presentation.locator('[data-element-key="node:gateway"]')).toHaveCSS('opacity', '0');
+    await presentation.getByLabel('Choose scene', { exact: true }).selectOption('1');
+    await expect(svg).toHaveAttribute('data-story-scene', 'route');
+    await expect(svg).toHaveAttribute('data-story-playing', 'false');
+    await presentation.getByLabel('Choose scene', { exact: true }).selectOption('0');
+    await expect(svg).toHaveAttribute('data-story-scene', 'opening');
     await presentation.getByLabel('Presentation playhead', { exact: true }).focus();
     await presentation.keyboard.press('End');
     await expect(svg).toHaveAttribute('data-story-scene', 'route');
