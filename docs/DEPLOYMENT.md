@@ -1,0 +1,17 @@
+# Deployment guide
+
+The authoritative build, verification, publishing, and rollback procedure is in [the repository deployment guide](../DEPLOYMENT.md).
+
+Meridian is a standalone static application in **SUaDtL/Meridian**. Its Pages deployment is separate from `arbiterforge.com`, `arbiterForge/arbiterforge-site`, and `SUaDtL/SIM`. Integration with those surfaces requires separate approval.
+
+## Portable application
+
+`npm run build:standalone` generates `standalone/Meridian.html`. It embeds the application, styles, all diagram renderers, favicon, and dependency notices. The exact script is authorized by its SHA-256 Content Security Policy; runtime network connections are disabled.
+
+Modern browsers can open this file locally. Browser storage and clipboard permissions for local files vary, so use `.meridian.json` project exports as portable backups. The production HTTP build remains the primary tested path.
+
+The application HTML is different from a diagram's smaller HTML presentation export. The former includes the editor; the latter includes the finished diagram and playback controls.
+
+## Dependency attribution
+
+Both build commands run `scripts/third-party-notices.mjs`. It reads the committed lockfile and matching installed package metadata, reproduces available dependency license/notice files, and explicitly identifies optional platform packages that are not installed. It makes no network requests. The standalone application embeds the generated notices as escaped text.

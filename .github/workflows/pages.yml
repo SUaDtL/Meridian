@@ -8,42 +8,77 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: meridian-standalone-pages
-  cancel-in-progress: false
+  group: meridian-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   verify:
-    name: Assemble and validate
-    runs-on: ubuntu-latest
+    name: Source, browser and visual regression checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Assemble reviewed standalone app
-        run: python3 scripts/assemble.py
-      - name: Verify integrity, security and site isolation
-        run: python3 tests/validate.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install exact dependencies
+        run: npm ci
+      - name: Validate the archived published reference
+        run: npm run verify:legacy
+      - name: Check renderer and document boundaries
+        run: npm test
+      - name: Build the deployable application from source
+        run: npm run build:pages
+      - name: Validate exact deployed bytes and CSP
+        run: npm run verify:artifact
+      - name: Install pinned browser
+        run: npx playwright install --with-deps chromium
+      - name: Test the production artifact
+        run: npm run test:browser
+      - name: Retain browser and visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meridian-browser-evidence
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Preserve the exact verified Pages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meridian-verified-site
+          path: site/
+          include-hidden-files: true
+          retention-days: 14
 
   deploy:
     name: Publish independent GitHub Pages preview
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Assemble published artifact
-        run: python3 scripts/assemble.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: meridian-verified-site
+          path: site
       - name: Configure Pages
         uses: actions/configure-pages@v5
-      - name: Upload to GitHub Pages
+      - name: Upload verified artifact to GitHub Pages
         uses: actions/upload-pages-artifact@v4
         with:
-          path: public
+          path: site
       - name: Deploy independent preview
         id: deployment
         uses: actions/deploy-pages@v4

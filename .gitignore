@@ -1,6 +1,13 @@
-# Assembled release artifact; source of truth is the verified bundle parts.
+# Generated builds and local tooling. Authoring source lives in src/.
 public/index.html
+public/THIRD-PARTY-NOTICES.txt
+dist/
+standalone/
+site/
+node_modules/
+test-results/
+playwright-report/
+*.tsbuildinfo
 __pycache__/
 *.py[cod]
 .DS_Store
-node_modules/
