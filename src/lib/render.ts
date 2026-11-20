@@ -42,6 +42,7 @@ interface LayoutSnapshot {
   diagramType: string;
   model?: FlowModel;
   warnings: string[];
+  modelBytes: number;
 }
 
 interface RenderInput {
@@ -57,6 +58,12 @@ interface RenderInput {
 // keys, and cap both bytes and entries so switching projects cannot grow forever.
 const layoutCache = new RenderCache<LayoutSnapshot>(6, 8 * 1024 * 1024);
 const resultCache = new RenderCache<RenderResult>(8, 12 * 1024 * 1024);
+const resultModels = new WeakMap<RenderResult, FlowModel>();
+
+/** The model is already detached from Mermaid's shared parser. Use it read-only. */
+export function flowchartModelFor(result: RenderResult): FlowModel | undefined {
+  return resultModels.get(result);
+}
 
 /** A rendering copy only. The original Mermaid text is never rewritten. */
 function prepareSource(source: string): { text: string; warnings: string[] } {
@@ -241,10 +248,12 @@ async function performRender({ settings, nodeAccents, design, prepared, key }: R
   document.body.append(host);
   try {
     let model: FlowModel | undefined;
+    let modelBytes = 0;
     let rendered: { diagramType: string };
     let svg: SVGSVGElement;
     if (cachedLayout) {
       model = cachedLayout.model;
+      modelBytes = cachedLayout.modelBytes;
       rendered = cachedLayout;
       // Only this module's already-sanitized snapshots enter the layout cache.
       svg = new DOMParser().parseFromString(cachedLayout.svg, 'image/svg+xml').documentElement as unknown as SVGSVGElement;
@@ -266,14 +275,28 @@ async function performRender({ settings, nodeAccents, design, prepared, key }: R
       if (diagramType.startsWith('flowchart')) {
         const parsed = await mermaid.mermaidAPI.getDiagramFromText(text);
         checkRenderSignal(signal);
-        const database = parsed.db as unknown as { getVertices: () => FlowModel['vertices']; getEdges: () => FlowModel['edges']; getSubGraphs: () => FlowModel['groups'] };
-        // The Mermaid parser owns mutable databases. Cache a detached snapshot,
-        // so another diagram cannot replace the model behind a cached layout.
-        model = {
-          vertices: new Map(Array.from(database.getVertices(), ([vertexKey, vertex]) => [vertexKey, { id: vertex.id, text: vertex.text, styles: vertex.styles?.slice() }])),
-          edges: database.getEdges().map(edge => ({ ...edge, style: edge.style?.slice() })),
-          groups: database.getSubGraphs().map(group => ({ id: group.id, title: group.title, nodes: group.nodes.slice() })),
+        const database = parsed.db as unknown as {
+          getVertices: () => FlowModel['vertices'];
+          getEdges: () => FlowModel['edges'] & { defaultStyle?: string[]; defaultInterpolate?: string };
+          getSubGraphs: () => FlowModel['groups'];
+          getDirection: () => string | undefined;
+          getClasses: () => Map<string, unknown>;
         };
+        // Detach source semantics before rendering the possibly styled copy.
+        const edges = database.getEdges();
+        model = {
+          vertices: new Map(Array.from(database.getVertices(), ([key, vertex]) => [key, {
+            id: vertex.id, text: vertex.text, type: vertex.type, labelType: vertex.labelType,
+            styles: vertex.styles?.slice(), classes: vertex.classes?.slice(),
+          }])),
+          edges: edges.map(edge => ({ ...edge, style: edge.style?.slice(), classes: edge.classes?.slice() })),
+          groups: database.getSubGraphs().map(group => ({ id: group.id, title: group.title, nodes: group.nodes.slice() })),
+          direction: database.getDirection(),
+          classCount: database.getClasses().size,
+          defaultStyle: edges.defaultStyle?.slice(),
+          defaultInterpolate: edges.defaultInterpolate,
+        };
+        modelBytes = JSON.stringify({ ...model, vertices: [...model.vertices] }).length * 2;
         renderText = designRenderSource(text, design, model);
       }
       const output = await mermaid.render(id, renderText, host);
@@ -282,7 +305,7 @@ async function performRender({ settings, nodeAccents, design, prepared, key }: R
       svg = safeSvg(output.svg);
       if (/<foreignObject\b/i.test(output.svg)) layoutWarnings.push('This diagram contains HTML-only content that is omitted for portable SVG export. Text labels and built-in shapes work best.');
       const clean = new XMLSerializer().serializeToString(svg);
-      layoutCache.set(layoutKey, { id, svg: clean, diagramType: output.diagramType, model, warnings: layoutWarnings }, clean.length * 2 + text.length * 2);
+      layoutCache.set(layoutKey, { id, svg: clean, diagramType: output.diagramType, model, modelBytes, warnings: layoutWarnings }, clean.length * 2 + text.length * 2 + modelBytes);
       warnings.push(...layoutWarnings);
     }
     const doc = svg.ownerDocument;
@@ -424,7 +447,8 @@ async function performRender({ settings, nodeAccents, design, prepared, key }: R
     measureDesignElements(svg, elements);
     const otherEdges = svg.querySelectorAll('[data-et="message"], .relationshipLine, .messageLine0, .messageLine1').length;
     const result = { svg: new XMLSerializer().serializeToString(svg), diagramType: rendered.diagramType, nodes, elements, edgeCount: uniqueEdges.length || otherEdges, width, height, warnings };
-    resultCache.set(key, result, result.svg.length * 2 + JSON.stringify(elements).length * 2);
+    if (model) resultModels.set(result, model);
+    resultCache.set(key, result, result.svg.length * 2 + JSON.stringify(elements).length * 2 + modelBytes);
     return result;
   } finally {
     host.remove();
