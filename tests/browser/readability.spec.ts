@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 import type { StudioDocument } from '../../src/types';
 
@@ -11,6 +12,13 @@ async function openProject(page: Page, project: StudioDocument) {
   await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
   await page.getByRole('button', { name: `Open v3 project ${project.title}` }).click();
   return page.getByRole('dialog', { name: project.title });
+}
+
+async function downloadProject(page: Page, live: Locator) {
+  const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+  const path = await file.path();
+  if (!path) throw new Error('Missing readability project download.');
+  return JSON.parse(await readFile(path, 'utf8'));
 }
 
 test('checks the accepted drawing in a fixed viewing area without changing its source or revision', async ({ page }) => {
@@ -40,6 +48,8 @@ test('compares verified solid text and leaves the gradient node unmeasured', asy
   const project = { ...createDocument(), title: 'Contrast example', source };
   project.design.elements['node:A'] = { fill: '#ffffff', color: '#eeeeee' };
   const live = await openProject(page, project);
+  const before = await downloadProject(page, live);
+  const a = before.identity.elements.find((element: { binding: { sourceId: string } }) => element.binding.sourceId === 'A').id;
   await live.getByRole('button', { name: 'Check readability', exact: true }).click();
   const check = page.getByRole('dialog', { name: 'Check readability' });
   await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('presentation');
@@ -48,4 +58,22 @@ test('compares verified solid text and leaves the gradient node unmeasured', asy
   await expect(report.getByText('Solid text contrast · 1 measured · 1 unknown · 0 not applicable')).toBeVisible();
   await expect(report.getByText(/Low contrast has a contrast ratio of 1\.16\d+ to 1/)).toBeVisible();
   await expect(report.getByText(/Gradient surface has a contrast ratio/)).toHaveCount(0);
+  await report.getByRole('button', { name: 'Preview text contrast fix for Low contrast' }).click();
+  const fix = check.getByRole('region', { name: 'Proposed contrast fix' });
+  await expect(fix.getByText(/Contrast changes from 1\.16:1 to 21\.00:1/)).toBeVisible();
+  await fix.getByRole('button', { name: 'Apply text color' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const after = await downloadProject(page, live);
+  expect(after.source).toBe(source);
+  expect(after.identity).toEqual(before.identity);
+  expect(after.design.elements[a]).toEqual({ ...before.design.elements[a], color: '#000000' });
+  await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+  await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('presentation');
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  await expect(report.getByText('Solid text contrast · 1 measured · 1 unknown · 0 not applicable')).toBeVisible();
+  await expect(report.getByRole('button', { name: /Preview text contrast fix/ })).toHaveCount(0);
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  expect((await downloadProject(page, live)).design).toEqual(before.design);
 });

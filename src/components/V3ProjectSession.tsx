@@ -367,8 +367,13 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
         canRename={!editingUnavailable} onClose={() => setOutlineOpen(false)}
         onRename={renameFromOutline} onSource={jumpToSource} />}
-      {readabilityTargets && currentFrame && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
-        revision={currentFrame.document.revision} canvas={canvasProfile} onClose={() => setReadabilityOpen(false)} />}
+      {readabilityTargets && currentFrame && targetTable && editor.current && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
+        token={targetTable.baseToken} editor={editor.current} canvas={canvasProfile} onClose={() => setReadabilityOpen(false)} onApply={proposal => {
+          const current = editor.current!;
+          const status = current.applyContrast(proposal);
+          if (status === "applied") setProject(current.snapshot());
+          return status;
+        }} />}
       {comparison && currentFrame && editor.current && <V3ComparisonDialog mode={comparison} allowDirection={flatFlowchart}
         editor={editor.current} currentUrl={currentFrame.url}
         currentSize={currentFrame.geometry} onClose={() => setComparison(undefined)} onApply={proposal => {
