@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { designRecipeIds, readDesignRecipe, type DesignRecipeId } from "../lib/authoring/design-recipes";
+import { designRecipeIds, readDesignRecipe, type DesignRecipeId, type DesignScope } from "../lib/authoring/design-recipes";
 import { layoutAlternativeIds, readLayoutAlternative, type LayoutAlternativeId, type LayoutIntent } from "../lib/authoring/layout-alternatives";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
+import type { SemanticRole } from "../lib/authoring/mermaid-project";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import { viewingScale, type FrameGeometry } from "../lib/authoring/readability";
 import { buildExportFrame } from "../lib/export";
@@ -12,7 +13,8 @@ type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Choice = DesignRecipeId | LayoutAlternativeId;
 type ComparisonMode = "design" | "layout";
 type ReadabilityEvidence = { smallest: number | null; measured: number; unknown: number };
-type Preview = { proposal: ReadyProposal; changes: { label: string; before: unknown; after: unknown }[]; url: string; width: number; height: number;
+type ScopeSummary = NonNullable<NonNullable<ReturnType<Editor["readDesignPreview"]>>["scope"]>;
+type Preview = { scope?: ScopeSummary; proposal: ReadyProposal; changes: { label: string; before: unknown; after: unknown }[]; url: string; width: number; height: number;
   evidence?: { current: ReadabilityEvidence; proposed: ReadabilityEvidence } };
 
 const viewingProfile = { width: 1280, height: 720, padding: 32 };
@@ -23,9 +25,11 @@ function labelEvidence(result: RenderResult, frame: FrameGeometry): ReadabilityE
   return { smallest: sizes.length ? Math.min(...sizes) : null, measured: sizes.length, unknown: labels.length - sizes.length };
 }
 
-export default function V3ComparisonDialog({ mode, allowDirection, currentUrl, currentSize, editor, onApply, onClose }: {
+export default function V3ComparisonDialog({ mode, allowDirection, selection, selectedRoleCounts, currentUrl, currentSize, editor, onApply, onClose }: {
   mode: ComparisonMode;
   allowDirection: boolean;
+  selection?: { ids: readonly string[]; hidden: number };
+  selectedRoleCounts: readonly [SemanticRole, number][];
   currentUrl: string;
   currentSize: FrameGeometry;
   editor: Editor;
@@ -33,6 +37,8 @@ export default function V3ComparisonDialog({ mode, allowDirection, currentUrl, c
   onClose: () => void;
 }) {
   const layout = mode === "layout";
+  const [scopeKind, setScopeKind] = useState<DesignScope["kind"]>(selection?.ids.length ? "selection" : "diagram");
+  const [role, setRole] = useState<SemanticRole | "">(selectedRoleCounts[0]?.[0] ?? "");
   const [choice, setChoice] = useState<Choice>(layout ? "balanced" : "clear");
   const [direction, setDirection] = useState<LayoutIntent["direction"]>("keep");
   const [preview, setPreview] = useState<Preview>();
@@ -52,7 +58,9 @@ export default function V3ComparisonDialog({ mode, allowDirection, currentUrl, c
   }
 
   async function prepare() {
-    if (active.current) return;
+    if (active.current || (!layout && scopeKind === "role" && !role)) return;
+    const scope: DesignScope = scopeKind === "selection" ? { kind: scopeKind, ids: selection?.ids ?? [] }
+      : scopeKind === "role" && role ? { kind: scopeKind, role } : { kind: "diagram" };
     const work = new AbortController();
     active.current = work;
     setBusy(true);
@@ -62,13 +70,14 @@ export default function V3ComparisonDialog({ mode, allowDirection, currentUrl, c
     setView("current");
     try {
       const proposal = layout ? await editor.prepareLayout({ id: choice as LayoutAlternativeId, direction }, work.signal)
-        : await editor.prepareDesign(choice as DesignRecipeId, work.signal);
+        : await editor.prepareDesign(choice as DesignRecipeId, scope, work.signal);
       const layoutCandidate = layout ? editor.readLayoutPreview(proposal) : undefined;
-      const candidate = layout ? layoutCandidate : editor.readDesignPreview(proposal);
+      const designCandidate = layout ? undefined : editor.readDesignPreview(proposal);
+      const candidate = layoutCandidate ?? designCandidate;
       if (!candidate) throw new Error("The project changed. Refresh the preview.");
       const { svg, ...geometry } = buildExportFrame(candidate.rendered.result, candidate.document);
       work.signal.throwIfAborted();
-      setPreview({ proposal, changes: candidate.changes, ...geometry,
+      setPreview({ proposal, changes: candidate.changes, ...geometry, scope: designCandidate?.scope,
         evidence: layoutCandidate ? { current: labelEvidence(layoutCandidate.current.result, currentSize), proposed: labelEvidence(candidate.rendered.result, geometry) } : undefined,
         url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) });
       setView("proposed");
@@ -100,12 +109,31 @@ export default function V3ComparisonDialog({ mode, allowDirection, currentUrl, c
   }
   return (
     <Modal title={layout ? "Compare layouts" : "Explore designs"} wide onClose={onClose}>
-      <p>Diagram scope · Element overrides are preserved.</p>
+      {!layout && <div className="heading-form">
+        <label>Design scope<select value={scopeKind} disabled={busy} onChange={event => {
+          setScopeKind(event.target.value as DesignScope["kind"]);
+          resetPreview();
+        }}>
+          <option value="diagram">Entire diagram</option>
+          {allowDirection && !!selection?.ids.length && <option value="selection">Selected elements</option>}
+          {allowDirection && selectedRoleCounts.length > 0 && <option value="role">Selected role</option>}
+        </select></label>
+        {scopeKind === "selection" && selection && <p>{selection.ids.length} selected · {selection.hidden} hidden in the outline</p>}
+        {scopeKind === "role" && <label>Role<select value={role} disabled={busy} onChange={event => {
+          setRole(event.target.value as SemanticRole);
+          resetPreview();
+        }}>
+          {selectedRoleCounts.map(([option, count]) => <option key={option} value={option}>{option[0].toUpperCase() + option.slice(1)} ({count})</option>)}
+        </select></label>}
+        {!allowDirection && <p>Scoped recipes are available on flat flowcharts with explicit node declarations.</p>}
+      </div>}
+      <p>{layout || scopeKind === "diagram" ? "Diagram scope · Element overrides are preserved." : "This scope uses node paint. Element overrides are preserved."}</p>
       <div className="recipe-options" role="group" aria-label={layout ? "Layout alternatives" : "Design recipes"}>
         {options.map(option => {
           return <button className="button secondary" key={option.id} aria-pressed={choice === option.id} disabled={busy}
             onClick={() => { if (choice !== option.id) { setChoice(option.id); resetPreview(); } }}>
-            <strong>{option.title}</strong><span>{option.description}</span>
+            <strong>{option.title}</strong><span>{!layout && scopeKind !== "diagram" && "nodeStyle" in option
+              ? `Fill ${option.nodeStyle.fill} · Text ${option.nodeStyle.color} · Border ${option.nodeStyle.stroke}` : option.description}</span>
           </button>;
         })}
       </div>
@@ -131,6 +159,13 @@ export default function V3ComparisonDialog({ mode, allowDirection, currentUrl, c
           <figcaption>Proposed frame · {preview.width} × {preview.height}</figcaption>
         </figure>}
       </div>
+      {preview?.scope && <section aria-label="Reviewed design scope">
+        <p>Applies to {preview.scope.eligible} of {preview.scope.total} elements. {preview.scope.protectedFields} protected paint {preview.scope.protectedFields === 1 ? "field" : "fields"}.</p>
+        <p>Diagram-wide settings outside this scope include {preview.scope.omitted.join(", ").toLowerCase()}.</p>
+        {preview.scope.exclusions.length > 0 && <details><summary>Review excluded elements</summary>
+          <ul>{preview.scope.exclusions.map((label, index) => <li key={index}>{label}</li>)}</ul>
+        </details>}
+      </section>}
       {preview && <ul aria-label={layout ? "Layout changes" : "Design changes"}>{preview.changes.map(change =>
         <li key={change.label}>{change.label} · {label(change.before)} → {label(change.after)}</li>)}</ul>}
       {preview?.evidence && <section aria-label="Viewed label sizes">

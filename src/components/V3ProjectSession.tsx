@@ -10,7 +10,7 @@ import V3GroupStoryDialog, { initialGroupStoryDraft } from "./V3GroupStoryDialog
 import V3StructureEditor from "./V3StructureEditor";
 import V3SourceEditor, { type SourceDraft } from "./V3SourceEditor";
 import DetachComponentDialog from "./DetachComponentDialog";
-import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
+import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
@@ -58,6 +58,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
   const [dismissedReadability, setDismissedReadability] = useState<ReadonlySet<string>>(new Set());
   const [readabilityOpen, setReadabilityOpen] = useState(false);
+  const [comparisonSelection, setComparisonSelection] = useState<{ ids: string[]; hidden: number }>();
   const [comparison, setComparison] = useState<"design" | "layout">();
   const [storyOpen, setStoryOpen] = useState(false);
   const [storyDraft, setStoryDraft] = useState(initialGroupStoryDraft);
@@ -176,6 +177,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     }
   }, [source]);
   const targetTable = currentFrame?.rendered.targetTable;
+  const selectedRoleCounts = useMemo(() => {
+    const counts = new Map<SemanticRole, number>();
+    for (const item of project?.roles ?? []) counts.set(item.role, (counts.get(item.role) ?? 0) + 1);
+    return [...counts];
+  }, [project?.roles]);
   const ungroupSourceId = useMemo(() => source && !flatFlowchart ? supportedUngroupSourceId(source) : undefined, [source, flatFlowchart]);
   const outlineAvailable = !!targetTable?.targets.length;
   const outline = useMemo(() => outlineOpen && project && targetTable ? projectOutline(project, targetTable) : undefined,
@@ -399,7 +405,12 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
         canRename={!editingUnavailable} onClose={() => setOutlineOpen(false)}
-        onRename={renameFromOutline} onSource={jumpToSource} onBulkText={setBulkTextHidden} onSaveComponent={flatFlowchart ? setComponentHidden : undefined} />}
+        onRename={renameFromOutline} onSource={jumpToSource} onBulkText={setBulkTextHidden}
+        onDesign={flatFlowchart ? hidden => {
+          setComparisonSelection({ ids: [...outlineSelection], hidden });
+          setOutlineOpen(false);
+          setComparison("design");
+        } : undefined} onSaveComponent={flatFlowchart ? setComponentHidden : undefined} />}
       {componentHidden !== undefined && currentFrame && editor.current && connection.current && <Suspense>
         <SaveComponentDialog db={connection.current} editor={editor.current} frame={currentFrame.rendered}
           selection={outlineSelection} hidden={componentHidden} onClose={() => setComponentHidden(undefined)} />
@@ -426,7 +437,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         }} />}
       {comparison && currentFrame && editor.current && <V3ComparisonDialog mode={comparison} allowDirection={flatFlowchart}
         editor={editor.current} currentUrl={currentFrame.url}
-        currentSize={currentFrame.geometry} onClose={() => setComparison(undefined)} onApply={proposal => {
+        currentSize={currentFrame.geometry} selection={comparisonSelection} selectedRoleCounts={selectedRoleCounts} onClose={() => {
+          setComparisonSelection(undefined);
+          setComparison(undefined);
+        }} onApply={proposal => {
           const current = editor.current!;
           const status = comparison === "layout" ? current.applyLayout(proposal) : current.applyDesign(proposal);
           if (status === "applied") setProject(current.snapshot());
