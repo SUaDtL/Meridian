@@ -39,7 +39,8 @@ const ComponentProjectDialog = lazy(() => import("./components/ComponentProjectD
 const ChartProjectDialog = lazy(() => import("./components/ChartProjectDialog"));
 const OpenApiImportDialog = lazy(() => import("./components/OpenApiImportDialog"));
 const TerraformImportDialog = lazy(() => import("./components/TerraformImportDialog"));
-type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | "guided" | "guided-table" | "components" | "guided-chart" | "saved-charts" | "engineering-file" | "terraform-file" | null;
+const SchemaImportDialog = lazy(() => import("./components/SchemaImportDialog"));
+type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | "guided" | "guided-table" | "components" | "guided-chart" | "saved-charts" | "engineering-file" | "terraform-file" | "schema-file" | null;
 const emptyRelationshipTable: RelationshipTableDraft = { title: "", text: "", delimiter: ",", header: true };
 export type Notify = (
   message: string,
@@ -387,9 +388,11 @@ export default function App() {
             {(dialog === "guided-chart" || dialog === "saved-charts") && <ChartProjectDialog fromProjects={dialog === "saved-charts"}
               onBack={() => setDialog(dialog === "saved-charts" ? "projects" : "guided")} onClose={closeDialog} />}
             {dialog === "engineering-file" && <OpenApiImportDialog onBack={() => setDialog("guided")} onClose={closeDialog}
-              onTerraform={() => setDialog("terraform-file")}
+              onTerraform={() => setDialog("terraform-file")} onSchema={() => setDialog("schema-file")}
               onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
             {dialog === "terraform-file" && <TerraformImportDialog onBack={() => setDialog("engineering-file")} onClose={closeDialog}
+              onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
+            {dialog === "schema-file" && <SchemaImportDialog onBack={() => setDialog("engineering-file")} onClose={closeDialog}
               onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
           </Suspense>
           {dialog === "new" && (
