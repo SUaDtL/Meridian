@@ -50,7 +50,7 @@ describe('exact chart values', () => {
     const unsafe = readChartInput('[{"Amount":9007199254740993}]', 'json');
     expect(unsafe.rows[0].cells).toEqual(['9007199254740993']);
     expect(() => confirmChartColumns(unsafe, [...definition])).toThrow('exact decimal');
-    expect(confirmChartColumns(unsafe, [{ ...definition[0], type: 'string' }]).rows[0].cells).toEqual(['9007199254740993']);
+    expect(confirmChartColumns(unsafe, [{ ...definition[0], type: 'string' }]).dataset.rows[0].cells).toEqual(['9007199254740993']);
     expect(() => readChartInput('[{"Amount":1,"Amount":2}]', 'json')).toThrow('repeated object key');
     expect(readChartInput('Name;Amount\n"South; West";1.200\n', ';').rows[0].cells).toEqual(['South; West', '1.200']);
     expect(convertChartCell('2024-02-29', 'date')).toBe('2024-02-29');
@@ -106,4 +106,14 @@ describe('portable chart projection', () => {
     expect(projection.observations.map(point => [point.x, point.y?.display ?? null, point.countValues]))
       .toEqual([['2024-01-01', '1', 1], ['2024-01-02', '0.3', 2], ['2024-01-03', null, 0]]);
   });
+});
+it('converts invalid nonempty cells and empty fields only with their respective reviewed rules', () => {
+  const input = readChartInput('Label,Amount\nAlpha,1.25\nBeta,unknown\nGamma,\n', ',');
+  const label = { name: 'Label', type: 'string', unit: '', emptyIsNull: false } as const;
+  const amount = { name: 'Amount', type: 'number', unit: '', emptyIsNull: false } as const;
+  expect(() => confirmChartColumns(input, [label, amount])).toThrow(/row 3/);
+  expect(() => confirmChartColumns(input, [label, { ...amount, invalidToNull: true }])).toThrow(/row 4/);
+  const confirmed = confirmChartColumns(input, [label, { ...amount, invalidToNull: true, emptyIsNull: true }]);
+  expect(confirmed.dataset.rows.map(row => row.cells[1])).toEqual(['1.25', null, null]);
+  expect(confirmed.conversions[1]).toEqual({ fieldId: confirmed.dataset.fields[1].id, invalid: 1, empty: 1 });
 });

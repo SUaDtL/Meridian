@@ -8,7 +8,7 @@ import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/aut
 import Worker from "../lib/authoring/chart-input.worker?worker&inline";
 import { chartDataLimits, convertChartCell, type ChartDataset, type ChartField, type ChartProject, type ChartSpec, type FieldType } from "../lib/authoring/chart-data";
 import { openChartProjectEditor } from "../lib/authoring/chart-editor";
-import type { ChartInput, ChartInputFormat, ColumnConfirmation } from "../lib/authoring/chart-input";
+import type { ChartInput, ChartInputFormat, ColumnConfirmation, ConfirmedChartInput } from "../lib/authoring/chart-input";
 import { canonicalChartNumber, type NumberLocale } from "../lib/authoring/chart-numbers";
 import { parseChartProject, validateChartProject } from "../lib/authoring/chart-project";
 import type { ReadyProposal } from "../lib/authoring/proposals";
@@ -43,6 +43,21 @@ function mapping(dataset: ChartDataset, mark: Mark): ChartSpec {
   };
 }
 
+function ConversionSummary({ dataset, counts }: {
+  dataset: ChartDataset;
+  counts: ConfirmedChartInput["conversions"] | undefined;
+}) {
+  const changed = counts?.filter(item => item.invalid || item.empty).flatMap(item => {
+    const field = dataset.fields.find(candidate => candidate.id === item.fieldId);
+    return field ? [{ ...item, name: field.name }] : [];
+  });
+  if (!changed?.length) return null;
+  return <section aria-label="Data conversion">
+    <h3>Values converted to missing</h3>
+    <ul>{changed.map(item => <li key={item.fieldId}>{item.name} · {item.invalid} invalid · {item.empty} empty</li>)}</ul>
+  </section>;
+}
+
 export default function ChartProjectDialog({ onBack, onClose, fromProjects = false }: {
   onBack: () => void; onClose: () => void; fromProjects?: boolean;
 }) {
@@ -55,6 +70,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
   const [raw, setRaw] = useState<ChartInput>();
   const [columns, setColumns] = useState<ColumnConfirmation[]>([]);
   const [dataset, setDataset] = useState<ChartDataset>();
+  const [conversions, setConversions] = useState<ConfirmedChartInput["conversions"]>();
   const [spec, setSpec] = useState<ChartSpec>();
   const [frame, setFrame] = useState(defaultFrame);
   const [title, setTitle] = useState("");
@@ -145,11 +161,12 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
   function confirmColumns() {
     if (!raw) return;
     void perform({ label: "Checking the typed data", async run(signal, extended) {
-      const typed = await runAuthoringWorker<ChartDataset>(() => new Worker(), { action: "confirm", input: raw, columns },
+      const typed = await runAuthoringWorker<ConfirmedChartInput>(() => new Worker(), { action: "confirm", input: raw, columns },
         signal, "Checking the typed data", extended);
       signal.throwIfAborted();
-      setDataset(typed);
-      setSpec(mapping(typed, "bar"));
+      setDataset(typed.dataset);
+      setConversions(typed.conversions);
+      setSpec(mapping(typed.dataset, "bar"));
       setCheckpoint(undefined);
       setRaw(undefined);
       setStage("mapping");
@@ -241,7 +258,8 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
           delimiter: format === "\t" ? "tab" : format === ";" ? "semicolon" : "comma",
           conversions: dataset.fields.map((field, index) => ({
             fieldId: field.id, emptyToNull: columns[index]?.emptyIsNull ?? false,
-            ...(field.type === "number" ? columns[index]?.numeric ?? defaultLocale : defaultLocale), invalid: "block",
+            ...(field.type === "number" ? columns[index]?.numeric ?? defaultLocale : defaultLocale),
+            invalid: columns[index]?.invalidToNull ? "null" : "block",
           })),
         }, checkpoint);
         setDrafts(previous => [record, ...previous.filter(item => item.id !== record.id)]);
@@ -259,12 +277,14 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     setSubtitle(subtitle);
     setFormat(delimiter === "tab" ? "\t" : delimiter === "semicolon" ? ";" : ",");
     setDataset(dataset);
+    setConversions(undefined);
     setSpec(chartSpec ?? mapping(dataset, "bar"));
     setFrame(defaultFrame);
     setAcceptTruncatedAxis(false);
     setColumns(dataset.fields.map(({ id, name, type, unit }) => {
       const conversion = conversions.find(item => item.fieldId === id);
       return { name, type, unit, emptyIsNull: conversion?.emptyToNull ?? false,
+        invalidToNull: conversion?.invalid === "null",
         numeric: conversion ? { decimal: conversion.decimal, grouping: conversion.grouping } : undefined };
     }));
     setStage("mapping");
@@ -445,6 +465,10 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
             </select></label>
           </>}
           <label className="chart-option"><input type="checkbox" checked={column.emptyIsNull} onChange={event => changeColumn(index, { emptyIsNull: event.target.checked })} />Treat empty fields as missing</label>
+          <label>Invalid values<select value={column.invalidToNull ? "null" : "block"}
+            onChange={event => changeColumn(index, { invalidToNull: event.target.value === "null" })}>
+            <option value="block">Require valid values</option><option value="null">Convert invalid nonempty values to missing</option>
+          </select></label>
         </fieldset>)}
       </div>
       <p className="muted-note">Meridian keeps the confirmed typed data. It discards the input file bytes.</p>
@@ -454,6 +478,10 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       </div>
     </form>}
     {stage === "mapping" && dataset && spec && <form className="heading-form" onSubmit={event => { event.preventDefault(); review(); }}>
+      <ConversionSummary dataset={dataset} counts={conversions} />
+      {!conversions && !editing && columns.some(column => column.invalidToNull) && <p>
+        The restored draft uses the reviewed missing-value rules. Original conversion counts are available during file import.
+      </p>}
       <div className="chart-map">
         <label>Title<input maxLength={120} value={title} onChange={event => setTitle(event.target.value)} /></label>
         <label>Subtitle<input maxLength={240} value={subtitle} onChange={event => setSubtitle(event.target.value)} /></label>
@@ -539,6 +567,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       </div>
     </form>}
     {(stage === "review" || stage === "workspace") && candidate && <>
+      <ConversionSummary dataset={candidate.project.dataset} counts={conversions} />
       <ChartFigure project={candidate.project} values={candidate.projection} svgRef={svg} />
       <p>{describeChart(candidate.project, candidate.projection).description}</p>
       <ChartDataTable dataset={candidate.project.dataset} values={candidate.projection} />

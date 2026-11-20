@@ -5,7 +5,11 @@ import { localizedChartNumber, type NumberLocale } from './chart-numbers';
 
 export type ChartInputFormat = TableDelimiter | 'json';
 export type ChartInput = { format: ChartInputFormat; headings: string[]; rows: { line: number; cells: ChartCell[] }[] };
-export type ColumnConfirmation = { name: string; type: FieldType; unit: string; emptyIsNull: boolean; numeric?: NumberLocale };
+export type ColumnConfirmation = { name: string; type: FieldType; unit: string; emptyIsNull: boolean; invalidToNull?: boolean; numeric?: NumberLocale };
+export type ConfirmedChartInput = {
+  dataset: ChartDataset;
+  conversions: { fieldId: string; invalid: number; empty: number }[];
+};
 const encoder = new TextEncoder();
 
 function checkSize(rows: number, columns: number) {
@@ -50,7 +54,7 @@ function label(value: string, limit: number) {
   return !/[\uD800-\uDFFF]/u.test(value) && [...value].length <= limit;
 }
 
-export function confirmChartColumns(input: ChartInput, columns: ColumnConfirmation[]): ChartDataset {
+export function confirmChartColumns(input: ChartInput, columns: ColumnConfirmation[]): ConfirmedChartInput {
   checkSize(input.rows.length, columns.length);
   if (input.headings.length !== columns.length) throw new Error('Confirm every column.');
   const names = columns.map(column => column.name.trim());
@@ -64,19 +68,27 @@ export function confirmChartColumns(input: ChartInput, columns: ColumnConfirmati
     throw new Error('Choose distinct numeric separators. JSON records use a decimal point and no grouping.');
   }
   const fields = columns.map(({ type, unit }, index) => ({ id: crypto.randomUUID(), name: names[index], type, unit }));
+  const conversions = fields.map(field => ({ fieldId: field.id, invalid: 0, empty: 0 }));
   const rows = input.rows.map(({ line, cells }) => ({
     id: crypto.randomUUID(),
     cells: cells.map((cell, index) => {
-      const { type, emptyIsNull, numeric } = columns[index];
-      const value = emptyIsNull && cell === '' ? null : cell;
+      const { type, emptyIsNull, invalidToNull, numeric } = columns[index];
+      if (emptyIsNull && cell === '') {
+        conversions[index].empty++;
+        return null;
+      }
       try {
-        if (type === 'number' && typeof value === 'string' && numeric) return localizedChartNumber(value, numeric);
-        return convertChartCell(type === 'string' && typeof value === 'boolean' ? String(value) : value, type);
+        if (type === 'number' && typeof cell === 'string' && numeric) return localizedChartNumber(cell, numeric);
+        return convertChartCell(type === 'string' && typeof cell === 'boolean' ? String(cell) : cell, type);
       } catch (reason) {
+        if (invalidToNull && cell !== '' && reason instanceof Error) {
+          conversions[index].invalid++;
+          return null;
+        }
         const message = reason instanceof Error && !reason.message.startsWith('CHART_') ? reason.message : 'Use a supported exact decimal or retain the column as text.';
         throw new Error(`Input row ${line}, column “${names[index]}”. ${message}`);
       }
     }),
   }));
-  return validateChartDataset({ version: 1, fields, rows });
+  return { dataset: validateChartDataset({ version: 1, fields, rows }), conversions };
 }
