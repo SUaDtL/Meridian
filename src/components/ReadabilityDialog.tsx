@@ -29,12 +29,15 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   const [mode, setMode] = useState<"canvas" | "presentation" | "custom">(canvas ? "canvas" : "presentation");
   const [custom, setCustom] = useState(presentation);
   const [result, setResult] = useState<{ report: ReadabilityReport; findings: { finding: ReadabilityFinding; key: string }[] }>();
-  const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<"check" | "findings" | "contrast">();
+  const busy = phase !== undefined;
+  const [cancelled, setCancelled] = useState(false);
   const [retry, setRetry] = useState<"once" | "narrow">();
   const [error, setError] = useState("");
   const [fix, setFix] = useState<{ proposal: ReadyProposal; preview: ContrastPreview; url: string }>();
   const [showDismissed, setShowDismissed] = useState(false);
   const summary = useRef<HTMLParagraphElement>(null);
+  const checkButton = useRef<HTMLButtonElement>(null);
   const [imageReady, setImageReady] = useState(false);
   const active = useRef<AbortController | undefined>(undefined);
   const profile = mode === "canvas" && canvas ? canvas : mode === "custom" ? custom : presentation;
@@ -43,20 +46,33 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   useEffect(() => () => active.current?.abort(), []);
   useEffect(() => () => { if (fix) URL.revokeObjectURL(fix.url); }, [fix]);
 
-  function reset() { setResult(undefined); setError(""); setRetry(undefined); setFix(undefined); setImageReady(false); }
+  function reset() { setResult(undefined); setError(""); setRetry(undefined); setFix(undefined); setImageReady(false); setCancelled(false); }
+
+  function cancel() {
+    const work = active.current;
+    if (!work) return;
+    active.current = undefined;
+    work.abort();
+    setPhase(undefined);
+    setCancelled(true);
+    requestAnimationFrame(() => checkButton.current?.focus());
+  }
 
   async function check() {
     if (active.current || retry === "narrow") return;
     const extended = retry === "once";
     const work = new AbortController();
     active.current = work;
-    setBusy(true);
+    setPhase("check");
+    setCancelled(false);
     setError("");
     setFix(undefined);
     try {
       viewingScale(profile, frame);
       const report = await runAuthoringWorker<ReadabilityReport>(() => new ReadabilityWorker(), { targets, profile, frame },
         work.signal, "Checking the diagram", extended);
+      work.signal.throwIfAborted();
+      setPhase("findings");
       const findings = await Promise.all(report.findings.map(async finding => ({
         finding, key: await canonicalDigest("meridian-quality-finding/v1", dismissalEvidence(finding)),
       })));
@@ -70,8 +86,10 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
           : reason instanceof Error ? reason.message : "The diagram could not be checked.");
       }
     } finally {
-      active.current = undefined;
-      if (!work.signal.aborted) setBusy(false);
+      if (active.current === work) {
+        active.current = undefined;
+        if (!work.signal.aborted) setPhase(undefined);
+      }
     }
   }
 
@@ -79,12 +97,14 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     if (active.current) return;
     const work = new AbortController();
     active.current = work;
-    setBusy(true);
+    setPhase("contrast");
+    setCancelled(false);
     setError("");
     setFix(undefined);
     setImageReady(false);
     try {
       const proposal = await editor.prepareContrast(elementId, profile, token, work.signal);
+      work.signal.throwIfAborted();
       const preview = editor.readContrastPreview(proposal);
       if (!preview) throw new Error("The diagram changed. Check readability again.");
       const url = URL.createObjectURL(new Blob([preview.svg], { type: "image/svg+xml" }));
@@ -92,8 +112,10 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     } catch (reason) {
       if (!work.signal.aborted) setError(reason instanceof Error ? reason.message : "The contrast change could not be previewed.");
     } finally {
-      active.current = undefined;
-      if (!work.signal.aborted) setBusy(false);
+      if (active.current === work) {
+        active.current = undefined;
+        if (!work.signal.aborted) setPhase(undefined);
+      }
     }
   }
 
@@ -167,11 +189,15 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
               onChange={event => { setCustom({ ...custom, [field]: event.target.valueAsNumber }); reset(); }} /></label>
         ))}
         <p>{profile.width} × {profile.height} CSS pixels · {profile.padding} pixels of padding · Project revision {token.revision}</p>
-        <div className="dialog-actions"><button className="button primary" disabled={busy || retry === "narrow"} onClick={() => void check()}>
+        <div className="dialog-actions"><button ref={checkButton} className="button primary" disabled={busy || retry === "narrow"} onClick={() => void check()}>
           {retry === "once" ? "Retry for five seconds" : "Check diagram"}
-        </button></div>
+        </button>{busy && <button className="button quiet" type="button" onClick={cancel}>
+          {phase === "contrast" ? "Cancel contrast preview" : "Cancel check"}
+        </button>}</div>
       </div>
-      {busy && <p role="status">Checking the current diagram…</p>}
+      {phase && <p role="status">{phase === "check" ? "Checking the current diagram…"
+        : phase === "findings" ? "Preparing findings…" : "Rendering the proposed text color…"}</p>}
+      {cancelled && <p role="status">Readability work cancelled.</p>}
       {error && <p role="alert">{error}</p>}
       {result && <section aria-label="Readability results" aria-busy={busy}>
         <h3>Coverage</h3>
