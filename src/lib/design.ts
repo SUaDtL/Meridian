@@ -378,6 +378,29 @@ export function decorateDesign(svg: SVGSVGElement, renderId: string, nodes: Rend
   return result;
 }
 
+function labelSizeInDiagram(label: SVGElement | undefined, view: Window, inverse: DOMMatrix): number | undefined {
+  const fragments = Array.from(label?.querySelectorAll<SVGGraphicsElement>('text, tspan') ?? [])
+    .filter(text => Array.from(text.childNodes).some(node => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()));
+  if (!fragments.length) return undefined;
+  let smallest = Infinity;
+  for (const text of fragments) {
+    if (text.hasAttribute('textLength') || text.closest('text[textLength]')) return undefined;
+    const screen = text.getScreenCTM?.();
+    if (!screen) return undefined;
+    const transform = inverse.multiply(screen);
+    const x = Math.hypot(transform.a, transform.b);
+    const y = Math.hypot(transform.c, transform.d);
+    const dot = transform.a * transform.c + transform.b * transform.d;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0
+      || Math.abs(x - y) > Math.max(x, y) * 1e-5 || Math.abs(dot) > x * y * 1e-5) return undefined;
+    const style = view.getComputedStyle(text);
+    const size = Number.parseFloat(style.fontSize) * y;
+    if (style.display === 'none' || style.visibility !== 'visible' || !Number.isFinite(size) || size <= 0) return undefined;
+    smallest = Math.min(size, smallest);
+  }
+  return smallest;
+}
+
 /** Capture bounds in the diagram's own coordinate system while it is mounted. */
 export function measureDesignElements(svg: SVGSVGElement, elements: RenderElement[]): void {
   const rootMatrix = svg.getScreenCTM();
@@ -415,6 +438,7 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
         fontSize: positive(textStyle?.fontSize),
         fontFamily: textStyle?.fontFamily,
         fontWeight: textStyle?.fontWeight,
+        labelSizeInDiagram: labelSizeInDiagram(label, view, inverse),
       };
     }
     try {

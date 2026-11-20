@@ -63,7 +63,7 @@ function wrapHeading(value: string, characters: number, width: number, font: str
 }
 
 export interface ExportFrameOptions { transparent?: boolean; animated?: boolean; includeFrame?: boolean }
-export interface ExportFrame { svg: string; width: number; height: number }
+export interface ExportFrame { svg: string; width: number; height: number; diagramScale: number }
 type FrameDocument = Pick<StudioDocument, 'title' | 'subtitle' | 'settings'>;
 
 /** Build framing and dimensions together so the stage never reparses the result. */
@@ -142,15 +142,18 @@ export function buildExportFrame(result: RenderResult, doc: FrameDocument, opts:
   }
   source.setAttribute('x', String(pad));
   source.setAttribute('y', String(pad + headingHeight));
-  source.setAttribute('width', String(width - 2 * pad));
-  source.setAttribute('height', String(height - 2 * pad - headingHeight - footerHeight));
+  const contentWidth = width - 2 * pad;
+  const contentHeight = height - 2 * pad - headingHeight - footerHeight;
+  source.setAttribute('width', String(contentWidth));
+  source.setAttribute('height', String(contentHeight));
   source.style.overflow = 'visible';
   outer.append(source);
   if (footerHeight) {
     const brand = element(xml, 'text', { x: width - pad, y: height - pad + 4, 'text-anchor': 'end', fill: theme.muted, 'font-size': 11, 'font-family': 'Arial, Helvetica, sans-serif', 'letter-spacing': 1.8 });
     brand.textContent = 'MERIDIAN / ARBITERFORGE'; outer.append(brand);
   }
-  return { svg: new XMLSerializer().serializeToString(outer), width, height };
+  return { svg: new XMLSerializer().serializeToString(outer), width, height,
+    diagramScale: Math.min(contentWidth / result.width, contentHeight / result.height) };
 }
 
 export function buildExportSvg(result: RenderResult, doc: StudioDocument, opts: ExportFrameOptions = {}): string {

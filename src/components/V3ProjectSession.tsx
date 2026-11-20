@@ -3,6 +3,7 @@ import HeadingEditor from "./HeadingEditor";
 import CommandPalette from "./CommandPalette";
 import Modal from "./Modal";
 import V3ProjectOutline from "./V3ProjectOutline";
+import ReadabilityDialog from "./ReadabilityDialog";
 import V3StructureEditor from "./V3StructureEditor";
 import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
@@ -12,6 +13,7 @@ import { flowchartSubsetTopology } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
+import type { FrameGeometry, ReadabilityTarget, ViewingProfile } from "../lib/authoring/readability";
 import { buildExportFrame, buildMermaidProjectPresentation } from "../lib/export";
 import type { ProjectSaveState } from "../lib/persistence/project-save-queue";
 import { openWorkspaceDatabase, saveWorkspaceProjectCopy } from "../lib/persistence/workspace-db";
@@ -19,7 +21,7 @@ import { downloadText, safeFilename, serializeProject } from "../lib/storage";
 import type { ProposalOutcome } from "../lib/workspace";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
-type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; url: string };
+type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
 
 export default function V3ProjectSession({ id, onBack }: { id: string; onBack: () => void }) {
   const connection = useRef<IDBDatabase | undefined>(undefined);
@@ -38,6 +40,9 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [renameTarget, setRenameTarget] = useState<string>();
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
+  const [readabilityOpen, setReadabilityOpen] = useState(false);
+  const [canvasProfile, setCanvasProfile] = useState<ViewingProfile>();
+  const previewImage = useRef<HTMLImageElement>(null);
   const sourceDetails = useRef<HTMLDetailsElement>(null);
   const sourceMark = useRef<HTMLElement>(null);
   const [outcome, setOutcome] = useState<ProposalOutcome>();
@@ -91,9 +96,9 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     setRenderError("");
     void renderMermaidProject(project, controller.signal).then(rendered => {
       if (controller.signal.aborted) return;
-      const svg = buildExportFrame(rendered.result, project).svg;
+      const { svg, ...geometry } = buildExportFrame(rendered.result, project);
       url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-      setFrame({ document: project, rendered, url });
+      setFrame({ document: project, rendered, geometry, url });
     }).catch(reason => {
       if (!controller.signal.aborted) setRenderError(reason instanceof Error ? reason.message : "The diagram could not be rendered.");
     });
@@ -155,6 +160,15 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const outline = useMemo(() => outlineOpen && project && targetTable ? projectOutline(project, targetTable) : undefined,
     [outlineOpen, project, targetTable]);
   const highlighted = highlight?.source === source ? highlight : undefined;
+  const readabilityTargets = useMemo(() => {
+    if (!readabilityOpen || !currentFrame || !targetTable) return undefined;
+    const elements = new Map(currentFrame.rendered.result.elements?.map(element => [element.key, element]));
+    return targetTable.targets.map((target): ReadabilityTarget => {
+      const element = elements.get(target.id);
+      return { id: target.id, kind: target.elementKind, label: target.label, from: target.sourceId, to: target.targetId,
+        typography: !!element?.capabilities.includes("typography"), measuredLabelSize: element?.appearance?.labelSizeInDiagram };
+    });
+  }, [readabilityOpen, currentFrame, targetTable]);
   const identities = project?.identity.elements;
   const nodes = useMemo(() => {
     const ids = new Map(identities?.map(record => [record.id, record.binding.sourceId]));
@@ -166,7 +180,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || outlineOpen || editHeading || editFlowchart) return;
+    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || editHeading || editFlowchart) return;
     const openCommands = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
         || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -175,9 +189,15 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, outlineOpen, editHeading, editFlowchart]);
+  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, editHeading, editFlowchart]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
+  function openReadability() {
+    const bounds = previewImage.current?.getBoundingClientRect();
+    setCanvasProfile(bounds && bounds.width >= 100 && bounds.height >= 100
+      ? { width: Math.floor(bounds.width), height: Math.floor(bounds.height), padding: 0 } : undefined);
+    setReadabilityOpen(true);
+  }
   function showSource() {
     if (!sourceDetails.current) return;
     sourceDetails.current.open = true;
@@ -217,6 +237,8 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     { id: "show-source", title: "Show Mermaid source", category: "Project", synonyms: ["open source", "code"], run: showSource },
     { id: "find-element", title: "Find element", category: "Diagram", synonyms: ["outline", "relationships"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to show its elements.", run: () => setOutlineOpen(true) },
+    { id: "check-readability", title: "Check readability", category: "Design", synonyms: ["quality", "label size"],
+      unavailable: targetTable?.targets.length ? undefined : "A verified flowchart is needed for readability checks.", run: openReadability },
     { id: "add-node", title: "Add node", category: "Diagram", unavailable: editingUnavailable, run: () => setEditFlowchart("addNode") },
     { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
     { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
@@ -234,7 +256,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
         {project && (
           <>
             <div className="migration-preview">
-              {currentFrame && <img src={currentFrame.url} alt={`Diagram preview for ${title}`} />}
+              {currentFrame && <img ref={previewImage} src={currentFrame.url} alt={`Diagram preview for ${title}`} />}
               {!currentFrame && !renderError && <p role="status">Rendering the current diagram…</p>}
               {renderError && <p role="alert">{renderError}</p>}
               <details ref={sourceDetails}><summary>Mermaid source</summary>
@@ -253,6 +275,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
             <div className="recovery-actions">
               <button className="button secondary" disabled={busy} aria-keyshortcuts="Control+K Meta+K" onClick={() => setCommandsOpen(true)}>Commands</button>
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setOutlineOpen(true)}>Outline</button>}
+              {!!targetTable?.targets.length && <button className="button secondary" disabled={busy} onClick={openReadability}>Check readability</button>}
               <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
               {targetTable && flatFlowchart && (
                 <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
@@ -302,6 +325,8 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
         canRename={!editingUnavailable} onClose={() => setOutlineOpen(false)}
         onRename={renameFromOutline} onSource={jumpToSource} />}
+      {readabilityTargets && currentFrame && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
+        revision={currentFrame.document.revision} canvas={canvasProfile} onClose={() => setReadabilityOpen(false)} />}
       {project && editHeading && (
         <HeadingEditor document={project} field="title" revision={project.revision} outcome={outcome}
           prepare={(_base, envelope) => editor.current!.prepareHeading(envelope)}
