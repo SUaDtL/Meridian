@@ -94,6 +94,18 @@ export function createProjectSaveQueue<Project extends VersionedProject>(
     report();
   }
 
+  function adoptSaved(next: Project, savedAnchor: SavedAnchor) {
+    if (disposed) return;
+    if (pending || failure || working !== saved || next.id !== initial.id || next.revision !== working.revision + 1) {
+      throw new Error('The completed save cannot replace the current working revision.');
+    }
+    clearTimer();
+    working = saved = next;
+    anchor = { ...savedAnchor };
+    dirtySince = null;
+    report();
+  }
+
   function retry(): Promise<void> {
     if (failure?.phase === 'error') failure = undefined;
     return flush();
@@ -105,5 +117,5 @@ export function createProjectSaveQueue<Project extends VersionedProject>(
   }
 
   schedule();
-  return { state, edit, flush, retry, dispose };
+  return { state, edit, adoptSaved, flush, retry, dispose };
 }

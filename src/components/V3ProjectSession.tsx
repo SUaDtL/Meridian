@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import HeadingEditor from "./HeadingEditor";
 import CommandPalette from "./CommandPalette";
 import Modal from "./Modal";
@@ -24,6 +24,8 @@ import { openWorkspaceDatabase, saveWorkspaceProjectCopy } from "../lib/persiste
 import { downloadText, safeFilename, serializeProject } from "../lib/storage";
 import type { ProposalOutcome } from "../lib/workspace";
 
+const AssistExchangeDialog = lazy(() => import("./AssistExchangeDialog"));
+
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
 
@@ -39,6 +41,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const [busy, setBusy] = useState(false);
   const [editHeading, setEditHeading] = useState(false);
   const [editFlowchart, setEditFlowchart] = useState<NativeFlowchartEdit["op"]>();
+  const [assistOpen, setAssistOpen] = useState(false);
   const [editSource, setEditSource] = useState(false);
   const [detachOpen, setDetachOpen] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<SourceDraft>();
@@ -205,7 +208,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || editHeading || editFlowchart || editSource || detachOpen) return;
+    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || editHeading || editFlowchart || editSource || detachOpen || assistOpen) return;
     const openCommands = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
         || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -214,7 +217,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading, editFlowchart, editSource, detachOpen]);
+  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading, editFlowchart, editSource, detachOpen, assistOpen]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
@@ -258,6 +261,9 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     });
   }
   const commands: WorkspaceCommand[] = [
+    { id: "external-assistant", title: "External assistant file exchange", category: "Advanced", synonyms: ["request file", "import AI proposal"],
+      unavailable: busy ? "Wait for the current action to finish." : flatFlowchart && targetTable ? undefined : "Open a supported flat flowchart.",
+      run: () => setAssistOpen(true) },
     { id: "edit-heading", title: "Edit heading", category: "Project", synonyms: ["title", "rename project"], run: openHeading },
     { id: "show-source", title: "Show Mermaid source", category: "Project", synonyms: ["open source", "code"], run: showSource },
     { id: "edit-source", title: "Edit Mermaid source", category: "Project", synonyms: ["update source", "code"],
@@ -414,6 +420,13 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
           setDetachOpen(false);
           setProject(editor.current!.snapshot());
         }} />}
+      {assistOpen && project && targetTable && flatFlowchart && connection.current && editor.current && <Suspense>
+        <AssistExchangeDialog db={connection.current} editor={editor.current} project={project} table={targetTable}
+          onClose={() => setAssistOpen(false)} onApplied={() => {
+            setAssistOpen(false);
+            setProject(editor.current!.snapshot());
+          }} />
+      </Suspense>}
       {editSource && editor.current && <V3SourceEditor editor={editor.current} savedDraft={sourceDraft} onDraft={setSourceDraft}
         onClose={() => setEditSource(false)} onApply={proposal => {
           const current = editor.current!;
