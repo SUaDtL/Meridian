@@ -2,6 +2,7 @@ import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/pr
 import { readWorkspaceProject, writeWorkspaceProject } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
 import { canonicalJson, sameBaseToken, type BaseToken } from './base-token';
+import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } from './bulk-text';
 import { buildContrastCandidate, measureTargetContrast } from './contrast-fix';
 import { buildDesignRecipeCandidate, readDesignRecipe, type DesignRecipeId } from './design-recipes';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
@@ -10,7 +11,7 @@ import { prepareManualSource } from './manual-source';
 import type { MermaidProjectV3 } from './mermaid-project';
 import { suggestPathScene, type PathStoryOptions } from './path-story';
 import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-flowchart';
-import { renderMermaidProject, type RenderTargetTable } from './project-render';
+import { renderMermaidProject, verifiedTopology } from './project-render';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
 import type { ViewingProfile } from './readability';
 import type { ElementRemovalImpact } from './retire-elements';
@@ -67,6 +68,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   const contrast = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3; next: MermaidProjectV3; color: string; label: string; beforeRatio: number; afterRatio: number; threshold: number; svg: string;
   }>();
+  const bulkText = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
   let closed = false;
 
   function prepareHeading(envelope: unknown) {
@@ -154,10 +156,30 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return commit(change.candidate.document);
   }
 
-  function verifiedTopology(table: RenderTargetTable) {
-    const topology = table.targets.map(({ id, elementKind, label, parentId, members, sourceId, targetId, direction }) =>
-      ({ id, elementKind, label, parentId, members: [...members].sort(), sourceId, targetId, direction }));
-    return canonicalJson(topology.sort((a, b) => a.id.localeCompare(b.id)));
+  async function prepareBulkText(selected: ReadonlySet<string>, color: string, expected: BaseToken, signal?: AbortSignal) {
+    if (closed || !selected.size || selected.size > 1_500) throw new Error('Select up to 1,500 diagram elements.');
+    const base = current.document;
+    const selection = new Set(selected);
+    const accepted = await renderMermaidProject(base, signal);
+    if (!accepted.targetTable || !sameBaseToken(expected, accepted.targetTable.baseToken) || closed || current.document !== base) {
+      throw new Error('The diagram changed. Review the current selection.');
+    }
+    const scope = bulkTextSelection(accepted, selection);
+    const ids = scope.eligible.map(item => item.id);
+    const next = freezeSnapshot(buildBulkTextCandidate(base, ids, color));
+    const preview = await renderMermaidProject(next, signal);
+    signal?.throwIfAborted();
+    verifyBulkTextCandidate(accepted, preview, ids, color);
+    if (closed || current.document !== base) throw new Error('The diagram changed. Review the current selection.');
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    bulkText.set(proposal, { base, next });
+    return { proposal, next, preview, scope };
+  }
+
+  function applyBulkText(proposal: ReadyProposal) {
+    const change = bulkText.get(proposal);
+    if (closed || !change) return 'invalid';
+    return change.base === current.document ? commit(change.next) : 'stale';
   }
 
   async function prepareContrast(elementId: string, profile: ViewingProfile, expected: BaseToken, signal?: AbortSignal) {
@@ -315,6 +337,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     applyDesign,
     prepareLayout,
     prepareContrast,
+    prepareBulkText,
+    applyBulkText,
     readContrastPreview,
     applyContrast,
     readLayoutPreview,

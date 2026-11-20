@@ -2,7 +2,7 @@ import type { RenderResult } from '../../types';
 import type { DesignState, ElementKind, ElementStyle, RenderElement } from '../../types/design';
 import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram, renderFingerprint } from '../render';
-import { canonicalDigest, projectBaseToken, type BaseToken } from './base-token';
+import { canonicalDigest, canonicalJson, projectBaseToken, type BaseToken } from './base-token';
 import { sourceBindingKey } from './identities';
 import { observeFlowchartIdentities, type ObservedIdentity } from './identity-observation';
 import type { MermaidProjectV3 } from './mermaid-project';
@@ -24,6 +24,12 @@ export interface RenderTargetTable {
   baseToken: BaseToken;
   renderFingerprint: string;
   targets: RenderTarget[];
+}
+
+export function verifiedTopology(table: RenderTargetTable) {
+  const topology = table.targets.map(({ id, elementKind, label, parentId, members, sourceId, targetId, direction }) =>
+    ({ id, elementKind, label, parentId, members: [...members].sort(), sourceId, targetId, direction }));
+  return canonicalJson(topology.sort((a, b) => a.id.localeCompare(b.id)));
 }
 
 const mismatchedTarget = () => new Error('The accepted flowchart could not be matched to its saved identities and geometry.');

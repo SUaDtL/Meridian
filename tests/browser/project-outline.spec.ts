@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 
@@ -79,4 +80,50 @@ test('collapsing a verified group hides its selected member and never guesses a 
   await tree.press('ArrowRight');
   await expect(child).toHaveAttribute('aria-selected', 'true');
   await expect(outline.getByRole('status')).toHaveText('1 selected · 0 hidden');
+});
+
+test('applies one reviewed text color to eligible labels across an outline filter', async ({ page }, info) => {
+  const nodes = Array.from({ length: 10 }, (_, index) => `N${index}[${index < 2 ? 'Focus' : 'Other'} ${index}]`);
+  const source = ['flowchart LR', ...nodes, 'N0 path@--> N1', ''].join('\n');
+  const live = await openProject(page, 'Bulk label styling', source);
+  const readProject = async () => {
+    const [file] = await Promise.all([
+      page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click(),
+    ]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing styled project download.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  };
+  await expect(live.getByRole('img', { name: 'Diagram preview for Bulk label styling' })).toBeVisible();
+  const before = await readProject();
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('textbox', { name: 'Find an element' }).fill('Focus');
+  await outline.getByRole('button', { name: 'Select visible results' }).click();
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 0 hidden');
+  await outline.getByRole('button', { name: 'Select all diagram elements' }).click();
+  await expect(outline.getByRole('status')).toHaveText('11 selected · 9 hidden');
+  await outline.getByRole('button', { name: 'Change selected text color' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Change selected text color' });
+  await expect(dialog.getByRole('status')).toHaveText('10 eligible of 11 selected · 9 hidden in the outline');
+  await dialog.getByLabel('New text color').fill('#A13C65');
+  await dialog.getByRole('button', { name: 'Preview text color' }).click();
+  await expect(dialog.getByRole('img', { name: 'Diagram preview with selected text color' })).toBeVisible();
+  await page.screenshot({ path: info.outputPath('bulk-color-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('bulk-color-mobile.png') });
+  await dialog.getByRole('button', { name: 'Apply to 10 eligible labels' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const after = await readProject();
+  const styled = Object.fromEntries(before.identity.elements
+    .filter((item: { elementKind: string }) => item.elementKind === 'node')
+    .map((item: { id: string }) => [item.id, { color: '#a13c65' }]));
+  expect(after).toEqual({
+    ...before, design: { ...before.design, elements: styled },
+    revision: before.revision + 1, updatedAt: after.updatedAt,
+  });
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await readProject();
+  expect(restored).toEqual({ ...before, revision: after.revision + 1, updatedAt: restored.updatedAt });
 });
