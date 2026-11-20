@@ -1,0 +1,35 @@
+import { readFile } from 'node:fs/promises';
+import { expect, test } from '@playwright/test';
+
+test('reviews typed filters and explains excluded rows while preserving source data', async ({ page }) => {
+  const fixture = await readFile(new URL('../../src/lib/authoring/fixtures/example-chart.json', import.meta.url));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Chart values' }).click();
+  const chart = page.getByRole('dialog', { name: 'Chart values' });
+  await chart.getByLabel('Import a Meridian chart project').setInputFiles({ name: 'example.meridian.json', mimeType: 'application/json', buffer: fixture });
+  await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
+  await chart.getByRole('button', { name: 'Edit chart mapping and frame' }).click();
+  await chart.getByText('Data filters (0)', { exact: true }).click();
+  await chart.getByLabel('Filter column').selectOption({ label: 'Requests' });
+  await chart.getByLabel('Filter comparison').selectOption('gte');
+  await chart.getByLabel('Filter value').fill('10.0');
+  await chart.getByRole('button', { name: 'Add filter' }).click();
+  await chart.getByRole('button', { name: 'Review chart' }).click();
+  await expect(chart.getByText(/Rows excluded by filters: 1/).filter({ visible: true })).toBeVisible();
+  await expect(chart.getByRole('table', { name: 'Displayed values' }).getByRole('cell', { name: 'South' })).toHaveCount(0);
+  await chart.getByRole('button', { name: 'Source data', exact: true }).click();
+  await expect(chart.getByRole('table', { name: 'Source data' }).getByRole('row', { name: 'South Missing Excluded by filter 1' })).toBeVisible();
+  await chart.getByRole('button', { name: 'Apply chart changes' }).click();
+  await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
+  const [file] = await Promise.all([page.waitForEvent('download'), chart.getByRole('button', { name: 'Download chart project' }).click()]);
+  const path = await file.path();
+  if (!path) throw new Error('Missing chart project.');
+  const project = JSON.parse(await readFile(path, 'utf8'));
+  expect(project.dataset).toEqual(JSON.parse(fixture.toString('utf8')).dataset);
+  expect(project.chartSpec.filters).toEqual([{ fieldId: project.chartSpec.yField, operator: 'gte', value: '10' }]);
+  await chart.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
+  await chart.getByRole('button', { name: 'Displayed values', exact: true }).click();
+  await expect(chart.getByRole('table', { name: 'Displayed values' }).getByRole('cell', { name: 'South' })).toBeVisible();
+});

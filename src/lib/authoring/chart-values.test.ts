@@ -66,6 +66,21 @@ describe('portable chart projection', () => {
     return structuredClone(fixture) as ChartProject;
   }
 
+  it('checks typed filter literals and records which rule excludes a row', () => {
+    const original = project();
+    const [north, south] = original.dataset.rows;
+    const fieldId = original.dataset.fields[1].id;
+    original.chartSpec.filters = [{ fieldId, operator: 'gte', value: '10' }];
+    const { projection } = validateChartProject(original);
+    expect(projection.observations.map(item => item.rowIds)).toEqual([[north.id]]);
+    expect(projection.filterExclusions[south.id]).toBe(1);
+    expect(projection.counts).toMatchObject({ input: 2, retained: 1 });
+    original.chartSpec.filters = [{ fieldId, operator: 'isNull', value: '0' }];
+    expect(() => validateChartProject(original)).toThrow('chart format');
+    original.chartSpec.filters[0].value = null;
+    expect(validateChartProject(original).projection.observations[0].rowIds).toEqual([south.id]);
+  });
+
   it('round trips the design fixture and retains missing and out-of-range values', () => {
     const original = project();
     original.chartSpec.yDomain = ['0', '10'];

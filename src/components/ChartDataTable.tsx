@@ -27,11 +27,16 @@ export function displayedChartTable(projection: ChartProjection): ReadableTable 
   };
 }
 
-function sourceChartTable(dataset: ChartDataset): ReadableTable {
+function sourceChartTable(dataset: ChartDataset, exclusions: ChartProjection["filterExclusions"]): ReadableTable {
+  const showFilters = Object.keys(exclusions).length > 0;
   return {
     name: "Source data",
-    headings: dataset.fields.map(field => field.unit ? `${field.name} (${field.unit})` : field.name),
-    rows: dataset.rows.map(({ id, cells }) => ({ id, values: cells.map(cell => cell === null ? "Missing" : String(cell)) })),
+    headings: [...dataset.fields.map(field => field.unit ? `${field.name} (${field.unit})` : field.name), ...(showFilters ? ["Filter status"] : [])],
+    rows: dataset.rows.map(({ id, cells }) => {
+      const values = cells.map(cell => cell === null ? "Missing" : String(cell));
+      if (showFilters) values.push(exclusions[id] ? `Excluded by filter ${exclusions[id]}` : "Passed filters");
+      return { id, values };
+    }),
   };
 }
 
@@ -73,7 +78,7 @@ export default function ChartDataTable({ values, dataset }: { values: ChartProje
       <button className="button quiet" aria-pressed={view === "displayed"} onClick={() => setView("displayed")}>Displayed values</button>
       <button className="button quiet" aria-pressed={view === "source"} onClick={() => setView("source")}>Source data</button>
     </div>
-    <Table key={view} data={view === "displayed" ? displayedChartTable(values) : sourceChartTable(dataset)} />
+    <Table key={view} data={view === "displayed" ? displayedChartTable(values) : sourceChartTable(dataset, values.filterExclusions)} />
   </>;
 }
 

@@ -67,7 +67,14 @@ function filterRows(project: ChartProject, index: ReadonlyMap<string, number>) {
       }
     };
   });
-  return dataset.rows.filter(row => tests.every(test => test(row.cells)));
+  const exclusions: Record<string, number> = Object.create(null);
+  const rows = dataset.rows.filter(row => {
+    const rejectedBy = tests.findIndex(test => !test(row.cells));
+    if (rejectedBy === -1) return true;
+    exclusions[row.id] = rejectedBy + 1;
+    return false;
+  });
+  return { rows, exclusions };
 }
 
 /** Derive exact observations from an accepted typed dataset and closed mapping. */
@@ -103,7 +110,7 @@ export function projectChartValues(project: ChartProject) {
   const yDomain = checkedDomain(spec.yDomain, 'number', 'Y');
   const xLimits = x.type === 'number' ? numericBounds(xDomain) : null;
   const yLimits = numericBounds(yDomain);
-  const rows = filterRows(project, fields);
+  const { rows, exclusions } = filterRows(project, fields);
   type CellGroup = { x: ChartCell; series: ChartCell; ids: string[]; values: (string | null)[] };
   const grouped = new Map<string, CellGroup>();
   const seriesKeys = new Set<ChartCell>();
@@ -164,7 +171,7 @@ export function projectChartValues(project: ChartProject) {
     });
   }
   return {
-    x, y, series, xDomain, yDomain, observations, seriesKeys: [...seriesKeys],
+    x, y, series, xDomain, yDomain, observations, seriesKeys: [...seriesKeys], filterExclusions: exclusions,
     counts: { input: dataset.rows.length, retained: rows.length, excludedMissing, nullX, nullY,
       outside: observations.filter(point => point.outside).length, plotted: observations.filter(point => point.y !== null).length },
   };

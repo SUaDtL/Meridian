@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import Modal from "./Modal";
 import ChartFigure, { describeChart } from "./ChartFigure";
 import ChartDataTable, { chartHtml } from "./ChartDataTable";
+import ChartFilterEditor from "./ChartFilterEditor";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
 import Worker from "../lib/authoring/chart-input.worker?worker&inline";
 import { chartDataLimits, type ChartDataset, type ChartField, type ChartProject, type ChartSpec, type FieldType } from "../lib/authoring/chart-data";
@@ -444,7 +445,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       <div className="chart-map">
         <label>Title<input maxLength={120} value={title} onChange={event => setTitle(event.target.value)} /></label>
         <label>Subtitle<input maxLength={240} value={subtitle} onChange={event => setSubtitle(event.target.value)} /></label>
-        <label>Chart type<select value={spec.mark} onChange={event => setSpec(mapping(dataset, event.target.value as Mark))}>
+        <label>Chart type<select value={spec.mark} onChange={event => setSpec({ ...mapping(dataset, event.target.value as Mark), filters: spec.filters })}>
           <option value="bar">Bar</option><option value="line">Line</option><option value="scatter">Scatter</option>
         </select></label>
         <label>X field<select value={spec.xField} onChange={event => setSpec({ ...spec, xField: event.target.value })}>
@@ -494,6 +495,8 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
         {spec.mark === "bar" && <label className="check-label"><input type="checkbox" checked={acceptTruncatedAxis}
           onChange={event => setAcceptTruncatedAxis(event.target.checked)} />Accept a truncated axis if the range excludes zero</label>}
       </>}
+      <ChartFilterEditor dataset={dataset} filters={spec.filters} disabled={!!busy}
+        onChange={filters => setSpec({ ...spec, filters })} />
       <div className="dialog-actions">
         {editing ? <button className="button quiet" type="button" disabled={!!busy} onClick={returnToSaved}>Cancel chart changes</button> : <>
           <button className="button quiet" type="button" disabled={!!busy} onClick={() => { setStage("choose"); resetNotice(); }}>Choose different data</button>
