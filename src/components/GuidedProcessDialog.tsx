@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Modal from "./Modal";
-import { normalizeProcessSteps, prepareGuidedProcess, type ProcessStep } from "../lib/authoring/guided-process";
+import { prepareGuidedProcess, type ProcessStep } from "../lib/authoring/guided-process";
+import { normalizeProcessInWorker, ProcessNormalizationTimeout } from "../lib/authoring/process-normalization";
 import { buildExportFrame } from "../lib/export";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import { discardProcessCheckpoint, listProcessCheckpoints, saveProcessCheckpoint, type ProcessCheckpoint } from "../lib/persistence/process-drafts";
@@ -18,7 +19,8 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
   const [steps, setSteps] = useState<ProcessStep[]>([]);
   const [review, setReview] = useState<Review>();
   const [imageReady, setImageReady] = useState(false);
-  const [busy, setBusy] = useState<"preview" | "save" | "checkpoint" | "discard">();
+  const [busy, setBusy] = useState<"normalize" | "preview" | "save" | "checkpoint" | "discard">();
+  const [normalization, setNormalization] = useState<"retry" | "narrow" | null>(null);
   const [error, setError] = useState("");
   const [drafts, setDrafts] = useState<ProcessCheckpoint[]>([]);
   const [draftError, setDraftError] = useState("");
@@ -57,15 +59,28 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
     }
   }
 
-  function showConnections() {
+  async function showConnections(extended = false) {
+    if (controller.current) return;
+    const attempt = new AbortController();
+    controller.current = attempt;
+    setBusy("normalize");
     setError("");
     try {
-      const normalized = normalizeProcessSteps(draft.text);
+      const normalized = await normalizeProcessInWorker(draft.text, attempt.signal, extended);
+      attempt.signal.throwIfAborted();
       setSteps(normalized);
       setStage("connections");
+      setNormalization(null);
       void checkpoint(normalized);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Check your process steps.");
+      if (!attempt.signal.aborted) {
+        if (reason instanceof ProcessNormalizationTimeout) setNormalization(extended ? "narrow" : "retry");
+        setError(extended && reason instanceof ProcessNormalizationTimeout ? "Shorten your process list before trying again."
+          : reason instanceof Error ? reason.message : "Check your process steps.");
+        setBusy(undefined);
+      }
+    } finally {
+      controller.current = undefined;
     }
   }
 
@@ -140,7 +155,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
       busy={busy === "save" || busy === "checkpoint" || busy === "discard"} initialFocus="[name='process-title']">
       <h3 tabIndex={-1} ref={stepHeading}>{stage === "input" ? "Process steps" : stage === "connections" ? "Connections" : "Review your process"}</h3>
       {stage === "input" && (
-        <form className="heading-form" onSubmit={event => { event.preventDefault(); showConnections(); }}>
+        <form className="heading-form" onSubmit={event => { event.preventDefault(); if (!busy && normalization === null) void showConnections(); }}>
           {drafts.length > 0 && (
             <ul className="project-list">
               {drafts.map(saved => (
@@ -157,14 +172,24 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
               ))}
             </ul>
           )}
-          <label>Project title<input name="process-title" ref={titleInput} maxLength={120} value={draft.title}
+          <label>Project title<input name="process-title" ref={titleInput} maxLength={120} value={draft.title} readOnly={busy === "normalize"}
             onChange={event => onDraft({ ...draft, title: event.target.value })} /></label>
           <label>Put one step on each line
-            <textarea value={draft.text} rows={7} placeholder={"Receive request\nReview request\nSend decision"}
-              onChange={event => onDraft({ ...draft, text: event.target.value })} />
+            <textarea value={draft.text} rows={7} readOnly={busy === "normalize"} placeholder={"Receive request\nReview request\nSend decision"}
+              onChange={event => {
+                setNormalization(null);
+                setError("");
+                onDraft({ ...draft, text: event.target.value });
+              }} />
           </label>
           <p className="muted-note">Leading bullets and numbered prefixes are removed when followed by a space. Unreviewed input stays in this session.</p>
-          <div className="dialog-actions"><button type="submit" className="button primary" disabled={!!busy}>Review connections</button></div>
+          <div className="dialog-actions">
+            {normalization === "retry" ? (
+              <button type="button" className="button primary" disabled={!!busy} onClick={() => void showConnections(true)}>Retry for five seconds</button>
+            ) : (
+              <button type="submit" className="button primary" disabled={!!busy || normalization === "narrow"}>Review connections</button>
+            )}
+          </div>
         </form>
       )}
       {stage !== "input" && (
@@ -200,6 +225,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
           </div>
         </>
       )}
+      {busy === "normalize" && <p role="status">Reading process steps…</p>}
       {busy === "preview" && <p role="status">Checking and rendering the process…</p>}
       {busy === "save" && <p role="status">Saving the new project…</p>}
       {busy === "checkpoint" && <p role="status">Saving draft…</p>}

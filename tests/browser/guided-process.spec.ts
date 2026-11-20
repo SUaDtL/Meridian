@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expect, test } from '@playwright/test';
 
 test('creates a reviewed five-step v3 process without writing source', async ({ page }) => {
@@ -107,4 +109,65 @@ test('guidance keeps session input available when draft storage fails', async ({
   await wizard.getByRole('button', { name: 'Preview process' }).click();
   await wizard.getByRole('button', { name: 'Create process' }).click();
   await expect(page.getByRole('dialog', { name: 'Session draft' }).getByText('Saved in this browser.')).toBeVisible();
+});
+
+test('guided normalization stops timed-out workers and cancels on close', async ({ page }) => {
+  await page.addInitScript(() => {
+    const nativePost = Worker.prototype.postMessage;
+    const nativeTerminate = Worker.prototype.terminate;
+    const blockedWorkers = new WeakSet<Worker>();
+    let stoppedWorkers = 0;
+
+    Worker.prototype.postMessage = function (...args) {
+      if (args[0]?.version === 1 && typeof args[0]?.text === 'string') {
+        blockedWorkers.add(this);
+        return;
+      }
+      return nativePost.apply(this, args);
+    };
+    Worker.prototype.terminate = function () {
+      if (blockedWorkers.delete(this)) {
+        document.documentElement.dataset.stoppedProcessWorkers = String(++stoppedWorkers);
+      }
+      nativeTerminate.call(this);
+    };
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
+  const field = wizard.getByLabel('Put one step on each line');
+  const input = 'Start\nReview\nFinish';
+  await field.fill(input);
+  await wizard.getByRole('button', { name: 'Review connections' }).click();
+  const retry = wizard.getByRole('button', { name: 'Retry for five seconds' });
+  await expect(retry).toBeEnabled();
+  await expect(page.locator('html')).toHaveAttribute('data-stopped-process-workers', '1');
+  await retry.click();
+  await expect(wizard.getByRole('alert')).toHaveText('Shorten your process list before trying again.');
+  await expect(page.locator('html')).toHaveAttribute('data-stopped-process-workers', '2');
+  await expect(field).toHaveValue(input);
+  const review = wizard.getByRole('button', { name: 'Review connections' });
+  await expect(review).toBeDisabled();
+  await field.fill('Start\nFinish');
+  await review.click();
+  await expect(wizard.getByText('Reading process steps…')).toBeVisible();
+  await wizard.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-stopped-process-workers', '3', { timeout: 1_000 });
+  await page.reload();
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await expect(wizard.getByRole('button', { name: /^Resume / })).toHaveCount(0);
+});
+
+test('guided normalization runs in the standalone app with networking disabled', async ({ page, context }) => {
+  const network: string[] = [];
+  context.on('request', request => { if (/^https?:/.test(request.url())) network.push(request.url()); });
+  await context.setOffline(true);
+  await page.goto(pathToFileURL(resolve('standalone/Meridian.html')).href);
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
+  await wizard.getByLabel('Put one step on each line').fill('1. Start\nFinish');
+  await wizard.getByRole('button', { name: 'Review connections' }).click();
+  await expect(wizard.getByText('2 steps · 1 connections · New project')).toBeVisible();
+  await expect(wizard.getByText('From line 1: 1. Start')).toBeVisible();
+  expect(network).toEqual([]);
 });
