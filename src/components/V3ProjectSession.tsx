@@ -178,6 +178,12 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     return targetTable?.targets.filter(item => item.elementKind === "node")
       .map(item => ({ id: item.id, label: `${item.label} (${ids.get(item.id)})` })) ?? [];
   }, [identities, targetTable]);
+  const edges = useMemo(() => {
+    const ids = new Map(identities?.filter(record => record.status === "resolved" && record.binding.type === "edge-id")
+      .map(record => [record.id, record.binding.sourceId]));
+    return targetTable?.targets.flatMap(item => item.elementKind === "edge" && ids.has(item.id)
+      ? [{ id: item.id, label: `${item.label} (${ids.get(item.id)})` }] : []) ?? [];
+  }, [identities, targetTable]);
   const needsRecovery = save?.phase === "conflict" || save?.phase === "error";
   const editingUnavailable = busy ? "Wait for the current action to finish."
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
@@ -250,6 +256,8 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
     { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("addEdge") },
+    { id: "remove-connection", title: "Delete connection", category: "Diagram", synonyms: ["remove edge", "delete edge"],
+      unavailable: editingUnavailable ?? (!edges.length ? "Choose a connection with an explicit source ID." : undefined), run: () => setEditFlowchart("removeEdge") },
     { id: "undo", title: "Undo", category: "History", unavailable: editor.current?.canUndo() ? undefined : "There are no changes to undo.", run: () => changeHistory("undo") },
     { id: "redo", title: "Redo", category: "History", unavailable: editor.current?.canRedo() ? undefined : "There are no changes to redo.", run: () => changeHistory("redo") },
     { id: "download-project", title: "Download v3 project", category: "Export", synonyms: ["export", "backup", "save project"], run: downloadProject },
@@ -350,7 +358,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
           onApply={applyHeading} onClose={() => setEditHeading(false)} />
       )}
       {editFlowchart && editor.current && (
-        <V3StructureEditor editor={editor.current} nodes={nodes} initialOperation={editFlowchart} initialTarget={renameTarget}
+        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} initialOperation={editFlowchart} initialTarget={renameTarget}
           onClose={() => { setEditFlowchart(undefined); setRenameTarget(undefined); }}
           onApply={proposal => {
             const current = editor.current!;

@@ -8,6 +8,7 @@ import type { MermaidProjectV3 } from './mermaid-project';
 import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-flowchart';
 import { renderMermaidProject, type RenderTargetTable } from './project-render';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
+import type { ConnectionRemovalImpact } from './retire-connection';
 import { validateMermaidProject } from './validate-mermaid-project';
 
 const historyByteLimit = 8 * 1024 * 1024;
@@ -38,7 +39,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     writeWorkspaceProject(db, document, anchor), notify);
   const past: (typeof current)[] = [];
   const future: (typeof current)[] = [];
-  const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId: string }>();
+  const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId: string; impact?: ConnectionRemovalImpact }>();
   const designs = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3;
     dependency: string;
@@ -67,9 +68,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   async function prepareStructure(edit: NativeFlowchartEdit, signal?: AbortSignal): Promise<ReadyProposal> {
     const base = current.document;
-    const { document, elementId } = await prepareFlowchartCandidate(base, { ...edit }, signal);
+    const { document, elementId, impact } = await prepareFlowchartCandidate(base, { ...edit }, signal);
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
-    structure.set(proposal, { base, next: freezeSnapshot(document), elementId });
+    structure.set(proposal, { base, next: freezeSnapshot(document), elementId, impact: freezeSnapshot(impact) });
     return proposal;
   }
 
@@ -84,6 +85,11 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   function readStructurePreview(proposal: ReadyProposal) {
     const change = structure.get(proposal);
     return !closed && change?.base === current.document ? change.next : undefined;
+  }
+
+  function readStructureImpact(proposal: ReadyProposal) {
+    const change = structure.get(proposal);
+    return !closed && change?.base === current.document ? change.impact : undefined;
   }
 
   async function prepareDesign(id: DesignRecipeId, signal?: AbortSignal) {
@@ -190,6 +196,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     applyHeading,
     prepareStructure,
     readStructurePreview,
+    readStructureImpact,
     applyStructure,
     prepareDesign,
     readDesignPreview,
