@@ -58,7 +58,7 @@ npx playwright install --with-deps chromium
 npm run test:browser
 ```
 
-The workflow uploads `meridian-browser-evidence` and the exact `meridian-verified-site`. Publication uses the verified site artifact without rebuilding. Inspect both the workflow conclusion and those attachments when reviewing a change.
+The verification job uploads `meridian-browser-evidence-<attempt>` and the exact site bytes. Pull requests retain them as `meridian-verified-site-<attempt>`. Main uploads them as `github-pages-<attempt>`, then the deployment job publishes that artifact without rebuilding or re-uploading it. Inspect the workflow conclusion and its artifacts when reviewing a change.
 
 ## Coverage limits
 
