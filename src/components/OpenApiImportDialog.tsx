@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
 import OpenApiWorker from "../lib/authoring/openapi-import.worker?worker&inline";
-import { validateVirtualPath, type OpenApiFacts } from "../lib/authoring/openapi-facts";
+import { validateVirtualPath, type OpenApiFacts, type OpenApiInput } from "../lib/authoring/openapi-facts";
 import { openApiNodeLimit, openApiSchemaScope, prepareOpenApiProject, prepareOpenApiSchemaProject,
   type OpenApiChoice, type OpenApiSchemaChoice } from "../lib/authoring/openapi-project";
 import { buildExportFrame } from "../lib/export";
@@ -15,8 +15,7 @@ const countLabel = (count: number, singular: string) => `${count} ${singular}${c
 export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerraform, onSchema }: {
   onBack: () => void; onClose: () => void; onCreated: (id: string) => void; onTerraform: () => void; onSchema: () => void;
 }) {
-  const [file, setFile] = useState<File>();
-  const [path, setPath] = useState("");
+  const [files, setFiles] = useState<{ file: File; path: string }[]>([]);
   const [facts, setFacts] = useState<OpenApiFacts>();
   const [view, setView] = useState<"operations" | "schemas">("operations");
   const [title, setTitle] = useState("");
@@ -57,17 +56,22 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   }
 
   function extract(extended = false) {
-    if (!file) return;
+    if (!files.length) return;
     const schemaMode = view === "schemas";
     void run(schemaMode ? "Reading schemas" : "Reading operations", async signal => {
-      if (file.size > 2_000_000) throw new Error("Choose an OpenAPI file no larger than 2,000,000 bytes.");
-      const virtualPath = validateVirtualPath(path);
-      const bytes = await file.arrayBuffer();
-      const format = /\.ya?ml$/i.test(file.name) ? "yaml" : undefined;
+      if (!schemaMode && files.length !== 1) throw new Error("Choose one OpenAPI file for the operation view.");
+      if (files.length > 20 || files.reduce((sum, { file }) => sum + file.size, 0) > 2_000_000) {
+        throw new Error("Choose up to 20 OpenAPI files totaling at most 2,000,000 bytes.");
+      }
+      const paths = files.map(item => validateVirtualPath(item.path));
+      if (new Set(paths).size !== paths.length) throw new Error("Assign a distinct virtual path to every OpenAPI file.");
+      const inputs = await Promise.all(files.map(async ({ file }, index): Promise<OpenApiInput> => ({
+        virtualPath: paths[index], bytes: await file.arrayBuffer(), format: /\.ya?ml$/i.test(file.name) ? "yaml" : undefined,
+      })));
       const parsed = await runAuthoringWorker<OpenApiFacts>(() => new OpenApiWorker(),
-        { bytes, virtualPath, format, view: schemaMode ? "schemas" : undefined }, signal, "Reading OpenAPI facts", extended);
+        schemaMode ? { files: inputs } : inputs[0], signal, "Reading OpenAPI facts", extended);
       signal.throwIfAborted();
-      setFile(undefined);
+      setFiles([]);
       setFacts(parsed);
       setChoices(new Map());
       setSchemas(new Map());
@@ -124,7 +128,8 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
 
   const needle = query.trim().toLowerCase();
   const schemaFacts = facts?.schemaView;
-  const matchingSchemas = schemaFacts?.schemas.filter(item => item.key.toLowerCase().includes(needle)) ?? [];
+  const matchingSchemas = schemaFacts?.schemas.filter(item => item.name.toLowerCase().includes(needle)
+    || item.virtualPath.toLowerCase().includes(needle)) ?? [];
   const visibleSchemas = matchingSchemas.slice(0, visibleLimit);
   const schemaScope = facts && schemaFacts ? openApiSchemaScope(facts, schemas) : undefined;
   const selectedReferences = schemaScope?.references.length ?? 0;
@@ -140,33 +145,40 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
     <h3 ref={heading} tabIndex={-1}>{review ? "Review your new diagram" : facts
       ? schemaFacts ? "Choose schema scope" : "Choose operation scope" : "New diagram from file"}</h3>
     {!facts && <form className="heading-form" onSubmit={event => { event.preventDefault(); extract(); }}>
-      <p>Import declared operations or schema relationships from an OpenAPI 3.0 or 3.1 JSON or restricted YAML file. Meridian reads the file in this browser and retains only selected facts in the new diagram.</p>
+      <p>Import OpenAPI 3.0 or 3.1 JSON or restricted YAML. Meridian reads the files in this browser and retains only selected facts in the new diagram.</p>
       <label>OpenAPI view<select value={view} disabled={!!busy} onChange={event => {
         setView(event.target.value === "schemas" ? "schemas" : "operations");
         setError(""); setRetry(false);
       }}><option value="operations">Operations by tag</option><option value="schemas">Schema relationships</option></select></label>
-      <label>OpenAPI specification<input type="file" accept=".json,.yaml,.yml,application/json,application/yaml,text/yaml" disabled={!!busy} onChange={event => {
-        const selected = event.target.files?.[0];
-        setFile(selected);
-        setPath(selected?.name.replace(/[^A-Za-z0-9_.-]/g, "_") || "");
+      <label>OpenAPI specification<input type="file" accept=".json,.yaml,.yml,application/json,application/yaml,text/yaml"
+        multiple={view === "schemas"} disabled={!!busy} onChange={event => {
+        setFiles(Array.from(event.target.files ?? [], file => ({
+          file, path: (file.webkitRelativePath || file.name).replace(/[^A-Za-z0-9_./-]/g, "_"),
+        })));
         setError(""); setRetry(false);
       }} /></label>
-      <label>Virtual path<input value={path} disabled={!!busy} maxLength={200}
-        onChange={event => { setPath(event.target.value); setError(""); setRetry(false); }} /></label>
+      {view === "schemas" && <p>Choose up to 20 files and review their virtual paths. Same-basename files need distinct paths.</p>}
+      {view === "operations" && files.length > 1 && <p>Choose one OpenAPI file for the operation view.</p>}
+      {files.map(({ file, path }, index) => <label key={index}>{files.length === 1 ? "Virtual path" : `Virtual path ${index + 1} for ${file.name}`}
+        <input value={path} disabled={!!busy} maxLength={200} onChange={event => {
+          setFiles(current => current.map((item, position) => position === index ? { ...item, path: event.target.value } : item));
+          setError(""); setRetry(false);
+        }} /></label>)}
       <div className="dialog-actions">
         <button type="button" className="button quiet" disabled={!!busy} onClick={onBack}>Back</button>
         <button type="button" className="button secondary" disabled={!!busy} onClick={onTerraform}>Import Terraform JSON</button>
         <button type="button" className="button secondary" disabled={!!busy} onClick={onSchema}>Import JSON Schema</button>
-        <button type="submit" className="button primary" disabled={!file || !path || !!busy}>
+        <button type="submit" className="button primary" disabled={!files.length || files.some(item => !item.path)
+          || (view === "operations" && files.length > 1) || !!busy}>
           {view === "schemas" ? "Read schema facts" : "Read operation facts"}
         </button>
       </div>
     </form>}
     {facts && schemaFacts && !review && <form className="heading-form" onSubmit={event => { event.preventDefault(); preview(); }}>
-      <p>OpenAPI {facts.version} · {facts.virtualPath} · {countLabel(schemaFacts.schemas.length, "schema")}</p>
+      <p>OpenAPI {facts.version} · {countLabel(schemaFacts.files.length, "supplied file")} · {countLabel(schemaFacts.schemas.length, "schema")}</p>
       <p>{countLabel(schemaFacts.references.length, "resolved reference")} · {countLabel(schemaFacts.unresolved, "unresolved reference")}
         {" · "}{countLabel(schemaFacts.omitted, "unsupported schema location")}</p>
-      <p>Connections show declared references to named components in this file. External files, anchors and unsupported schema locations have separate coverage above.</p>
+      <p>Connections show declared references to named components in the supplied files. Unavailable files, anchors and unsupported schema locations have separate coverage above.</p>
       <label>Diagram title<input value={title} maxLength={120} disabled={!!busy} onChange={event => setTitle(event.target.value)} /></label>
       <label>Find schemas<input value={query} maxLength={160} disabled={!!busy}
         onChange={event => { setQuery(event.target.value); setVisibleLimit(rowLimit); }} /></label>
@@ -174,11 +186,12 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
         {" · "}{countLabel(selectedReferences, "selected reference")}</p>
       {scopeTooLarge && <p role="alert">Choose a scope of up to 100 schemas and 200 references.</p>}
       {!visibleSchemas.length && <p>No schema facts match this view.</p>}
-      <ul className="project-list">{visibleSchemas.map(({ key }) => {
+      <ul className="project-list">{visibleSchemas.map(({ key, name, virtualPath }) => {
         const current = schemas.get(key);
         return <li className="project-row" key={key}><div>
           <label><input type="checkbox" checked={!!current} disabled={!!busy}
-            onChange={event => changeSchema(key, event.target.checked ? key : undefined)} />{key}</label>
+            onChange={event => changeSchema(key, event.target.checked ? name : undefined)} />{name}
+            {schemaFacts.files.length > 1 && <> · {virtualPath}</>}</label>
           {current && <label>Display label<input value={current.label} maxLength={400} disabled={!!busy}
             onChange={event => changeSchema(key, event.target.value)} /></label>}
         </div></li>;
@@ -233,7 +246,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
         ? countLabel(facts.uncheckedSchemaCount - schemas.size, "schema")
         : countLabel(facts.operations.length - choices.size, "operation fact")} omitted</p>
       <p>Connections show {schemaFacts ? "declared OpenAPI schema references" : "declared OpenAPI tag membership"}.
-        {" "}The project keeps the file’s virtual path, a JSON pointer and the meaning of each imported relationship.</p>
+        {" "}The project keeps each fact’s virtual path, JSON pointer and relationship.</p>
       <div className="migration-preview"><img src={review.url} alt={schemaFacts ? "Proposed OpenAPI schema diagram" : "Proposed OpenAPI operation diagram"}
         onLoad={() => setPainted(true)} onError={() => setError("The proposed diagram could not be displayed.")} /></div>
       <div className="dialog-actions">
