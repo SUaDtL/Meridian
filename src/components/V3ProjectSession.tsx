@@ -7,6 +7,7 @@ import ReadabilityDialog from "./ReadabilityDialog";
 import V3ComparisonDialog from "./V3ComparisonDialog";
 import V3GroupStoryDialog, { initialGroupStoryDraft } from "./V3GroupStoryDialog";
 import V3StructureEditor from "./V3StructureEditor";
+import V3SourceEditor, { type SourceDraft } from "./V3SourceEditor";
 import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
@@ -37,6 +38,8 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const [busy, setBusy] = useState(false);
   const [editHeading, setEditHeading] = useState(false);
   const [editFlowchart, setEditFlowchart] = useState<NativeFlowchartEdit["op"]>();
+  const [editSource, setEditSource] = useState(false);
+  const [sourceDraft, setSourceDraft] = useState<SourceDraft>();
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
@@ -200,7 +203,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || editHeading || editFlowchart) return;
+    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || editHeading || editFlowchart || editSource) return;
     const openCommands = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
         || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -209,7 +212,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading, editFlowchart]);
+  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading, editFlowchart, editSource]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
@@ -255,6 +258,8 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const commands: WorkspaceCommand[] = [
     { id: "edit-heading", title: "Edit heading", category: "Project", synonyms: ["title", "rename project"], run: openHeading },
     { id: "show-source", title: "Show Mermaid source", category: "Project", synonyms: ["open source", "code"], run: showSource },
+    { id: "edit-source", title: "Edit Mermaid source", category: "Project", synonyms: ["update source", "code"],
+      unavailable: busy ? "Wait for the current action to finish." : targetTable ? undefined : "Open a verified flowchart before editing its source.", run: () => setEditSource(true) },
     { id: "find-element", title: "Find element", category: "Diagram", synonyms: ["outline", "relationships"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to show its elements.", run: () => setOutlineOpen(true) },
     { id: "check-readability", title: "Check readability", category: "Design", synonyms: ["quality", "label size"],
@@ -318,6 +323,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
               <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
+              {targetTable && <button className="button secondary" disabled={busy} onClick={() => setEditSource(true)}>Edit Mermaid source</button>}
               {targetTable && flatFlowchart && (
                 <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
               )}
@@ -392,6 +398,16 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
           prepare={(_base, envelope) => editor.current!.prepareHeading(envelope)}
           onApply={applyHeading} onClose={() => setEditHeading(false)} />
       )}
+      {editSource && editor.current && <V3SourceEditor editor={editor.current} savedDraft={sourceDraft} onDraft={setSourceDraft}
+        onClose={() => setEditSource(false)} onApply={proposal => {
+          const current = editor.current!;
+          const result = current.applyStructure(proposal);
+          if (result.status === "applied") {
+            setSourceDraft(undefined);
+            setProject(current.snapshot());
+          }
+          return result.status;
+        }} />}
       {editFlowchart && editor.current && (
         <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} initialOperation={editFlowchart} initialTarget={renameTarget}
           onClose={() => { setEditFlowchart(undefined); setRenameTarget(undefined); }}

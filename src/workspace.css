@@ -442,6 +442,17 @@
   align-self: flex-end;
   margin-top: -4px;
 }
+.heading-form textarea[name="v3-source-draft"] {
+  width: 100%;
+  min-height: 12rem;
+  resize: vertical;
+  padding: .8rem;
+  border: 1px solid #456357;
+  border-radius: .45rem;
+  background: #11251f;
+  color: #dfede7;
+  font: 14px/1.6 ui-monospace, monospace;
+}
 .dialog-actions {
   display: flex;
   flex-wrap: wrap;
