@@ -23,7 +23,8 @@ const quarantineReasons: Record<MigrationManifest["quarantined"][number]["reason
   identity: "The diagram's element identities could not be verified.",
 };
 
-export default function WorkspaceMigrationReview({ onClose, onDownloadLegacy }: {
+export default function WorkspaceMigrationReview({ nextProjectId, onClose, onDownloadLegacy }: {
+  nextProjectId?: string;
   onClose: () => void;
   onDownloadLegacy: () => void;
 }) {
@@ -34,7 +35,7 @@ export default function WorkspaceMigrationReview({ onClose, onDownloadLegacy }: 
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [openProjectId, setOpenProjectId] = useState<string>();
+  const [openProjectId, setOpenProjectId] = useState(nextProjectId);
 
   const run = useCallback(async (task: Task, work: (db: IDBDatabase, signal: AbortSignal) => Promise<void>) => {
     if (action.current) return;

@@ -7,6 +7,7 @@ import {
   Layers3,
   Search,
   ShieldCheck,
+  ListTree,
   Upload,
 } from "lucide-react";
 import type { StudioDocument } from "../types";
@@ -14,15 +15,22 @@ import { getTheme } from "../lib/themes";
 import Brand from "./Brand";
 
 export interface StartActions {
+  onGuided: () => void;
   onBlank: () => void;
   onExamples: () => void;
   onImport: () => void;
 }
-export function StartChoices({ onBlank, onExamples, onImport }: StartActions) {
+export function StartChoices({ onGuided, onBlank, onExamples, onImport }: StartActions) {
   return (
     <div className="start-choices">
+      <button className="start-card start-blank start-guided" onClick={onGuided} aria-label="Build with guidance">
+        <span className="start-icon"><ListTree size={25} /></span>
+        <h2>Build with guidance</h2>
+        <p>Turn a list of process steps into a flowchart.</p>
+        <span className="start-cta">Build a process <ArrowRight size={17} /></span>
+      </button>
       <button
-        className="start-card start-blank"
+        className="start-card"
         onClick={onBlank}
         aria-label="Start from scratch"
       >

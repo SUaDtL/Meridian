@@ -1,0 +1,50 @@
+import { readFile } from 'node:fs/promises';
+import { expect, test } from '@playwright/test';
+
+test('creates a reviewed five-step v3 process without writing source', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
+  await wizard.getByLabel('Project title').fill('Request process');
+  await wizard.getByLabel('Put one step on each line').fill('1. Receive\n\n- Review\n1.2 API\nReview\nPublish');
+  await wizard.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await expect(wizard.getByLabel('Put one step on each line')).toHaveValue('1. Receive\n\n- Review\n1.2 API\nReview\nPublish');
+  await wizard.getByRole('button', { name: 'Review connections' }).click();
+  await expect(wizard.getByText('5 steps · 4 connections · New project')).toBeVisible();
+  await expect(wizard.getByText('Next: 1.2 API')).toBeVisible();
+  await expect(wizard.getByText('From line 1: 1. Receive')).toBeVisible();
+  await wizard.getByRole('button', { name: 'Preview process' }).click();
+  await expect(wizard.getByRole('button', { name: 'Create process' })).toBeEnabled();
+  await expect(wizard.getByRole('img', { name: 'Proposed process diagram' })).toBeVisible();
+  await wizard.getByRole('button', { name: 'Create process' }).click();
+  const project = page.getByRole('dialog', { name: 'Request process' });
+  await expect(project.getByText('Saved in this browser.')).toBeVisible();
+  const pendingDownload = page.waitForEvent('download');
+  await project.getByRole('button', { name: 'Download v3 project' }).click();
+  const downloaded = await (await pendingDownload).path();
+  if (!downloaded) throw new Error('No downloaded project.');
+  const result = JSON.parse(await readFile(downloaded, 'utf8'));
+  expect(result).toMatchObject({ schema: 'meridian/v3', title: 'Request process', revision: 0 });
+  expect(result.source).toBe([
+    'flowchart LR',
+    '  m_n1["Receive"]', '  m_n2["Review"]', '  m_n3["1.2 API"]', '  m_n4["Review"]', '  m_n5["Publish"]',
+    '  m_n1 m_e1@--> m_n2', '  m_n2 m_e2@--> m_n3', '  m_n3 m_e3@--> m_n4', '  m_n4 m_e4@--> m_n5', '',
+  ].join('\n'));
+  expect(new Set(result.identity.elements.map((element: { id: string }) => element.id)).size).toBe(9);
+  expect(await page.evaluate(() => localStorage.getItem('meridian:v2'))).toBeNull();
+});
+
+test('keeps the guided input when the renderer cannot display a label exactly', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
+  const input = 'Start\nA|B';
+  await wizard.getByLabel('Put one step on each line').fill(input);
+  await wizard.getByRole('button', { name: 'Review connections' }).click();
+  await wizard.getByRole('button', { name: 'Preview process' }).click();
+  await expect(wizard.getByRole('alert')).toContainText("could not display node 2's label exactly");
+  await expect(wizard.getByRole('button', { name: 'Create process' })).toHaveCount(0);
+  await wizard.getByRole('button', { name: 'Back to steps' }).click();
+  await expect(wizard.getByLabel('Put one step on each line')).toHaveValue(input);
+});
