@@ -18,6 +18,10 @@ jobs:
     name: Source, browser and visual regression checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      VERIFIED_ARTIFACT_NAME: meridian-verified-site-${{ github.run_attempt }}
+    outputs:
+      artifact-name: ${{ env.VERIFIED_ARTIFACT_NAME }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,7 +57,7 @@ jobs:
       - name: Preserve the exact verified Pages artifact
         uses: actions/upload-artifact@v4
         with:
-          name: meridian-verified-site
+          name: ${{ env.VERIFIED_ARTIFACT_NAME }}
           path: site/
           include-hidden-files: true
           retention-days: 14
@@ -64,23 +68,51 @@ jobs:
     needs: verify
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      PAGES_ARTIFACT_NAME: github-pages-${{ github.run_attempt }}
     steps:
+      - name: Require the verified build artifact
+        env:
+          VERIFIED_ARTIFACT_NAME: ${{ needs.verify.outputs.artifact-name }}
+        run: test -n "$VERIFIED_ARTIFACT_NAME"
       - uses: actions/download-artifact@v4
         with:
-          name: meridian-verified-site
+          name: ${{ needs.verify.outputs.artifact-name }}
           path: site
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload verified artifact to GitHub Pages
+        id: pages-artifact
         uses: actions/upload-pages-artifact@v4
         with:
+          name: ${{ env.PAGES_ARTIFACT_NAME }}
           path: site
+      - name: Wait for Pages to see the uploaded artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PAGES_ARTIFACT_ID: ${{ steps.pages-artifact.outputs.artifact_id }}
+        run: |
+          test -n "$PAGES_ARTIFACT_ID"
+          endpoint="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$PAGES_ARTIFACT_NAME"
+          for attempt in {1..15}; do
+            if gh api "$endpoint" | jq -e --argjson id "$PAGES_ARTIFACT_ID" '
+              .artifacts | length == 1 and .[0].id == $id and (.[0].expired | not)
+            ' > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "The Pages artifact was uploaded but is not visible to the deployment API." >&2
+          exit 1
       - name: Deploy independent preview
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ env.PAGES_ARTIFACT_NAME }}
