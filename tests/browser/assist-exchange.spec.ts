@@ -10,9 +10,8 @@ async function download(page: Page, button: Locator) {
   return readFile(path, 'utf8');
 }
 
-test('exports scoped facts offline, rejects context-only changes, and applies a matched rename once with Undo', async ({ page, context }, info) => {
-  const source = 'flowchart LR\n A[First]\n B[Context node]\n C[Excluded node]\n A path@--> B\n %% original-source-only\n';
-  const project = { ...createDocument(), title: 'Scoped exchange', source };
+async function openProject(page: Page, title: string, source: string) {
+  const project = { ...createDocument(), title, source };
   await page.addInitScript(({ key, project }) => localStorage.setItem(
     key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] }),
   ), { key: STORAGE_KEY, project });
@@ -20,20 +19,34 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
   await page.getByRole('button', { name: 'Manage projects' }).click();
   await page.getByRole('button', { name: 'Project migration and recovery' }).click();
   await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
-  await page.getByRole('button', { name: 'Open v3 project Scoped exchange' }).click();
-  const live = page.getByRole('dialog', { name: 'Scoped exchange' });
-  await expect(live.getByRole('img', { name: 'Diagram preview for Scoped exchange' })).toBeVisible();
+  await page.getByRole('button', { name: `Open v3 project ${title}` }).click();
+  const live = page.getByRole('dialog', { name: title });
+  await expect(live.getByRole('img', { name: `Diagram preview for ${title}` })).toBeVisible();
+  return live;
+}
+
+async function openExchange(page: Page, live: Locator) {
+  await live.getByRole('button', { name: 'Commands' }).click();
+  const commands = page.getByRole('dialog', { name: 'Commands' });
+  await commands.getByRole('combobox').fill('external assistant');
+  await commands.getByRole('option', { name: /External assistant file exchange/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'External assistant file exchange' });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function review(dialog: Locator, value: object) {
+  await dialog.getByLabel('Assistant proposal file').setInputFiles({
+    name: 'return.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)),
+  });
+  await dialog.getByRole('button', { name: 'Preview unverified suggestion' }).click();
+}
+
+test('exports scoped facts offline, rejects context-only changes, and applies a matched rename once with Undo', async ({ page, context }, info) => {
+  const source = 'flowchart LR\n A[First]\n B[Context node]\n C[Excluded node]\n A path@--> B\n %% original-source-only\n';
+  const live = await openProject(page, 'Scoped exchange', source);
   const before = await download(page, live.getByRole('button', { name: 'Download v3 project' }));
-  async function openExchange() {
-    await live.getByRole('button', { name: 'Commands' }).click();
-    const commands = page.getByRole('dialog', { name: 'Commands' });
-    await commands.getByRole('combobox').fill('external assistant');
-    await commands.getByRole('option', { name: /External assistant file exchange/ }).click();
-    const dialog = page.getByRole('dialog', { name: 'External assistant file exchange' });
-    await expect(dialog).toBeVisible();
-    return dialog;
-  }
-  const dialog = await openExchange();
+  const dialog = await openExchange(page, live);
   await context.setOffline(true);
   await dialog.getByLabel('Instruction').fill('Use a short literal label on the writable node.');
   await dialog.getByRole('combobox', { name: 'First', exact: true }).selectOption('writable');
@@ -70,26 +83,20 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   expect(await download(page, live.getByRole('button', { name: 'Download v3 project' }))).toBe(before);
 
-  await openExchange();
+  await openExchange(page, live);
   await dialog.getByRole('button', { name: 'Review a proposal' }).click();
   const proposal = {
     schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'ai',
     requestId: request.requestId, requestHash, baseToken: request.baseToken,
     operations: [{ op: 'setNodeLabel', targetId: writable.id, label: 'Reviewed label' }],
   };
-  async function review(value: object) {
-    await dialog.getByLabel('Assistant proposal file').setInputFiles({
-      name: 'return.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)),
-    });
-    await dialog.getByRole('button', { name: 'Preview unverified suggestion' }).click();
-  }
-  await review({ ...proposal, origin: 'canvas' });
-  await expect(dialog.getByRole('alert')).toContainText('one supported node rename');
-  await review({ ...proposal, operations: [{ ...proposal.operations[0], targetId: contextOnly.id }] });
+  await review(dialog, { ...proposal, origin: 'canvas' });
+  await expect(dialog.getByRole('alert')).toContainText('one supported node or connection label edit');
+  await review(dialog, { ...proposal, operations: [{ ...proposal.operations[0], targetId: contextOnly.id }] });
   await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
-  await review({ ...proposal, baseToken: { ...proposal.baseToken, stateDigest: 'a'.repeat(64) } });
+  await review(dialog, { ...proposal, baseToken: { ...proposal.baseToken, stateDigest: 'a'.repeat(64) } });
   await expect(dialog.getByRole('alert')).toContainText('does not match a live request');
-  await review(proposal);
+  await review(dialog, proposal);
   await expect(dialog.getByRole('img', { name: 'Diagram preview with proposed node label' })).toBeVisible();
   await expect(dialog.getByRole('region', { name: 'Unverified suggestion' })).toContainText('Rename First to Reviewed label.');
   await dialog.getByRole('button', { name: 'Apply reviewed rename' }).click();
@@ -105,8 +112,59 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const restored = JSON.parse(await download(page, live.getByRole('button', { name: 'Download v3 project' })));
   expect(restored).toEqual({ ...original, revision: after.revision + 1, updatedAt: restored.updatedAt });
-  await openExchange();
+  await openExchange(page, live);
   await dialog.getByRole('button', { name: 'Review a proposal' }).click();
-  await review(proposal);
+  await review(dialog, proposal);
   await expect(dialog.getByRole('alert')).toContainText('no longer matches a live request');
+});
+
+test('grants one explicit connection label with context-only endpoints and protects its parallel neighbor', async ({ page, context }, info) => {
+  const source = 'flowchart LR\r\n A[First]\r\n B[Second]\r\n A keep@-->|"Keep this"| B\r\n A clear@-->|"Clear this"| B\r\n';
+  const live = await openProject(page, 'Connection exchange', source);
+  const projectFile = live.getByRole('button', { name: 'Download v3 project' });
+  const original = JSON.parse(await download(page, projectFile));
+  const dialog = await openExchange(page, live);
+  await context.setOffline(true);
+  await dialog.getByLabel('Instruction').fill('Clear the label on the selected connection.');
+  await dialog.getByRole('combobox', { name: 'First', exact: true }).selectOption('context');
+  const end = dialog.getByRole('combobox', { name: 'Second', exact: true });
+  await end.selectOption('context');
+  const connection = dialog.getByRole('checkbox', { name: 'First to Second (clear) · Clear this' });
+  await connection.check();
+  await end.selectOption('');
+  await expect(connection).toHaveCount(0);
+  await end.selectOption('context');
+  await expect(connection).not.toBeChecked();
+  await connection.check();
+  await dialog.getByRole('button', { name: 'Review what will be shared' }).click();
+  const disclosure = dialog.getByRole('region', { name: 'What will be shared' });
+  await expect(disclosure.getByText(/Clear this.*Writable connection/)).toBeVisible();
+  const request = JSON.parse(await download(page, dialog.getByRole('button', { name: 'Download request' })));
+  const edgeId = request.graph.edges.find((edge: { label: string }) => edge.label === 'Clear this').id;
+  const otherId = request.graph.edges.find((edge: { label: string }) => edge.label === 'Keep this').id;
+  expect(request.scope.writableElementIds).toEqual([edgeId]);
+  expect(request.allowedOperations).toEqual(['setEdgeLabel']);
+  await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+  const operation = { op: 'setEdgeLabel', targetId: edgeId, label: '' };
+  const proposal = {
+    schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'ai',
+    requestId: request.requestId, requestHash: await canonicalDigest('meridian-assist-request/v1', request), baseToken: request.baseToken,
+    operations: [operation],
+  };
+  await review(dialog, { ...proposal, operations: [{ ...operation, targetId: otherId }] });
+  await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
+  await review(dialog, { ...proposal, operations: [{ op: 'setNodeLabel', targetId: request.graph.nodes[0].id, label: 'Changed' }] });
+  await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
+  await review(dialog, proposal);
+  await expect(dialog.getByRole('img', { name: 'Diagram preview with proposed connection label' })).toBeVisible();
+  await expect(dialog.getByText('Clear the label of First to Second (clear).')).toBeVisible();
+  await page.screenshot({ path: info.outputPath('connection-label-review.png') });
+  await dialog.getByRole('button', { name: 'Apply reviewed connection label' }).click();
+  await expect(dialog).toBeHidden();
+  const applied = JSON.parse(await download(page, projectFile));
+  expect(applied).toEqual({ ...original, source: source.replace('|"Clear this"|', ''), revision: original.revision + 1, updatedAt: applied.updatedAt });
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const undone = JSON.parse(await download(page, projectFile));
+  expect(undone).toEqual({ ...original, revision: applied.revision + 1, updatedAt: undone.updatedAt });
 });

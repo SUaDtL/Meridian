@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { assistFileLimit, buildAssistRequest, type AssistSelection } from "../lib/authoring/assist-exchange";
+import { assistFileLimit, assistWritableEdges, buildAssistRequest, type AssistSelection } from "../lib/authoring/assist-exchange";
 import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { RenderTargetTable } from "../lib/authoring/project-render";
@@ -21,6 +21,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, edgeL
   const [mode, setMode] = useState<"export" | "import">("export");
   const [instruction, setInstruction] = useState("");
   const [selected, setSelected] = useState(new Map<string, AssistSelection>());
+  const [writableEdges, setWritableEdges] = useState(new Set<string>());
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(batchSize);
   const [request, setRequest] = useState<RequestPreview>();
@@ -53,7 +54,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, edgeL
 
   function reviewRequest() {
     void run("Preparing request", async signal => {
-      const result = await buildAssistRequest(project, table, edgeLabels, selected, instruction);
+      const result = await buildAssistRequest(project, table, edgeLabels, selected, instruction, writableEdges);
       signal.throwIfAborted();
       if (editor.snapshot() !== project) throw new Error("The project changed. Close this dialog and review the current diagram.");
       setRequest(result);
@@ -99,11 +100,34 @@ export default function AssistExchangeDialog({ db, editor, project, table, edgeL
 
   const allNodes = table.targets.filter(node => node.elementKind === "node");
   const labels = new Map(allNodes.map(item => [item.id, item.label]));
+  const edgeTargets = new Map(table.targets.filter(item => item.elementKind === "edge").map(item => [item.id, item]));
+  const sourceIds = new Map(project.identity.elements.filter(item => item.binding.type === "edge-id")
+    .map(item => [item.id, item.binding.sourceId]));
+  const eligibleEdges = assistWritableEdges(project, table, selected);
   const visible = allNodes.filter(node => node.label.toLowerCase().includes(query.trim().toLowerCase()));
   const writable = Array.from(selected.values()).filter(choice => choice === "writable").length;
+  function connectionName(id: string) {
+    const edge = edgeTargets.get(id);
+    return edge && edge.sourceId && edge.targetId
+      ? `${labels.get(edge.sourceId)} to ${labels.get(edge.targetId)} (${sourceIds.get(id)})`
+      : "selected connection";
+  }
+
+  function chooseNode(id: string, choice: string) {
+    const next = new Map(selected);
+    if (choice === "context" || choice === "writable") next.set(id, choice);
+    else {
+      next.delete(id);
+      setWritableEdges(previous => new Set([...previous].filter(edgeId => {
+        const edge = edgeTargets.get(edgeId);
+        return edge?.sourceId !== id && edge?.targetId !== id;
+      })));
+    }
+    setSelected(next);
+  }
   return <Modal title="External assistant file exchange" wide busy={durableActions.has(busy)} onClose={onClose}>
     {!candidate && !request && <>
-      <p>Download a scoped request or review a returned proposal. Meridian keeps this exchange local. This workflow supports one node rename per proposal.</p>
+      <p>Download a scoped request or review a returned proposal. Each proposal can change one node or connection label. Meridian processes the files locally.</p>
       <div className="dialog-actions">
         <button className="button secondary" aria-pressed={mode === "export"} disabled={!!busy} onClick={() => { setMode("export"); setError(""); }}>Prepare a request</button>
         <button className="button secondary" aria-pressed={mode === "import"} disabled={!!busy} onClick={() => { setMode("import"); setError(""); }}>Review a proposal</button>
@@ -113,19 +137,11 @@ export default function AssistExchangeDialog({ db, editor, project, table, edgeL
           onChange={event => setInstruction(event.target.value)} /></label>
         <label>Find nodes<input value={query} disabled={!!busy} maxLength={200}
           onChange={event => { setQuery(event.target.value); setLimit(batchSize); }} /></label>
-        <p>{selected.size} nodes selected · {writable} writable</p>
+        <p>{selected.size} nodes selected · {writable} writable nodes · {writableEdges.size} writable connections</p>
         <ul className="project-list">
           {visible.slice(0, limit).map(node => <li className="project-row" key={node.id}>
             <label>{node.label}
-              <select value={selected.get(node.id) ?? ""} disabled={!!busy} onChange={event => {
-                const value = event.target.value;
-                setSelected(previous => {
-                  const next = new Map(previous);
-                  if (value === "context" || value === "writable") next.set(node.id, value);
-                  else next.delete(node.id);
-                  return next;
-                });
-              }}>
+              <select value={selected.get(node.id) ?? ""} disabled={!!busy} onChange={event => chooseNode(node.id, event.target.value)}>
                 <option value="">Exclude</option><option value="context">Read-only context</option><option value="writable">Writable node</option>
               </select>
             </label>
@@ -133,8 +149,20 @@ export default function AssistExchangeDialog({ db, editor, project, table, edgeL
         </ul>
         {visible.length > limit && <button className="button quiet" type="button" disabled={!!busy}
           onClick={() => setLimit(value => value + batchSize)}>Show more nodes</button>}
+        {eligibleEdges.length > 0 && <fieldset className="guided-process-fieldset" disabled={!!busy}>
+          <legend>Writable connection labels</legend>
+          {eligibleEdges.length > 200 ? <p>Narrow the selected nodes to review up to 200 relationships.</p>
+            : eligibleEdges.map(edge => <label className="check-label" key={edge.id}>
+              <input type="checkbox" checked={writableEdges.has(edge.id)} onChange={event => {
+                const next = new Set(writableEdges);
+                if (event.target.checked) next.add(edge.id);
+                else next.delete(edge.id);
+                setWritableEdges(next);
+              }} />{connectionName(edge.id)}{edgeLabels.get(edge.id) && ` · ${edgeLabels.get(edge.id)}`}
+            </label>)}
+        </fieldset>}
         <div className="dialog-actions">
-          <button className="button primary" type="submit" disabled={!!busy || !writable || !instruction.trim()}>Review what will be shared</button>
+          <button className="button primary" type="submit" disabled={!!busy || (!writable && !writableEdges.size) || !instruction.trim()}>Review what will be shared</button>
         </div>
       </form> : <form className="heading-form" onSubmit={event => { event.preventDefault(); reviewSuggestion(); }}>
         <label>Assistant proposal file<input type="file" accept=".json,application/json" disabled={!!busy}
@@ -145,14 +173,14 @@ export default function AssistExchangeDialog({ db, editor, project, table, edgeL
     {request && <section className="heading-form" aria-label="What will be shared">
       <h3>What will be shared</h3>
       <p>Instruction</p><blockquote>{request.request.instruction}</blockquote>
-      <p>Permitted change is one rename of a writable node.</p>
+      <p>The proposal may change one label on an element marked writable below.</p>
       <ul>{request.request.graph.nodes.map(node => <li key={node.id}>
         {node.label} · {request.request.scope.writableElementIds.includes(node.id) ? "Writable node" : "Read-only context"}
       </li>)}</ul>
-      <details><summary>{request.request.graph.edges.length} declared relationships in the selected scope</summary>
+      <details open={writableEdges.size > 0 || undefined}><summary>{request.request.graph.edges.length} declared relationships in the selected scope</summary>
         <ul>{request.request.graph.edges.map(edge => <li key={edge.id}>
           {labels.get(edge.sourceId)} {edge.direction === "both" ? "↔" : edge.direction === "forward" ? "→" : "—"} {labels.get(edge.targetId)}
-          {edge.label && ` (${edge.label})`}
+          {edge.label && ` (${edge.label})`} · {request.request.scope.writableElementIds.includes(edge.id) ? "Writable connection" : "Read-only context"}
         </li>)}</ul>
       </details>
       <details><summary>Exact request JSON</summary><pre tabIndex={0} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{request.text}</pre></details>
@@ -163,12 +191,17 @@ export default function AssistExchangeDialog({ db, editor, project, table, edgeL
     </section>}
     {candidate && <section className="migration-preview" aria-label="Unverified suggestion">
       <h3>Unverified suggestion</h3>
-      <p>Rename {labels.get(candidate.targetId)} to {candidate.label}.</p>
-      <img src={candidate.url} alt="Diagram preview with proposed node label" onLoad={() => setPainted(true)}
+      {candidate.op === "setNodeLabel" ? <p>Rename {labels.get(candidate.targetId)} to {candidate.label}.</p>
+        : <p>{candidate.label ? <>Set the label of {connectionName(candidate.targetId)} to {candidate.label}.</>
+          : <>Clear the label of {connectionName(candidate.targetId)}.</>}</p>}
+      <img src={candidate.url} alt={candidate.op === "setNodeLabel" ? "Diagram preview with proposed node label" : "Diagram preview with proposed connection label"}
+        onLoad={() => setPainted(true)}
         onError={() => setError("The candidate diagram could not be displayed.")} />
       <div className="dialog-actions">
         <button className="button quiet" disabled={!!busy} onClick={() => setCandidate(undefined)}>Back to proposal file</button>
-        <button className="button primary" disabled={!painted || !!busy} onClick={apply}>Apply reviewed rename</button>
+        <button className="button primary" disabled={!painted || !!busy} onClick={apply}>
+          {candidate.op === "setNodeLabel" ? "Apply reviewed rename" : "Apply reviewed connection label"}
+        </button>
       </div>
     </section>}
     {busy && <p role="status">{busy}…</p>}

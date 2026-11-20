@@ -2,7 +2,7 @@ import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/pr
 import { readPendingAssist } from '../persistence/pending-assist';
 import { readWorkspaceProject, writeWorkspaceProject, type SavedAnchor } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
-import { authorizeAssistRename, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
+import { authorizeAssistLabelEdit, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
 import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } from './bulk-text';
 import type { ComponentDefinition } from './component-definition';
@@ -186,18 +186,18 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const file = parseAssistSuggestion(text);
     const request = await readPendingAssist(db, file.requestId);
     const token = await projectBaseToken(base);
-    const operation = authorizeAssistRename(file, request, token);
+    const operation = authorizeAssistLabelEdit(file, request, token);
     signal?.throwIfAborted();
     const { document } = await prepareFlowchartCandidate(base, operation, signal);
     if (closed || current.document !== base) throw new Error('The project changed. Export a fresh request.');
-    if (document === base) throw new Error('The suggestion makes no change to the current node label.');
+    if (document === base) throw new Error('The suggestion makes no change to the current label.');
     const preview = await renderMermaidProject(document, signal);
     signal?.throwIfAborted();
     if (!preview.targetTable || closed || current.document !== base) throw new Error('The suggestion could not be verified against the current diagram.');
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     const next = freezeSnapshot(document);
     suggestions.set(proposal, { base, next, request });
-    return { proposal, next, preview, targetId: operation.targetId, label: operation.label };
+    return { proposal, next, preview, ...operation };
   }
 
   async function applyAssistSuggestion(proposal: ReadyProposal) {
