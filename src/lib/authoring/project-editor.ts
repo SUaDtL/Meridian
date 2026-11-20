@@ -101,6 +101,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     applyStructure,
     undo: () => restore(past, future),
     redo: () => restore(future, past),
+    canUndo: () => past.length > 0,
+    canRedo: () => future.length > 0,
     saveState: queue.state,
     flush: queue.flush,
     retrySave: queue.retry,

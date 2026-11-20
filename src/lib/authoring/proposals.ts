@@ -56,7 +56,7 @@ function readHeadingEnvelope(value: unknown) {
   return { id: envelope.id, token: { projectId, revision, contentHash, stateDigest }, heading };
 }
 
-type HeadingDocument = Pick<StudioDocument, 'id' | 'source' | 'title' | 'subtitle' | 'settings' | 'updatedAt'>;
+export type HeadingDocument = Pick<StudioDocument, 'id' | 'source' | 'title' | 'subtitle' | 'settings' | 'updatedAt'>;
 
 export function workspaceBaseToken({ document, revision }: ProposalBase<HeadingDocument>): Promise<BaseToken> {
   return projectBaseToken({ ...document, documentKind: 'mermaid', revision });

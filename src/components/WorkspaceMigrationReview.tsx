@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { lazy, useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import Modal from "./Modal";
-import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
-import type { renderMermaidProject } from "../lib/authoring/project-render";
 import { importWorkspaceProject, listWorkspaceProjectIds, openWorkspaceDatabase, readWorkspaceProject } from "../lib/persistence/workspace-db";
 import {
   migrateWorkspace,
@@ -13,12 +11,8 @@ import { downloadText, LEGACY_STORAGE_KEY, MAX_PROJECT_FILE_BYTES, safeFilename,
 
 type MigrationReview = Awaited<ReturnType<typeof reviewWorkspaceMigration>>;
 type ProjectSummary = { id: string; title: string; updatedAt: string; available: boolean };
-type Task = "inspect" | "prepare" | "download" | "import" | "preview";
-type Preview = {
-  document: MermaidProjectV3;
-  rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
-  svg: string;
-};
+type Task = "inspect" | "prepare" | "download" | "import";
+const V3ProjectSession = lazy(() => import("./V3ProjectSession"));
 
 const quarantineReasons: Record<MigrationManifest["quarantined"][number]["reason"], string> = {
   format: "The project data could not be read.",
@@ -40,8 +34,7 @@ export default function WorkspaceMigrationReview({ onClose, onDownloadLegacy }: 
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [previewUrl, setPreviewUrl] = useState("");
+  const [openProjectId, setOpenProjectId] = useState<string>();
 
   const run = useCallback(async (task: Task, work: (db: IDBDatabase, signal: AbortSignal) => Promise<void>) => {
     if (action.current) return;
@@ -102,13 +95,6 @@ export default function WorkspaceMigrationReview({ onClose, onDownloadLegacy }: 
     };
   }, [refresh, run]);
 
-  useEffect(() => {
-    if (!preview) return;
-    const url = URL.createObjectURL(new Blob([preview.svg], { type: "image/svg+xml" }));
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [preview]);
-
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -124,33 +110,11 @@ export default function WorkspaceMigrationReview({ onClose, onDownloadLegacy }: 
   }
 
   const manifest = review?.manifest;
-  if (preview) {
-    const title = preview.document.title || "Untitled diagram";
-    return (
-      <Modal key="preview" title={title} wide onClose={onClose} initialFocus="[data-back-to-v3-projects]">
-        <div className="migration-preview">
-          <img src={previewUrl || undefined} alt={`Diagram preview for ${title}`} />
-          <details><summary>Mermaid source</summary><pre>{preview.document.source}</pre></details>
-        </div>
-        {error && <p role="alert">{error}</p>}
-        <div className="recovery-actions">
-          <button className="button secondary" data-back-to-v3-projects onClick={() => {
-            setPreview(null);
-            setPreviewUrl("");
-            setError("");
-          }}>Back to v3 projects</button>
-          {preview.rendered.targetTable && (
-            <button className="button secondary" disabled={!!busy}
-              onClick={() => void run("download", async (_db, signal) => {
-                const { buildMermaidProjectPresentation } = await import("../lib/export");
-                const html = await buildMermaidProjectPresentation(preview.rendered, preview.document);
-                signal.throwIfAborted();
-                downloadText(html, `${safeFilename(title)}.html`, "text/html;charset=utf-8");
-              })}>Download HTML presentation</button>
-          )}
-        </div>
-      </Modal>
-    );
+  if (openProjectId) {
+    return <V3ProjectSession id={openProjectId} onBack={() => {
+      setOpenProjectId(undefined);
+      void run("inspect", refresh);
+    }} />;
   }
   return (
     <Modal key="projects" title="Project migration and recovery" wide onClose={onClose} busy={busy === "prepare" || busy === "import"}>
@@ -161,7 +125,6 @@ export default function WorkspaceMigrationReview({ onClose, onDownloadLegacy }: 
       {busy === "inspect" && <p role="status">Checking for saved copies…</p>}
       {busy === "prepare" && <p role="status">Checking and copying projects…</p>}
       {busy === "import" && <p role="status">Importing v3 project…</p>}
-      {busy === "preview" && <p role="status">Rendering the saved project…</p>}
       {manifest && (
         <>
           <p>{manifest.counts.migrated} copied · {manifest.counts.quarantined} need recovery</p>
@@ -183,21 +146,8 @@ export default function WorkspaceMigrationReview({ onClose, onDownloadLegacy }: 
           {projects.map(project => (
             <li className="project-row" key={project.id}>
               <button className="project-open" disabled={!!busy || !project.available}
-                aria-label={`Preview ${project.title}`}
-                onClick={() => void run("preview", async (db, signal) => {
-                  const stored = await readWorkspaceProject(db, project.id);
-                  if (!stored) throw new Error("The saved project could not be found.");
-                  const [{ renderMermaidProject }, { buildExportFrame }] = await Promise.all([
-                    import("../lib/authoring/project-render"), import("../lib/export"),
-                  ]);
-                  const rendered = await renderMermaidProject(stored.document, signal);
-                  signal.throwIfAborted();
-                  setPreview({
-                    document: stored.document,
-                    rendered,
-                    svg: buildExportFrame(rendered.result, stored.document).svg,
-                  });
-                })}>
+                aria-label={`Open v3 project ${project.title}`}
+                onClick={() => setOpenProjectId(project.id)}>
                 <strong>{project.title}</strong>
               </button>
               <button className="button quiet" disabled={!!busy || !project.available}

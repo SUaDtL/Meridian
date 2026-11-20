@@ -1,24 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
-import type { StudioDocument } from "../types";
 import type { ProposalOutcome } from "../lib/workspace";
 import {
-  prepareHeadingProposal, staleHeadingMessage, workspaceBaseToken, type ReadyProposal,
+  staleHeadingMessage, workspaceBaseToken, type HeadingDocument, type ProposalBase, type ReadyProposal,
 } from "../lib/authoring/proposals";
 import Modal from "./Modal";
 
-export default function HeadingEditor({
+export default function HeadingEditor<Project extends HeadingDocument>({
   document,
   field,
   revision,
   outcome,
+  prepare,
   onApply,
   onClose,
 }: {
-  document: StudioDocument;
+  document: Project;
   field: "title" | "subtitle";
   revision: number;
   outcome?: ProposalOutcome;
+  prepare: (base: ProposalBase<Project>, envelope: unknown) => Promise<ReadyProposal>;
   onApply: (proposal: ReadyProposal) => void;
   onClose: () => void;
 }) {
@@ -50,7 +51,7 @@ export default function HeadingEditor({
     try {
       const id = crypto.randomUUID();
       setRequestId(id);
-      const proposal = await prepareHeadingProposal(base, {
+      const proposal = await prepare(base, {
         schema: "meridian-proposal/v1",
         id,
         documentKind: "mermaid",
@@ -128,9 +129,6 @@ export default function HeadingEditor({
             <small>Your title also names this project and its exports.</small>
           </span>
         </label>
-        <p className="muted-note">
-          Click the heading on your canvas to edit it again.
-        </p>
         {message && <p role="alert">{message}</p>}
         {stale && (
           <div>
