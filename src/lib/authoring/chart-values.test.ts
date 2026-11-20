@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { convertChartCell, type ChartProject } from './chart-data';
 import { confirmChartColumns, readChartInput } from './chart-input';
-import { aggregateChartValues, canonicalChartNumber } from './chart-numbers';
+import { aggregateChartValues, canonicalChartNumber, localizedChartNumber } from './chart-numbers';
 import { parseChartProject, validateChartProject } from './chart-project';
 import fixture from './fixtures/example-chart.json';
 
 describe('exact chart values', () => {
+  it('normalizes only confirmed numeric locale separators', () => {
+    expect(localizedChartNumber('-1.234,500e-2', { decimal: 'comma', grouping: 'period' })).toBe('-12.345');
+    expect(localizedChartNumber('1\u202F234,50', { decimal: 'comma', grouping: 'space' })).toBe('1234.5');
+    expect(localizedChartNumber('1,234.00', { decimal: 'period', grouping: 'comma' })).toBe('1234');
+    expect(() => localizedChartNumber('1.23,40', { decimal: 'comma', grouping: 'period' })).toThrow('CHART_NUMBER_SYNTAX');
+    expect(() => localizedChartNumber('1.2', { decimal: 'comma', grouping: 'none' })).toThrow('CHART_NUMBER_SYNTAX');
+    expect(() => localizedChartNumber('1,1', { decimal: 'comma', grouping: 'comma' })).toThrow('CHART_NUMBER_SYNTAX');
+    const input = readChartInput('[{"Value":1.234}]', 'json');
+    expect(() => confirmChartColumns(input, [{ name: 'Value', type: 'number', unit: '', emptyIsNull: false,
+      numeric: { decimal: 'comma', grouping: 'period' } }])).toThrow('JSON records use a decimal point');
+  });
+
   it('normalizes decimal lexemes and retains the distinct row and value counts', () => {
     for (const [input, expected] of [['1.2300', '1.23'], ['-0', '0'], ['1e-3', '0.001'], ['+001.20', '1.2'], ['.5', '0.5'], ['1.', '1'], ['1e15', '1000000000000000']]) {
       expect(canonicalChartNumber(input)).toBe(expected);

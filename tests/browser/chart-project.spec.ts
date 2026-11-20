@@ -128,3 +128,30 @@ test('reviews a clipped chart range, applies a frame change, and restores exact 
   expect(await getProject()).toEqual(repeated);
   await otherPage.close();
 });
+
+test('requires an explicit decimal and thousands separator for a localized data file', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Chart values' }).click();
+  const chart = page.getByRole('dialog', { name: 'Chart values' });
+  await chart.getByLabel('Chart data file').setInputFiles({
+    name: 'values.csv', mimeType: 'text/csv', buffer: Buffer.from('Team;Amount\nNorth;1.000,10\nNorth;0,20\n'),
+  });
+  await chart.getByLabel('Data format').selectOption(';');
+  await chart.getByRole('button', { name: 'Read data' }).click();
+  const amount = chart.getByRole('group', { name: 'Amount' });
+  await amount.getByLabel('Type').selectOption('number');
+  await chart.getByRole('button', { name: 'Confirm columns' }).click();
+  await expect(chart.getByRole('alert')).toContainText('Use a supported exact decimal');
+  await amount.getByLabel('Decimal separator').selectOption('comma');
+  await amount.getByLabel('Thousands separator').selectOption('period');
+  await chart.getByRole('button', { name: 'Confirm columns' }).click();
+  await chart.getByLabel('Aggregation').selectOption('sum');
+  await chart.getByRole('button', { name: 'Review chart' }).click();
+  await expect(chart.getByRole('table', { name: 'Displayed values' }).getByRole('cell', { name: '1000.3', exact: true })).toBeVisible();
+  await chart.getByRole('button', { name: 'Create chart project' }).click();
+  await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
+  const body = await download(page, chart.getByRole('button', { name: 'Download chart project' }));
+  expect(JSON.parse(body).dataset.rows.map((row: { cells: unknown[] }) => row.cells)).toEqual([['North', '1000.1'], ['North', '0.2']]);
+  expect(body).not.toContain('1.000,10');
+});

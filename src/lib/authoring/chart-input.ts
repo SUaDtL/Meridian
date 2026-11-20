@@ -1,10 +1,11 @@
 import { decodeJson } from './decode-json';
 import { readDelimitedRows, type TableDelimiter } from './delimited-input';
 import { chartDataLimits, convertChartCell, validateChartDataset, type ChartCell, type ChartDataset, type FieldType } from './chart-data';
+import { localizedChartNumber, type NumberLocale } from './chart-numbers';
 
 export type ChartInputFormat = TableDelimiter | 'json';
-export type ChartInput = { headings: string[]; rows: { line: number; cells: ChartCell[] }[] };
-export type ColumnConfirmation = { name: string; type: FieldType; unit: string; emptyIsNull: boolean };
+export type ChartInput = { format: ChartInputFormat; headings: string[]; rows: { line: number; cells: ChartCell[] }[] };
+export type ColumnConfirmation = { name: string; type: FieldType; unit: string; emptyIsNull: boolean; numeric?: NumberLocale };
 const encoder = new TextEncoder();
 
 function checkSize(rows: number, columns: number) {
@@ -28,7 +29,7 @@ function readObjects(text: string): ChartInput {
   });
   checkSize(records.length, headings.size);
   const columns = [...headings];
-  return { headings: columns, rows: records.map((record, index) =>
+  return { format: 'json', headings: columns, rows: records.map((record, index) =>
     ({ line: index + 1, cells: columns.map(name => Object.hasOwn(record, name) ? record[name] : null) })) };
 }
 
@@ -42,7 +43,7 @@ export function readChartInput(text: string, format: ChartInputFormat): ChartInp
   checkSize(rows.length, header.cells.length);
   const invalid = rows.find(({ cells }) => cells.length !== header.cells.length);
   if (invalid) throw new Error(`Line ${invalid.line} has a different number of values than the heading row.`);
-  return { headings: header.cells, rows };
+  return { format, headings: header.cells, rows };
 }
 
 function label(value: string, limit: number) {
@@ -57,13 +58,19 @@ export function confirmChartColumns(input: ChartInput, columns: ColumnConfirmati
     throw new Error('Give every column a unique name of 1 to 200 characters.');
   }
   if (columns.some(column => !label(column.unit, 80))) throw new Error('Choose unit labels of up to 80 characters.');
+  if (columns.some(({ type, numeric }) => type === 'number' && numeric && (
+    !['period', 'comma'].includes(numeric.decimal) || !['none', 'period', 'comma', 'space'].includes(numeric.grouping)
+    || numeric.decimal === numeric.grouping || (input.format === 'json' && (numeric.decimal !== 'period' || numeric.grouping !== 'none'))))) {
+    throw new Error('Choose distinct numeric separators. JSON records use a decimal point and no grouping.');
+  }
   const fields = columns.map(({ type, unit }, index) => ({ id: crypto.randomUUID(), name: names[index], type, unit }));
   const rows = input.rows.map(({ line, cells }) => ({
     id: crypto.randomUUID(),
     cells: cells.map((cell, index) => {
-      const { type, emptyIsNull } = columns[index];
+      const { type, emptyIsNull, numeric } = columns[index];
       const value = emptyIsNull && cell === '' ? null : cell;
       try {
+        if (type === 'number' && typeof value === 'string' && numeric) return localizedChartNumber(value, numeric);
         return convertChartCell(type === 'string' && typeof value === 'boolean' ? String(value) : value, type);
       } catch (reason) {
         const message = reason instanceof Error && !reason.message.startsWith('CHART_') ? reason.message : 'Use a supported exact decimal or retain the column as text.';
