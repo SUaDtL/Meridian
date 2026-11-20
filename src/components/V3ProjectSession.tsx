@@ -28,6 +28,7 @@ import type { ProposalOutcome } from "../lib/workspace";
 const SaveComponentDialog = lazy(() => import("./SaveComponentDialog"));
 const ComponentProjectDialog = lazy(() => import("./ComponentProjectDialog"));
 const AssistExchangeDialog = lazy(() => import("./AssistExchangeDialog"));
+const SavedScenesDialog = lazy(() => import("./V3SavedScenesDialog"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
@@ -63,6 +64,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [comparisonSelection, setComparisonSelection] = useState<{ ids: string[]; hidden: number }>();
   const [comparison, setComparison] = useState<"design" | "layout">();
   const [storyOpen, setStoryOpen] = useState(false);
+  const [savedScenesOpen, setSavedScenesOpen] = useState(false);
   const [storyDraft, setStoryDraft] = useState(initialGroupStoryDraft);
   const [canvasProfile, setCanvasProfile] = useState<ViewingProfile>();
   const previewImage = useRef<HTMLImageElement>(null);
@@ -226,7 +228,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen
+    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || savedScenesOpen
       || editHeading || editFlowchart || editSource || detachOpen || insertOpen || assistOpen
       || bulkTextHidden !== undefined || componentHidden !== undefined) return;
     const openCommands = (event: KeyboardEvent) => {
@@ -237,7 +239,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading,
+  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, savedScenesOpen, editHeading,
     editFlowchart, editSource, detachOpen, insertOpen, assistOpen, bulkTextHidden, componentHidden]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
@@ -304,6 +306,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to compare layouts.", run: () => setComparison("layout") },
     { id: "suggest-scenes", title: "Suggest scenes", category: "Story", synonyms: ["group story", "storyboard"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to suggest scenes.", run: () => setStoryOpen(true) },
+    { id: "edit-saved-scenes", title: "Edit saved scenes", category: "Story", synonyms: ["scene properties", "storyboard"],
+      unavailable: outlineAvailable && project?.storyboard.scenes.length ? undefined : "Open a verified diagram with saved scenes.",
+      run: () => setSavedScenesOpen(true) },
     { id: "add-node", title: "Add node", category: "Diagram", unavailable: editingUnavailable, run: () => setEditFlowchart("addNode") },
     { id: "add-next", title: "Add next", category: "Diagram", synonyms: ["connected step", "new connected node"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose a current node to connect." : undefined), run: () => setEditFlowchart("addNext") },
@@ -359,6 +364,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("design")}>Explore designs</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
+              {outlineAvailable && !!project.storyboard.scenes.length && <button className="button secondary"
+                disabled={busy} onClick={() => setSavedScenesOpen(true)}>Edit saved scenes</button>}
               <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
               {targetTable && <button className="button secondary" disabled={busy} onClick={() => setEditSource(true)}>Edit Mermaid source</button>}
               {!!project.componentInstances.length && <button className="button secondary" disabled={busy} onClick={() => setDetachOpen(true)}>Detach component</button>}
@@ -461,6 +468,14 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           }
           return status;
         }} />}
+      {savedScenesOpen && editor.current && !!project?.storyboard.scenes.length && <Suspense>
+        <SavedScenesDialog editor={editor.current} onClose={() => setSavedScenesOpen(false)} onApply={proposal => {
+          const current = editor.current!;
+          const status = current.applyStory(proposal);
+          if (status === "applied") setProject(current.snapshot());
+          return status;
+        }} />
+      </Suspense>}
       {project && editHeading && (
         <HeadingEditor document={project} field="title" revision={project.revision} outcome={outcome}
           prepare={(_base, envelope) => editor.current!.prepareHeading(envelope)}

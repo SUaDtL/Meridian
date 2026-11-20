@@ -2,6 +2,7 @@ import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/pr
 import { readPendingAssist } from '../persistence/pending-assist';
 import { readWorkspaceProject, writeWorkspaceProject, type SavedAnchor } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
+import type { StoryScene } from '../../types/storyboard';
 import { authorizeAssistRename, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
 import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } from './bulk-text';
@@ -25,6 +26,7 @@ const historyByteLimit = 8 * 1024 * 1024;
 const historyEntryLimit = 50;
 const encoder = new TextEncoder();
 export type StoryDestination = 'append' | 'replace' | 'duplicate';
+export type StorySceneDetails = Pick<StoryScene, 'title' | 'duration' | 'transition' | 'easing' | 'reveal'> & { padding: number };
 
 function freezeSnapshot<Value>(value: Value): Value {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -75,7 +77,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     next: MermaidProjectV3;
     suggestions: ReturnType<typeof suggestGroupScenes>;
     rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
-    destination: StoryDestination;
+    destination: StoryDestination | 'edit';
     savingCopy: boolean;
   }>();
   const contrast = new WeakMap<ReadyProposal, {
@@ -401,6 +403,34 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       ? { next: change.next, suggestions: change.suggestions, rendered: change.rendered } : undefined;
   }
 
+  async function prepareStoryScene(sceneId: string, details: StorySceneDetails, base: MermaidProjectV3, signal?: AbortSignal) {
+    if (closed || base !== current.document) throw new Error('The project changed. Open the current story again.');
+    if (!Number.isFinite(details.duration) || details.duration < 0.5 || details.duration > 120
+      || !Number.isFinite(details.transition) || details.transition < 0 || details.transition > Math.min(10, details.duration)) {
+      throw new Error('Set duration from 0.5 to 120 seconds and entrance from 0 to 10 seconds within the scene duration.');
+    }
+    if (!Number.isFinite(details.padding) || details.padding < 8 || details.padding > 240) {
+      throw new Error('Set camera padding from 8 to 240 diagram units.');
+    }
+    const scene = base.storyboard.scenes.find(item => item.id === sceneId);
+    if (!scene) throw new Error('Choose a scene in the current story.');
+    const edited: StoryScene = {
+      ...scene, title: details.title, duration: details.duration, transition: details.transition,
+      easing: details.easing, reveal: details.reveal, camera: { ...scene.camera, padding: details.padding },
+    };
+    if (canonicalJson(scene) === canonicalJson(edited)) throw new Error('Change a scene property before previewing.');
+    const next = freezeSnapshot(validateMermaidProject({
+      ...base, revision: base.revision + 1, updatedAt: new Date().toISOString(),
+      storyboard: { ...base.storyboard, scenes: base.storyboard.scenes.map(item => item === scene ? edited : item) },
+    }));
+    const rendered = await renderMermaidProject(base, signal);
+    signal?.throwIfAborted();
+    if (closed || base !== current.document || !rendered.targetTable) throw new Error('The scene could not be verified against the current diagram.');
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    stories.set(proposal, { base, next, suggestions: [], rendered, destination: 'edit', savingCopy: false });
+    return proposal;
+  }
+
   function applyStory(proposal: ReadyProposal) {
     const change = stories.get(proposal);
     if (closed || !change || change.destination === 'duplicate') return 'invalid';
@@ -487,6 +517,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     applyLayout,
     prepareStory,
     readStoryPreview,
+    prepareStoryScene,
     applyStory,
     saveStoryCopy,
     undo: () => restore(past, future),
