@@ -5,15 +5,20 @@ import ChartDataTable, { chartHtml } from "./ChartDataTable";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
 import Worker from "../lib/authoring/chart-input.worker?worker&inline";
 import { chartDataLimits, type ChartDataset, type ChartField, type ChartProject, type ChartSpec, type FieldType } from "../lib/authoring/chart-data";
+import { openChartProjectEditor } from "../lib/authoring/chart-editor";
 import type { ChartInput, ChartInputFormat, ColumnConfirmation } from "../lib/authoring/chart-input";
+import { canonicalChartNumber } from "../lib/authoring/chart-numbers";
 import { parseChartProject, validateChartProject } from "../lib/authoring/chart-project";
+import type { ReadyProposal } from "../lib/authoring/proposals";
 import { listChartCheckpoints, saveChartCheckpoint, type ChartCheckpoint } from "../lib/persistence/chart-drafts";
 import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
+import type { ProjectSaveState } from "../lib/persistence/project-save-queue";
 import { listWorkspaceProjectIds, openWorkspaceDatabase, readWorkspaceProject, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import { downloadText, safeFilename } from "../lib/storage";
 import "./chart.css";
 
 type Accepted = ReturnType<typeof validateChartProject>;
+type ChartEditor = Awaited<ReturnType<typeof openChartProjectEditor>>;
 type Stage = "choose" | "columns" | "mapping" | "review" | "workspace";
 type Pending = { label: string; run: (signal: AbortSignal, extended: boolean) => Promise<void> };
 type Mark = ChartSpec["mark"];
@@ -52,16 +57,25 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
   const [title, setTitle] = useState("");
   const [subtitle, setSubtitle] = useState("");
   const [candidate, setCandidate] = useState<Accepted>();
+  const [editProposal, setEditProposal] = useState<ReadyProposal>();
+  const [saveState, setSaveState] = useState<ProjectSaveState>();
+  const [acceptTruncatedAxis, setAcceptTruncatedAxis] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [retry, setRetry] = useState<Pending>();
   const active = useRef<AbortController | null>(null);
+  const chartSession = useRef<{ db: IDBDatabase; editor: ChartEditor } | null>(null);
+  const editingBase = useRef<ChartProject | undefined>(undefined);
   const stepHeading = useRef<HTMLHeadingElement>(null);
   const svg = useRef<SVGSVGElement>(null);
   const stepFocus = useRef(false);
 
-  useEffect(() => () => active.current?.abort(), []);
+  useEffect(() => () => {
+    active.current?.abort();
+    chartSession.current?.editor.dispose();
+    chartSession.current?.db.close();
+  }, []);
   useEffect(() => {
     if (stepFocus.current) stepHeading.current?.focus();
     stepFocus.current = true;
@@ -141,16 +155,43 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
 
   function review() {
     if (!dataset || !spec) return;
-    resetNotice();
-    try {
-      const checked = validateChartProject({ schema: "meridian-chart/v1", documentKind: "chart",
-        id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString(),
-        title: title.trim() || "Untitled chart", subtitle, dataset, chartSpec: spec, frame });
-      setCandidate(checked);
+    void perform({ label: "Checking the chart preview", async run(signal) {
+      let yDomain: string[] | null = null;
+      if (spec.yDomain) {
+        try { yDomain = spec.yDomain.map(canonicalChartNumber); }
+        catch { throw new Error("Enter two valid decimals for the custom Y range."); }
+      }
+      if (spec.mark === "bar" && yDomain && (Number(yDomain[0]) > 0 || Number(yDomain[1]) < 0) && !acceptTruncatedAxis) {
+        throw new Error("Accept the truncated bar axis before previewing a range that excludes zero.");
+      }
+      const edit = { title: title.trim() || "Untitled chart", subtitle, chartSpec: { ...spec, yDomain }, frame };
+      const session = chartSession.current;
+      if (session && editingBase.current) {
+        const prepared = await session.editor.prepare(edit, editingBase.current);
+        signal.throwIfAborted();
+        setEditProposal(prepared.proposal);
+        setCandidate(prepared.next);
+      } else {
+        setCandidate(validateChartProject({ schema: "meridian-chart/v1", documentKind: "chart",
+          id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString(), dataset, ...edit }));
+      }
       setStage("review");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The chart mapping is invalid.");
+    } });
+  }
+
+  async function startSession(db: IDBDatabase, id: string, signal: AbortSignal) {
+    const editor = await openChartProjectEditor(db, id, setSaveState);
+    if (signal.aborted) {
+      editor.dispose();
+      signal.throwIfAborted();
     }
+    const previous = chartSession.current;
+    previous?.editor.dispose();
+    if (previous && previous.db !== db) previous.db.close();
+    chartSession.current = { db, editor };
+    setSaveState(editor.saveState());
+    setCandidate(editor.snapshot());
+    setStage("workspace");
   }
 
   async function saveAccepted(accepted: Accepted, signal: AbortSignal) {
@@ -158,10 +199,10 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     try {
       signal.throwIfAborted();
       await writeWorkspaceProject(db, accepted.project, null);
-      setCandidate(accepted);
-      setStage("workspace");
-    } finally {
+      await startSession(db, accepted.project.id, signal);
+    } catch (reason) {
       db.close();
+      throw reason;
     }
   }
 
@@ -210,6 +251,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     setDataset(dataset);
     setSpec(chartSpec ?? mapping(dataset, "bar"));
     setFrame(defaultFrame);
+    setAcceptTruncatedAxis(false);
     setColumns(dataset.fields.map(({ id, name, type, unit }) => ({
       name, type, unit, emptyIsNull: conversions.find(conversion => conversion.fieldId === id)?.emptyToNull ?? false,
     })));
@@ -233,14 +275,74 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     void perform({ label: "Opening the saved chart", async run(signal) {
       const db = await openWorkspaceDatabase();
       try {
-        const stored = await readWorkspaceProject(db, id, "chart");
-        signal.throwIfAborted();
-        if (!stored) throw new Error("The saved chart could not be found.");
-        setCandidate(validateChartProject(stored.document));
-        setStage("workspace");
-      } finally {
+        await startSession(db, id, signal);
+      } catch (reason) {
         db.close();
+        throw reason;
       }
+    } });
+  }
+
+  function editSaved() {
+    const current = chartSession.current?.editor.snapshot().project;
+    if (!current) return;
+    editingBase.current = current;
+    resetNotice();
+    setDataset(current.dataset);
+    setSpec(current.chartSpec);
+    setTitle(current.title);
+    setSubtitle(current.subtitle);
+    setFrame(current.frame);
+    setAcceptTruncatedAxis(current.chartSpec.yDomain !== null);
+    setStage("mapping");
+  }
+
+  function saveSeparateChart() {
+    const snapshot = chartSession.current?.editor.snapshot();
+    if (!snapshot) return;
+    void perform({ label: "Saving the chart", async run(signal) {
+      const project = { ...snapshot.project, id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString() };
+      await saveAccepted({ ...snapshot, project }, signal);
+      setStatus("Saved as a separate chart project.");
+    } });
+  }
+
+  function returnToSaved() {
+    const current = chartSession.current?.editor.snapshot();
+    if (!current) return;
+    editingBase.current = undefined;
+    resetNotice();
+    setCandidate(current);
+    setEditProposal(undefined);
+    setStage("workspace");
+  }
+
+  function applyEdit() {
+    const editor = chartSession.current?.editor;
+    if (!editor || !editProposal) return;
+    void perform({ label: "Applying chart changes", async run(signal) {
+      signal.throwIfAborted();
+      const result = await editor.apply(editProposal);
+      if (result === "applied" || result === "unchanged") returnToSaved();
+      else throw new Error(result === "stale" ? "The chart changed. Reopen its mapping before previewing changes." : "The chart could not reserve Undo for this edit.");
+    } });
+  }
+
+  function changeHistory(action: "undo" | "redo") {
+    const editor = chartSession.current?.editor;
+    if (!editor) return;
+    void perform({ label: action === "undo" ? "Undoing chart changes" : "Redoing chart changes", async run() {
+      if (editor[action]()) setCandidate(editor.snapshot());
+    } });
+  }
+
+  function closeChart() {
+    const editor = chartSession.current?.editor;
+    if (!editor || editor.saveState().phase === "saved") { onClose(); return; }
+    void perform({ label: "Saving before closing", async run() {
+      await editor.flush();
+      if (editor.saveState().phase === "saved") onClose();
+      else throw new Error("Your changes are still open. Download the chart project before closing.");
     } });
   }
 
@@ -269,11 +371,12 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     downloadText(chartHtml(project.title, serialized, description, projection), `${name}.html`, "text/html;charset=utf-8");
   }
 
-  const blocked = ["Saving the chart", "Saving the chart draft", "Discarding the chart draft", "Checking the chart project"].includes(busy);
+  const editing = !!editingBase.current;
+  const blocked = ["Saving the chart", "Saving the chart draft", "Discarding the chart draft", "Checking the chart project", "Applying chart changes", "Saving before closing"].includes(busy);
   const heading = { choose: "Choose data", columns: "Confirm columns", mapping: "Map chart", review: "Review chart", workspace: candidate?.project.title ?? "Chart" }[stage];
   const changeColumn = (index: number, change: Partial<ColumnConfirmation>) => setColumns(previous =>
     previous.map((column, position) => position === index ? { ...column, ...change } : column));
-  return <Modal title={fromProjects ? "Chart projects" : "Chart values"} wide busy={blocked} onClose={onClose}>
+  return <Modal title={fromProjects ? "Chart projects" : "Chart values"} wide busy={blocked} onClose={closeChart}>
     <h3 tabIndex={-1} ref={stepHeading}>{heading}</h3>
     {stage === "choose" && <>
       {drafts.length > 0 && <ul className="project-list">
@@ -347,10 +450,37 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
           {(["porcelain", "obsidian", "blueprint", "ember", "dusk", "moss"] as const).map(theme =>
             <option key={theme} value={theme}>{theme[0].toUpperCase() + theme.slice(1)}</option>)}
         </select></label>
+        <label>Frame ratio<select value={frame.frame} onChange={event => setFrame({ ...frame, frame: event.target.value as ChartProject["frame"]["frame"] })}>
+          <option value="auto">Automatic</option><option value="16:9">16:9</option><option value="4:3">4:3</option><option value="1:1">Square</option>
+        </select></label>
+        <label>Frame padding<input type="number" min={0} max={240} value={Number.isFinite(frame.padding) ? frame.padding : ""}
+          onChange={event => setFrame({ ...frame, padding: event.target.valueAsNumber })} /></label>
       </div>
+      <label className="check-label"><input type="checkbox" checked={frame.showTitle} onChange={event => setFrame({ ...frame, showTitle: event.target.checked })} />Show the title and subtitle</label>
+      <label className="check-label"><input type="checkbox" checked={frame.showBrand} onChange={event => setFrame({ ...frame, showBrand: event.target.checked })} />Show the Meridian signature</label>
+      <label className="check-label"><input type="checkbox" checked={spec.yDomain !== null} onChange={event => {
+        setAcceptTruncatedAxis(false);
+        setSpec({ ...spec, yDomain: event.target.checked ? ["", ""] : null });
+      }} />Set a custom Y range</label>
+      {spec.yDomain && <>
+        <div className="chart-map">
+          {["Y minimum", "Y maximum"].map((label, index) => <label key={label}>{label}
+            <input value={spec.yDomain?.[index] ?? ""} inputMode="decimal" maxLength={64} onChange={event => {
+              const limits = [...spec.yDomain!];
+              limits[index] = event.target.value;
+              setAcceptTruncatedAxis(false);
+              setSpec({ ...spec, yDomain: limits });
+            }} />
+          </label>)}
+        </div>
+        {spec.mark === "bar" && <label className="check-label"><input type="checkbox" checked={acceptTruncatedAxis}
+          onChange={event => setAcceptTruncatedAxis(event.target.checked)} />Accept a truncated axis if the range excludes zero</label>}
+      </>}
       <div className="dialog-actions">
-        <button className="button quiet" type="button" disabled={!!busy} onClick={() => { setStage("choose"); resetNotice(); }}>Choose different data</button>
-        <button className="button secondary" type="button" disabled={!!busy} onClick={saveDraft}>Save data draft</button>
+        {editing ? <button className="button quiet" type="button" disabled={!!busy} onClick={returnToSaved}>Cancel chart changes</button> : <>
+          <button className="button quiet" type="button" disabled={!!busy} onClick={() => { setStage("choose"); resetNotice(); }}>Choose different data</button>
+          <button className="button secondary" type="button" disabled={!!busy} onClick={saveDraft}>Save data draft</button>
+        </>}
         <button className="button primary" disabled={!!busy || !spec.xField || (!spec.yField && spec.aggregation !== "countRows")}>Review chart</button>
       </div>
     </form>}
@@ -360,9 +490,22 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       <ChartDataTable dataset={candidate.project.dataset} values={candidate.projection} />
       {stage === "review" ? <div className="dialog-actions">
         <button className="button quiet" disabled={!!busy} onClick={() => { setStage("mapping"); resetNotice(); }}>Back to mapping</button>
-        <button className="button primary" disabled={!!busy} onClick={create}>Create chart project</button>
+        <button className="button primary" disabled={!!busy} onClick={editing ? applyEdit : create}>{editing ? "Apply chart changes" : "Create chart project"}</button>
       </div> : <>
-        <p role="status">Chart saved in this browser.</p>
+        <p role="status">{saveState?.phase === "saved" ? "Chart saved in this browser."
+          : saveState?.phase === "error" || saveState?.phase === "conflict" ? saveState.message : "Saving chart changes…"}</p>
+        <div className="dialog-actions">
+          <button type="button" className="button secondary" disabled={!!busy} onClick={editSaved}>Edit chart mapping and frame</button>
+          <button type="button" className="button quiet" disabled={!!busy || !chartSession.current?.editor.canUndo()} onClick={() => changeHistory("undo")}>Undo</button>
+          <button type="button" className="button quiet" disabled={!!busy || !chartSession.current?.editor.canRedo()} onClick={() => changeHistory("redo")}>Redo</button>
+        </div>
+        {(saveState?.phase === "error" || saveState?.phase === "conflict") && <div className="dialog-actions">
+          {saveState.phase === "error" && <button className="button secondary" disabled={!!busy} onClick={() => {
+            void perform({ label: "Retrying chart save", async run() { await chartSession.current?.editor.retry(); } });
+          }}>Retry chart save</button>}
+          {saveState.phase === "conflict" && <button className="button secondary" disabled={!!busy} onClick={saveSeparateChart}>Save as a separate chart</button>}
+          <button className="button quiet" disabled={!!busy} onClick={onClose}>Close chart with unsaved changes</button>
+        </div>}
         <div className="dialog-actions">
           <button className="button quiet" onClick={() => download("json")}>Download chart project</button>
           <button className="button quiet" onClick={() => download("svg")}>Download SVG</button>
