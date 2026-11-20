@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ChartDataset } from "../lib/authoring/chart-data";
+import type { ChartDataset, ChartScale } from "../lib/authoring/chart-data";
 import type { ChartValue } from "../lib/authoring/chart-numbers";
 import { chartCategory, type ChartProjection } from "./ChartFigure";
 
@@ -12,10 +12,12 @@ const exactDisplay = (value: ChartValue | null) => {
 };
 
 export function displayedChartTable(projection: ChartProjection): ReadableTable {
-  const { x, y, series, observations } = projection;
+  const { x, y, series, observations, unitScale } = projection;
+  const heading = (name: string, scale: ChartScale | null) =>
+    scale ? `${name} (× 10^${scale.power10}${scale.unitLabel ? ` · ${scale.unitLabel}` : ""})` : name;
   return {
     name: "Displayed values",
-    headings: [x.name, y?.name ?? "Row count", ...(series ? [series.name] : []), "Rows", "Present values", "Status"],
+    headings: [heading(x.name, unitScale.x), heading(y?.name ?? "Row count", unitScale.y), ...(series ? [series.name] : []), "Rows", "Present values", "Status"],
     rows: observations.map(point => ({
       id: point.rowIds[0],
       values: [

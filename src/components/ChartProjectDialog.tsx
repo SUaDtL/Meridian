@@ -3,9 +3,10 @@ import Modal from "./Modal";
 import ChartFigure, { describeChart } from "./ChartFigure";
 import ChartDataTable, { chartHtml } from "./ChartDataTable";
 import ChartFilterEditor from "./ChartFilterEditor";
+import ChartAxisScale from "./ChartAxisScale";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
 import Worker from "../lib/authoring/chart-input.worker?worker&inline";
-import { chartDataLimits, type ChartDataset, type ChartField, type ChartProject, type ChartSpec, type FieldType } from "../lib/authoring/chart-data";
+import { chartDataLimits, convertChartCell, type ChartDataset, type ChartField, type ChartProject, type ChartSpec, type FieldType } from "../lib/authoring/chart-data";
 import { openChartProjectEditor } from "../lib/authoring/chart-editor";
 import type { ChartInput, ChartInputFormat, ColumnConfirmation } from "../lib/authoring/chart-input";
 import { canonicalChartNumber, type NumberLocale } from "../lib/authoring/chart-numbers";
@@ -159,6 +160,13 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     if (!dataset || !spec) return;
     void perform({ label: "Checking the chart preview", async run(signal) {
       let yDomain: string[] | null = null;
+      let xDomain: string[] | null = null;
+      if (spec.xDomain) {
+        const field = dataset.fields.find(item => item.id === spec.xField);
+        if (!field || !["number", "date", "datetime"].includes(field.type)) throw new Error("Choose a numeric or time field for the custom X range.");
+        try { xDomain = spec.xDomain.map(value => convertChartCell(value, field.type) as string); }
+        catch { throw new Error("Enter two valid limits for the selected X field."); }
+      }
       if (spec.yDomain) {
         try { yDomain = spec.yDomain.map(canonicalChartNumber); }
         catch { throw new Error("Enter two valid decimals for the custom Y range."); }
@@ -166,7 +174,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       if (spec.mark === "bar" && yDomain && (Number(yDomain[0]) > 0 || Number(yDomain[1]) < 0) && !acceptTruncatedAxis) {
         throw new Error("Accept the truncated bar axis before previewing a range that excludes zero.");
       }
-      const edit = { title: title.trim() || "Untitled chart", subtitle, chartSpec: { ...spec, yDomain }, frame };
+      const edit = { title: title.trim() || "Untitled chart", subtitle, chartSpec: { ...spec, xDomain, yDomain }, frame };
       const session = chartSession.current;
       if (session && editingBase.current) {
         const prepared = await session.editor.prepare(edit, editingBase.current);
@@ -448,7 +456,8 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
         <label>Chart type<select value={spec.mark} onChange={event => setSpec({ ...mapping(dataset, event.target.value as Mark), filters: spec.filters })}>
           <option value="bar">Bar</option><option value="line">Line</option><option value="scatter">Scatter</option>
         </select></label>
-        <label>X field<select value={spec.xField} onChange={event => setSpec({ ...spec, xField: event.target.value })}>
+        <label>X field<select value={spec.xField} onChange={event => setSpec({ ...spec, xField: event.target.value,
+          xDomain: null, unitScale: { ...spec.unitScale, x: null } })}>
           <option value="">Choose a field</option>{xFields(dataset, spec.mark).map(field => <option key={field.id} value={field.id}>{field.name}</option>)}
         </select></label>
         <label>Y field<select disabled={spec.aggregation === "countRows"} value={spec.yField ?? ""} onChange={event => setSpec({ ...spec, yField: event.target.value || null })}>
@@ -459,7 +468,9 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
         </select></label>
         {spec.mark !== "scatter" && <label>Aggregation<select value={spec.aggregation} onChange={event => {
           const aggregation = event.target.value as ChartSpec["aggregation"];
-          setSpec({ ...spec, aggregation, duplicateX: aggregation !== "none" ? "aggregate" : spec.mark === "bar" ? "keep-separate" : "reject",
+          const counting = aggregation === "countRows" || aggregation === "countValues";
+          setSpec({ ...spec, aggregation, unitScale: counting ? { ...spec.unitScale, y: null } : spec.unitScale,
+            duplicateX: aggregation !== "none" ? "aggregate" : spec.mark === "bar" ? "keep-separate" : "reject",
             yField: aggregation === "countRows" ? null : spec.yField ?? dataset.fields.find(field => field.type === "number")?.id ?? null });
         }}>
           <option value="none">None</option><option value="sum">Sum</option><option value="mean">Mean</option>
@@ -477,6 +488,24 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       </div>
       <label className="check-label"><input type="checkbox" checked={frame.showTitle} onChange={event => setFrame({ ...frame, showTitle: event.target.checked })} />Show the title and subtitle</label>
       <label className="check-label"><input type="checkbox" checked={frame.showBrand} onChange={event => setFrame({ ...frame, showBrand: event.target.checked })} />Show the Meridian signature</label>
+      {spec.mark !== "bar" && spec.xField && <>
+        <label className="check-label"><input type="checkbox" checked={spec.xDomain !== null} onChange={event =>
+          setSpec({ ...spec, xDomain: event.target.checked ? ["", ""] : null })} />Set a custom X range</label>
+        {spec.xDomain && <div className="chart-map">
+          {["X minimum", "X maximum"].map((label, index) => <label key={label}>{label}
+            <input value={spec.xDomain?.[index] ?? ""} maxLength={64} onChange={event => {
+              const limits = [...spec.xDomain!];
+              limits[index] = event.target.value;
+              setSpec({ ...spec, xDomain: limits });
+            }} />
+          </label>)}
+        </div>}
+        {dataset.fields.some(field => field.id === spec.xField && field.type === "number") &&
+          <ChartAxisScale axis="X" scale={spec.unitScale.x} onChange={x => setSpec({ ...spec, unitScale: { ...spec.unitScale, x } })} />}
+      </>}
+      {spec.yField && spec.aggregation !== "countRows" && spec.aggregation !== "countValues" &&
+        <ChartAxisScale axis="Y" scale={spec.unitScale.y} onChange={y => setSpec({ ...spec, unitScale: { ...spec.unitScale, y } })} />}
+      {(spec.unitScale.x || spec.unitScale.y) && <p className="muted-note">Custom limits use the displayed units.</p>}
       <label className="check-label"><input type="checkbox" checked={spec.yDomain !== null} onChange={event => {
         setAcceptTruncatedAxis(false);
         setSpec({ ...spec, yDomain: event.target.checked ? ["", ""] : null });
