@@ -8,6 +8,7 @@ import V3ComparisonDialog from "./V3ComparisonDialog";
 import V3GroupStoryDialog, { initialGroupStoryDraft } from "./V3GroupStoryDialog";
 import V3StructureEditor from "./V3StructureEditor";
 import V3SourceEditor, { type SourceDraft } from "./V3SourceEditor";
+import DetachComponentDialog from "./DetachComponentDialog";
 import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
@@ -39,6 +40,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
   const [editHeading, setEditHeading] = useState(false);
   const [editFlowchart, setEditFlowchart] = useState<NativeFlowchartEdit["op"]>();
   const [editSource, setEditSource] = useState(false);
+  const [detachOpen, setDetachOpen] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<SourceDraft>();
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
@@ -203,7 +205,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || editHeading || editFlowchart || editSource) return;
+    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || editHeading || editFlowchart || editSource || detachOpen) return;
     const openCommands = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
         || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
@@ -212,7 +214,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading, editFlowchart, editSource]);
+  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, editHeading, editFlowchart, editSource, detachOpen]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
@@ -260,6 +262,9 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     { id: "show-source", title: "Show Mermaid source", category: "Project", synonyms: ["open source", "code"], run: showSource },
     { id: "edit-source", title: "Edit Mermaid source", category: "Project", synonyms: ["update source", "code"],
       unavailable: busy ? "Wait for the current action to finish." : targetTable ? undefined : "Open a verified flowchart before editing its source.", run: () => setEditSource(true) },
+    { id: "detach-component", title: "Detach component", category: "Diagram", synonyms: ["component instance"],
+      unavailable: busy ? "Wait for the current action to finish." : project?.componentInstances.length ? undefined : "This project has no component instances.",
+      run: () => setDetachOpen(true) },
     { id: "find-element", title: "Find element", category: "Diagram", synonyms: ["outline", "relationships"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to show its elements.", run: () => setOutlineOpen(true) },
     { id: "check-readability", title: "Check readability", category: "Design", synonyms: ["quality", "label size"],
@@ -324,6 +329,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
               <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
               {targetTable && <button className="button secondary" disabled={busy} onClick={() => setEditSource(true)}>Edit Mermaid source</button>}
+              {!!project.componentInstances.length && <button className="button secondary" disabled={busy} onClick={() => setDetachOpen(true)}>Detach component</button>}
               {targetTable && flatFlowchart && (
                 <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
               )}
@@ -403,6 +409,11 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
           prepare={(_base, envelope) => editor.current!.prepareHeading(envelope)}
           onApply={applyHeading} onClose={() => setEditHeading(false)} />
       )}
+      {detachOpen && editor.current && <DetachComponentDialog editor={editor.current} table={targetTable}
+        onClose={() => setDetachOpen(false)} onApplied={() => {
+          setDetachOpen(false);
+          setProject(editor.current!.snapshot());
+        }} />}
       {editSource && editor.current && <V3SourceEditor editor={editor.current} savedDraft={sourceDraft} onDraft={setSourceDraft}
         onClose={() => setEditSource(false)} onApply={proposal => {
           const current = editor.current!;

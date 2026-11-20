@@ -75,6 +75,19 @@ test('previews a typed component, stores only instance bindings, and preserves t
   expect(renamed.source).toContain('m_n1["API gateway"]');
   expect(renamed.componentInstances).toEqual(created.componentInstances);
   expect(JSON.stringify(renamed)).not.toContain('Edge service');
+
+  await live.getByRole('button', { name: 'Detach component', exact: true }).click();
+  const detach = page.getByRole('dialog', { name: 'Detach component' });
+  await detach.getByLabel('Component instance').selectOption(instance.id);
+  await expect(detach.getByRole('list', { name: 'Elements in this instance' })).toContainText('API gateway');
+  await detach.getByRole('button', { name: 'Detach instance' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const detached = await downloadProject();
+  expect(detached).toEqual({ ...renamed, revision: renamed.revision + 1, updatedAt: detached.updatedAt, componentInstances: [] });
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await downloadProject();
+  expect(restored).toEqual({ ...renamed, revision: detached.revision + 1, updatedAt: restored.updatedAt });
 });
 
 test('imports conflicting library definitions as copies and exports them after reload', async ({ page }) => {
