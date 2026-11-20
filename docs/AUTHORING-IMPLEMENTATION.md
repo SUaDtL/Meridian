@@ -74,3 +74,13 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The heading dialog retains the draft on a stale result and shows the current heading. Reviewing the new base requires an explicit action before resubmitting. Headings use the existing frame path. The performance regression test verifies zero additional Mermaid layouts for a heading edit.
 - Unit and browser evidence covers equal-revision metadata mismatch, source change during hashing, forged readiness, out-of-scope fields, one-step Undo/Redo, UTF-8 budget enforcement and draft recovery after a stale Apply. See `src/lib/authoring/proposals.test.ts` and `tests/browser/authoring-foundation.spec.ts`.
 - This advances FN01, FN04, FN05, FN10 and FN11 for one native metadata operation. Structural validation, v3 IDs, selection and composition history, durable compare-and-swap, and imported proposals remain open. G01–G03 remain open for visual authoring.
+
+## Milestone 0 source semantic comparison
+
+[PR #8](https://github.com/SUaDtL/Meridian/pull/8) merged the heading proposal increment as [`510b3b2`](https://github.com/SUaDtL/Meridian/commit/510b3b25f973572dc2f9ae107ee7bdb10b1e0396).
+
+- `src/lib/authoring/flowchart-proof.ts` checks the scanner's top-level direction, explicit node declarations, shape and edge order against the pinned Mermaid parser. It then compares the entire before-and-after source graph to the expected Add, Rename, Connect, or indexed edge removal. A matching edge count alone is insufficient.
+- The comparison includes unrelated node labels, shapes, edge endpoints, edge notation, surviving indexed styles, and default link styles. New labels must also read back exactly from the sanitized SVG. Unsupported source or a mismatched candidate is refused without dispatching any edit.
+- `src/lib/render.ts` detaches source semantics from the existing serialized Mermaid layout job. Sources with design overrides still use their original parsed model for comparison. The bounded renderer caches account for the estimated size of the retained model.
+- `tests/browser/flowchart-proof.spec.ts` runs the exact validator in Chromium with the installed Mermaid dependency. The fixture includes BOM and CRLF, an explicit parallel edge, multiple indexed styles, link interpolation and a default link style. Unit adversarial cases reject a modified unrelated label, endpoint, surviving style or default style.
+- This advances G01 and the source validation portions of FN04, FN10 and FN12 for the declared flat subset. Cross-revision structural Apply, a source worker and broader grammar, typed identity and orphan tracking, and full runtime/export migration remain open. The proof is available to future commands behind those gates.

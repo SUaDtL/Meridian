@@ -10,7 +10,7 @@ export const authoringLimits = {
 export type Shape = NonNullable<ElementStyle['shape']>;
 type Direction = 'TB' | 'BT' | 'LR' | 'RL';
 
-const shapeDelimiters: Record<Shape, readonly [string, string]> = {
+export const shapeDelimiters: Record<Shape, readonly [string, string]> = {
   rect: ['[', ']'],
   rounded: ['(', ')'],
   stadium: ['([', '])'],

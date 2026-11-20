@@ -109,11 +109,18 @@ export function validateDesign(value: unknown): DesignState {
   return { preset: raw.preset as DesignPresetId, elements };
 }
 
-export interface FlowEdgeModel { id?: string; isUserDefinedId?: boolean; start: string; end: string; text?: string; style?: string[]; }
+export interface FlowEdgeModel {
+  id?: string; isUserDefinedId?: boolean; start: string; end: string; text?: string; style?: string[];
+  type?: string; length?: number; stroke?: string; labelType?: string; interpolate?: string; classes?: string[];
+}
 export interface FlowModel {
-  vertices: Map<string, { id: string; text?: string; styles?: string[] }>;
+  vertices: Map<string, { id: string; text?: string; styles?: string[]; type?: string; labelType?: string; classes?: string[] }>;
   edges: FlowEdgeModel[];
   groups: Array<{ id: string; title?: string; nodes: string[] }>;
+  direction?: string;
+  classCount?: number;
+  defaultStyle?: string[];
+  defaultInterpolate?: string;
 }
 
 /** Hash only the label, keeping endpoint identity inspectable and keys bounded. */

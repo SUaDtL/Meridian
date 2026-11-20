@@ -1,4 +1,4 @@
-import { authoringLimits, encodeMermaidLabel, writeEdgeDeclaration, writeNodeDeclaration, type Shape } from './flowchart-source';
+import { authoringLimits, encodeMermaidLabel, shapeDelimiters, writeEdgeDeclaration, writeNodeDeclaration, type Shape } from './flowchart-source';
 
 export interface SourcePatch {
   from: number;
@@ -15,10 +15,10 @@ interface RecordSpan {
 
 const unsupported = () => new Error('This source uses syntax outside the supported editing subset. Edit it in the source panel.');
 const id = '[A-Za-z_][A-Za-z_0-9]*';
-const header = /^(?:flowchart|graph)[ \t]+(?:TB|TD|BT|LR|RL)$/;
+const header = /^(?:flowchart|graph)[ \t]+(TB|TD|BT|LR|RL)$/;
 const edge = new RegExp(`^(${id})[ \t]+(?:(${id})@)?-->(?:\\|"[^"]*"\\|)?[ \t]+(${id})$`);
 const node = new RegExp(`^(${id})(\\(\\[|\\[\\(|\\(\\(|\\{\\{|\\[|\\(|\\{)("[^"]*"|[A-Za-z0-9 _-]+)(\\]\\)|\\)\\]|\\)\\)|\\}\\}|\\]|\\)|\\})$`);
-const closing = new Map([['([', '])'], ['[(', ')]'], ['((', '))'], ['{{', '}}'], ['[', ']'], ['(', ')'], ['{', '}']]);
+const shapesByOpening = new Map(Object.entries(shapeDelimiters).map(([shape, [open, close]]) => [open, { shape: shape as Shape, close }]));
 const reserved = new Set(['end', 'subgraph', 'flowchart', 'graph', 'class', 'classDef', 'style', 'click', 'linkStyle', 'direction']);
 const indexedStyle = /^linkStyle[ \t]+(default|\d+(?:,\d+)*)(?=[ \t]|$)[ \t]+([^;%]+)$/;
 const recordLimit = 40_000;
@@ -79,8 +79,9 @@ function scanRecords(source: string): RecordSpan[] {
 
 function readSubset(source: string) {
   const [first, ...records] = scanRecords(source);
-  if (!first || !header.test(first.text)) throw unsupported();
-  const nodes = new Map<string, RecordSpan>();
+  const direction = first && header.exec(first.text)?.[1];
+  if (!direction) throw unsupported();
+  const nodes = new Map<string, RecordSpan & { shape: Shape }>();
   const edges: { id?: string; from: string; to: string; record: RecordSpan }[] = [];
   const edgeIds = new Set<string>();
   const styles: { record: RecordSpan; indices: string }[] = [];
@@ -89,9 +90,10 @@ function readSubset(source: string) {
     let match = node.exec(record.text);
     if (match) {
       const [, name, open, label, close] = match;
-      if (closing.get(open) !== close || reserved.has(name) || nodes.has(name)) throw unsupported();
+      const notation = shapesByOpening.get(open);
+      if (!notation || notation.close !== close || reserved.has(name) || nodes.has(name)) throw unsupported();
       const start = record.start + name.length + open.length;
-      nodes.set(name, { start, end: start + label.length, text: label });
+      nodes.set(name, { start, end: start + label.length, text: label, shape: notation.shape });
       continue;
     }
     match = edge.exec(record.text);
@@ -114,7 +116,17 @@ function readSubset(source: string) {
       throw unsupported();
     }
   }
-  return { nodes, edges, edgeIds, styles };
+  return { direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles };
+}
+
+/** Only the source editor may handle undeclared nodes, groups or opaque directives. */
+export function flowchartSubsetTopology(source: string) {
+  const { direction, nodes, edges } = readSubset(source);
+  return {
+    direction,
+    nodes: Array.from(nodes, ([id, node]) => ({ id, shape: node.shape })),
+    edges: edges.map(({ id, from, to }) => ({ id: id ?? null, from, to })),
+  };
 }
 
 function replace(span: RecordSpan, replacement: string): SourcePatch {
