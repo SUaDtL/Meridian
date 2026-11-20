@@ -2,7 +2,7 @@ import type { RenderResult, StudioDocument } from '../../types';
 import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram } from '../render';
 import { canonicalJson } from './base-token';
-import type { Shape } from './flowchart-source';
+import { flowchartEngineShapes, type Shape } from './flowchart-source';
 import { applySourcePatches, flowchartSubsetTopology, planEdgeAddition, planEdgeRemoval, planNodeAddition, planNodeLabel } from './source-patches';
 
 export type SourceIntent =
@@ -11,11 +11,7 @@ export type SourceIntent =
   | { op: 'addEdge'; from: string; to: string; label?: string }
   | { op: 'removeEdge'; sourceId: string };
 
-const engineShape: Record<Shape, string> = {
-  rect: 'square', rounded: 'round', stadium: 'stadium', diamond: 'diamond',
-  circle: 'circle', cylinder: 'cylinder', hexagon: 'hexagon',
-};
-const shapesByEngineType = new Map(Object.entries(engineShape).map(([shape, type]) => [type, shape]));
+const shapesByEngineType = new Map(Object.entries(flowchartEngineShapes).map(([shape, type]) => [type, shape]));
 const mismatch = () => new Error('Mermaid read a different diagram than expected. Your source edit was not applied.');
 const inexactLabel = () => new Error('Mermaid could not display that label exactly. Choose a different label and preview again.');
 

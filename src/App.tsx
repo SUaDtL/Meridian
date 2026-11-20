@@ -12,6 +12,7 @@ import Home, { StartChoices } from "./components/Home";
 import Modal from "./components/Modal";
 import WorkspaceBoundary from "./components/WorkspaceBoundary";
 import type { GuidedProcessDraft } from "./components/GuidedProcessDialog";
+import type { RelationshipTableDraft } from "./components/GuidedRelationshipTableDialog";
 import { NoticeContext, NoticeMessage, type Notice } from "./components/Notice";
 import { useWorkspace } from "./hooks/useWorkspace";
 import {
@@ -33,7 +34,9 @@ const ProjectManager = lazy(() => import("./components/ProjectManager"));
 const Guide = lazy(() => import("./components/Guide"));
 const WorkspaceMigrationReview = lazy(() => import("./components/WorkspaceMigrationReview"));
 const GuidedProcessDialog = lazy(() => import("./components/GuidedProcessDialog"));
-type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | "guided" | null;
+const GuidedRelationshipTableDialog = lazy(() => import("./components/GuidedRelationshipTableDialog"));
+type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | "guided" | "guided-table" | null;
+const emptyRelationshipTable: RelationshipTableDraft = { title: "", text: "", delimiter: ",", header: true };
 export type Notify = (
   message: string,
   tone?: "success" | "error",
@@ -45,6 +48,7 @@ export default function App() {
   const [screen, setScreen] = useState<"home" | "studio">("home");
   const [dialog, setDialog] = useState<Dialog>(null);
   const [guidedDraft, setGuidedDraft] = useState<GuidedProcessDraft>({ title: "", text: "" });
+  const [relationshipTable, setRelationshipTable] = useState(emptyRelationshipTable);
   const [requestedV3Project, setRequestedV3Project] = useState<string>();
   const [notice, setNotice] = useState<Notice | null>(null);
   const [openModals, setOpenModals] = useState(0);
@@ -352,9 +356,20 @@ export default function App() {
             )}
             {dialog === "guided" && (
               <GuidedProcessDialog draft={guidedDraft} onDraft={setGuidedDraft} onClose={closeDialog}
+                onRelationshipTable={() => setDialog("guided-table")}
                 onCreated={(id, draftRetained) => {
                   if (draftRetained) notify("Project saved. The local draft could not be cleared.", "error");
                   setGuidedDraft({ title: "", text: "" });
+                  setRequestedV3Project(id);
+                  setDialog("migration");
+                }} />
+            )}
+            {dialog === "guided-table" && (
+              <GuidedRelationshipTableDialog draft={relationshipTable} onDraft={setRelationshipTable} onClose={closeDialog}
+                onProcess={() => setDialog("guided")}
+                onCreated={(id, draftRetained) => {
+                  if (draftRetained) notify("Project saved. The local draft could not be cleared.", "error");
+                  setRelationshipTable(emptyRelationshipTable);
                   setRequestedV3Project(id);
                   setDialog("migration");
                 }} />

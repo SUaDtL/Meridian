@@ -1,15 +1,9 @@
-import { canonicalJson } from '../authoring/base-token';
 import { encodeMermaidLabel, authoringLimits } from '../authoring/flowchart-source';
 import { adjacentConnections, maxProcessConnections, type ProcessConnections } from '../authoring/process-connections';
 import { maxProcessSourceRows, type ProcessStep } from '../authoring/process-steps';
 import { elementUuidPattern } from '../authoring/identities';
 
-const storeName = 'drafts';
-const week = 7 * 24 * 60 * 60 * 1_000;
-const maxDrafts = 10;
-const maxDraftBytes = 2_000_000;
-const maxTotalBytes = 10_000_000;
-const encoder = new TextEncoder();
+import { discardGuidedCheckpoint, draftBytes, draftWeek, listGuidedCheckpoints, maxDraftBytes, sameCheckpoint, saveGuidedCheckpoint } from './guided-drafts';
 
 function makeCheckpoint(title: string, steps: readonly ProcessStep[], id: string, timestamp: number, connections?: ProcessConnections) {
   if (!Number.isFinite(timestamp) || typeof id !== 'string' || !elementUuidPattern.test(id)
@@ -46,7 +40,7 @@ function makeCheckpoint(title: string, steps: readonly ProcessStep[], id: string
     feature: 'guided' as const,
     baseToken: null,
     createdAt: new Date(timestamp).toISOString(),
-    expiresAt: new Date(timestamp + week).toISOString(),
+    expiresAt: new Date(timestamp + draftWeek).toISOString(),
     payload: {
       intent: 'process' as const, mode: connections ? 'connections' as const : 'linear' as const, step: 'connections' as const,
       title, subtitle: '', direction: 'LR' as const,
@@ -84,37 +78,20 @@ export function checkpointConnections({ payload }: ProcessCheckpoint): ProcessCo
   };
 }
 
-const bytes = (value: unknown) => encoder.encode(JSON.stringify(value)).byteLength;
-const sameCheckpoint = (value: unknown, expected: ProcessCheckpoint) => value !== undefined && canonicalJson(value) === canonicalJson(expected);
-
 function readCheckpoint(value: unknown): ProcessCheckpoint | undefined {
   try {
     const record = value as ProcessCheckpoint;
     if (record?.feature !== 'guided' || !['linear', 'connections'].includes(record.payload?.mode)) return undefined;
     const normalized = record.payload.nodes.map(node => ({ line: node.sourceRow, original: node.label, label: node.label }));
     const expected = makeCheckpoint(record.payload.title, normalized, record.id, Date.parse(record.createdAt), checkpointConnections(record));
-    return sameCheckpoint(record, expected) && bytes(expected) <= maxDraftBytes ? expected : undefined;
+    return sameCheckpoint(record, expected) && draftBytes(expected) <= maxDraftBytes ? expected : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function listProcessCheckpoints(db: IDBDatabase): Promise<ProcessCheckpoint[]> {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName);
-    const read = tx.objectStore(storeName).getAll(undefined, maxDrafts + 1);
-    tx.oncomplete = () => {
-      if (read.result.length > maxDrafts) {
-        reject(new Error('The local draft list exceeds its limit.'));
-        return;
-      }
-      resolve(read.result.flatMap(value => {
-        const record = readCheckpoint(value);
-        return record && Date.parse(record.expiresAt) > Date.now() ? [record] : [];
-      }).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
-    };
-    tx.onabort = () => reject(tx.error ?? new Error('Local drafts could not be read.'));
-  });
+export function listProcessCheckpoints(db: IDBDatabase) {
+  return listGuidedCheckpoints(db, readCheckpoint);
 }
 
 export async function saveProcessCheckpoint(
@@ -123,60 +100,7 @@ export async function saveProcessCheckpoint(
   if (steps.some(step => step.line > maxProcessSourceRows)) throw new Error('This draft contains a step beyond line 10,000.');
   const now = Date.now();
   const next = makeCheckpoint(title, steps, previous?.id ?? crypto.randomUUID(), now, connections);
-  if (bytes(next) > maxDraftBytes) throw new Error('This draft is too large to save.');
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    let failure: unknown;
-    const read = store.getAll(undefined, maxDrafts + 1);
-    tx.oncomplete = () => resolve(next);
-    tx.onabort = () => reject(failure ?? tx.error ?? new Error('The draft could not be saved.'));
-    read.onsuccess = () => {
-      try {
-        const records = read.result;
-        const current = records.find(record => record?.id === next.id);
-        if (previous ? !sameCheckpoint(current, previous) : current !== undefined) {
-          throw new Error('This draft changed in another tab. Reopen it before saving.');
-        }
-        const retained = records.filter(record => {
-          if (record?.id === next.id) return false;
-          const checkpoint = readCheckpoint(record);
-          if (checkpoint && Date.parse(checkpoint.expiresAt) <= now) {
-            store.delete(checkpoint.id);
-            return false;
-          }
-          return true;
-        });
-        const total = retained.reduce((size, record) => size + bytes(record), bytes(next));
-        if (records.length > maxDrafts || retained.length >= maxDrafts || total > maxTotalBytes) {
-          throw new Error('Local drafts have reached their storage limit.');
-        }
-        store.put(next);
-      } catch (reason) {
-        failure = reason;
-        tx.abort();
-      }
-    };
-  });
+  return saveGuidedCheckpoint(db, next, previous, now);
 }
 
-export function discardProcessCheckpoint(db: IDBDatabase, expected: ProcessCheckpoint): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    const read = store.get(expected.id);
-    let failure: unknown;
-    tx.oncomplete = () => resolve();
-    tx.onabort = () => reject(failure ?? tx.error ?? new Error('The draft could not be cleared.'));
-    read.onsuccess = () => {
-      try {
-        if (read.result === undefined) return;
-        if (!sameCheckpoint(read.result, expected)) throw new Error('This draft changed in another tab.');
-        store.delete(expected.id);
-      } catch (reason) {
-        failure = reason;
-        tx.abort();
-      }
-    };
-  });
-}
+export const discardProcessCheckpoint = discardGuidedCheckpoint;

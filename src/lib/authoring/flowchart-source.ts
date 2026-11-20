@@ -19,6 +19,10 @@ export const shapeDelimiters: Record<Shape, readonly [string, string]> = {
   cylinder: ['[(', ')]'],
   hexagon: ['{{', '}}'],
 };
+export const flowchartEngineShapes: Record<Shape, string> = {
+  rect: 'square', rounded: 'round', stadium: 'stadium', diamond: 'diamond',
+  circle: 'circle', cylinder: 'cylinder', hexagon: 'hexagon',
+};
 const delimiters = new Set('"\\#&<>[]{}()|`;%');
 const directions = new Set<Direction>(['TB', 'BT', 'LR', 'RL']);
 
