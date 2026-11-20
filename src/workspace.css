@@ -901,3 +901,24 @@
 .project-outline > ul > li[aria-selected="true"] { background: #253f34; }
 .project-outline small { color: #aac4b9; }
 .migration-preview mark { background: #dcefae; color: #17241e; }
+.recipe-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 8px;
+  margin-block: 0.75rem;
+}
+.recipe-options > .button {
+  display: grid;
+  gap: 4px;
+  justify-content: start;
+  white-space: normal;
+  text-align: start;
+}
+.recipe-options > .button[aria-pressed="true"] { border-color: #80b89b; }
+.migration-preview figure {
+  margin: 10px 0;
+}
+.migration-preview figcaption {
+  color: #aac4b9;
+  margin-block: 6px;
+}
