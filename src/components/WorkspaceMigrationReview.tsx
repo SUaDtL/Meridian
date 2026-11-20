@@ -112,7 +112,7 @@ export default function WorkspaceMigrationReview({ nextProjectId, onClose, onDow
 
   const manifest = review?.manifest;
   if (openProjectId) {
-    return <V3ProjectSession id={openProjectId} onBack={() => {
+    return <V3ProjectSession key={openProjectId} id={openProjectId} onOpenCopy={setOpenProjectId} onBack={() => {
       setOpenProjectId(undefined);
       void run("inspect", refresh);
     }} />;

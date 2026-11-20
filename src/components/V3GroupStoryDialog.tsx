@@ -22,13 +22,14 @@ export const initialGroupStoryDraft: GroupStoryDraft = {
 };
 const count = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`;
 
-export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, onApply, onClose }: {
+export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, onApply, onOpenCopy, onClose }: {
   editor: Editor;
   db: IDBDatabase;
   table: RenderTargetTable;
   draft: GroupStoryDraft;
   onDraft: Dispatch<SetStateAction<GroupStoryDraft>>;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStory"]>;
+  onOpenCopy: (id: string) => void;
   onClose: () => void;
 }) {
   const [prepared, setPrepared] = useState<{ proposal: ReadyProposal; result: StoryPreview; svg: string }>();
@@ -111,8 +112,24 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
     }
   }
 
-  function apply() {
-    if (!prepared || !previewReady) return;
+  async function apply() {
+    if (!prepared || !previewReady || writing.current) return;
+    if (draft.destination === "duplicate") {
+      writing.current = true;
+      setDraftWriting(true);
+      setError("");
+      try {
+        const id = await editor.saveStoryCopy(prepared.proposal);
+        if (checkpoint) await discardGuidedCheckpoint(db, checkpoint).catch(() => undefined);
+        onOpenCopy(id);
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "The story copy could not be saved.");
+      } finally {
+        writing.current = false;
+        setDraftWriting(false);
+      }
+      return;
+    }
     const status = onApply(prepared.proposal);
     if (status === "applied") {
       if (checkpoint) void discardGuidedCheckpoint(db, checkpoint).catch(() => undefined);
@@ -241,9 +258,14 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
         <label className="check-label"><input type="checkbox" checked={draft.animate} disabled={working}
           onChange={event => onDraft(current => ({ ...current, animate: event.target.checked }))} /> Animate visible directional connections</label>
         <label>Apply to storyboard<select value={draft.destination} disabled={working}
-          onChange={event => onDraft(current => ({ ...current, destination: event.target.value === "replace" ? "replace" : "append" }))}>
+          onChange={event => {
+            const value = event.target.value;
+            if (value === "append" || value === "replace" || value === "duplicate") onDraft(current => ({ ...current, destination: value }));
+          }}>
           <option value="append">Append scenes</option><option value="replace">Replace scenes</option>
+          <option value="duplicate">Duplicate project and replace scenes</option>
         </select></label>
+        {draft.destination === "duplicate" && <p>The suggested scenes will appear in a new project. The original keeps its {count(existing.length, "scene")}.</p>}
         {draft.destination === "replace" && existing.length > 0 && <p>Replace {existing.length} current scenes: {existing.map(scene => scene.title || "Untitled scene").join(", ")}</p>}
         <div className="dialog-actions">
           <button className="button secondary" disabled={working || sceneCount === 0} onClick={() => void persist()}>Save story draft</button>
@@ -262,8 +284,11 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
           <p>{count(coverage.node.omitted, "node")}, {count(coverage.edge.omitted, "connection")}, and {count(coverage.group.omitted, "group")} omitted.</p>
         </li>)}</ul>
         <div className="dialog-actions">
-          <button className="button quiet" onClick={() => setPrepared(undefined)}>Back to scene choices</button>
-          <button className="button primary" disabled={!previewReady} onClick={apply}>{draft.destination === "replace" ? "Replace with suggested scenes" : "Append suggested scenes"}</button>
+          <button className="button quiet" disabled={draftWriting} onClick={() => setPrepared(undefined)}>Back to scene choices</button>
+          <button className="button primary" disabled={!previewReady || draftWriting} onClick={() => void apply()}>
+            {draft.destination === "duplicate" ? "Save and open story copy"
+              : draft.destination === "replace" ? "Replace with suggested scenes" : "Append suggested scenes"}
+          </button>
         </div>
       </>}
     </Modal>

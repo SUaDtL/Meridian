@@ -27,7 +27,9 @@ import type { ProposalOutcome } from "../lib/workspace";
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
 
-export default function V3ProjectSession({ id, onBack }: { id: string; onBack: () => void }) {
+export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
+  id: string; onBack: () => void; onOpenCopy: (id: string) => void;
+}) {
   const connection = useRef<IDBDatabase | undefined>(undefined);
   const editor = useRef<Editor | undefined>(undefined);
   const inFlight = useRef(false);
@@ -395,7 +397,7 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
           return status;
         }} />}
       {storyOpen && targetTable && editor.current && connection.current && <V3GroupStoryDialog editor={editor.current} db={connection.current} table={targetTable}
-        draft={storyDraft} onDraft={setStoryDraft} onClose={() => setStoryOpen(false)} onApply={proposal => {
+        draft={storyDraft} onDraft={setStoryDraft} onOpenCopy={onOpenCopy} onClose={() => setStoryOpen(false)} onApply={proposal => {
           const current = editor.current!;
           const status = current.applyStory(proposal);
           if (status === "applied") {
