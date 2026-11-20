@@ -171,3 +171,73 @@ test('guided normalization runs in the standalone app with networking disabled',
   await expect(wizard.getByText('From line 1: 1. Start')).toBeVisible();
   expect(network).toEqual([]);
 });
+
+test('reviews and resumes explicit approval branches without connecting approve to reject', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
+  await wizard.getByLabel('Project title').fill('Approval process');
+  await wizard.getByLabel('Put one step on each line').fill('Start\nDecision\nApprove\nReject\nComplete');
+  await wizard.getByRole('button', { name: 'Review connections' }).click();
+  await wizard.getByRole('button', { name: 'Make Decision a decision' }).click();
+  const connection = (index: number) => wizard.getByRole('group', { name: `Connection ${index}`, exact: true });
+  const preview = wizard.getByRole('button', { name: 'Preview process' });
+  await preview.click();
+  await expect(wizard.getByRole('alert')).toHaveText('Keep or remove the connection from Decision to Approve.');
+  await connection(2).getByLabel('Connection label').fill('Approve request');
+  await connection(2).getByRole('button', { name: 'Keep connection' }).click();
+  await connection(3).getByRole('button', { name: 'Remove connection' }).click();
+  await wizard.getByLabel('Mark Complete as an end').check();
+  await wizard.getByRole('button', { name: 'Move Reject up' }).click();
+  await wizard.getByRole('button', { name: 'Save draft', exact: true }).click();
+  await expect(wizard.getByText(/Draft saved locally · expires/)).toBeVisible();
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await wizard.getByRole('button', { name: /Resume Approval process/ }).click();
+  const steps = wizard.getByRole('list', { name: 'Process steps' }).getByRole('listitem');
+  await expect(steps.nth(2)).toContainText('Reject');
+  await expect(steps.nth(3)).toContainText('Approve');
+  await wizard.getByRole('button', { name: 'Move Approve up' }).click();
+  await expect(wizard.getByLabel('Mark Complete as an end')).toBeChecked();
+  await expect(connection(2).getByLabel('Connection label')).toHaveValue('Approve request');
+  await expect(connection(2).getByText('Review connection')).toHaveCount(0);
+  await expect(connection(3).getByText('Review connection')).toBeVisible();
+  await connection(3).getByRole('button', { name: 'Keep connection' }).click();
+  const rejectEnd = wizard.getByLabel('Mark Reject as an end');
+  await rejectEnd.check();
+  await preview.click();
+  await expect(wizard.getByRole('alert')).toHaveText('Reject is marked as an end and cannot connect to Complete.');
+  await rejectEnd.uncheck();
+  const add = wizard.getByRole('button', { name: 'Add connection', exact: true });
+  await add.click();
+  await connection(4).getByLabel('From').selectOption({ label: 'Decision · line 2' });
+  await connection(4).getByLabel('To').selectOption({ label: 'Reject · line 4' });
+  await connection(4).getByLabel('Connection label').fill('Reject request');
+  await connection(4).getByRole('button', { name: 'Keep connection' }).click();
+  await add.click();
+  await connection(5).getByLabel('From').selectOption({ label: 'Approve · line 3' });
+  await connection(5).getByLabel('To').selectOption({ label: 'Complete · line 5' });
+  await connection(5).getByRole('button', { name: 'Keep connection' }).click();
+  await preview.click();
+  const create = wizard.getByRole('button', { name: 'Create process' });
+  await expect(create).toBeEnabled();
+  const reviewed = wizard.getByRole('list', { name: 'Reviewed connections' });
+  await expect(reviewed.getByRole('listitem')).toHaveText([
+    'Start → Decision', 'Decision → Approve (Approve request)', 'Reject → Complete',
+    'Decision → Reject (Reject request)', 'Approve → Complete',
+  ]);
+  await create.click();
+  const project = page.getByRole('dialog', { name: 'Approval process' });
+  await expect(project.getByText('Saved in this browser.')).toBeVisible();
+  const pendingDownload = page.waitForEvent('download');
+  await project.getByRole('button', { name: 'Download v3 project' }).click();
+  const downloaded = await (await pendingDownload).path();
+  if (!downloaded) throw new Error('No downloaded project.');
+  const result = JSON.parse(await readFile(downloaded, 'utf8'));
+  expect(result.source).toBe([
+    'flowchart LR', '  m_n1["Start"]', '  m_n2{"Decision"}', '  m_n3["Approve"]', '  m_n4["Reject"]', '  m_n5["Complete"]',
+    '  m_n1 m_e1@--> m_n2', '  m_n2 m_e2@-->|"Approve request"| m_n3', '  m_n4 m_e3@--> m_n5',
+    '  m_n2 m_e4@-->|"Reject request"| m_n4', '  m_n3 m_e5@--> m_n5', '',
+  ].join('\n'));
+});

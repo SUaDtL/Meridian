@@ -1,12 +1,21 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Modal from "./Modal";
+import ProcessConnectionTable from "./ProcessConnectionTable";
 import { prepareGuidedProcess, type ProcessStep } from "../lib/authoring/guided-process";
+import { markProcessDecision, type ProcessConnections } from "../lib/authoring/process-connections";
 import { normalizeProcessInWorker, ProcessNormalizationTimeout } from "../lib/authoring/process-normalization";
 import { buildExportFrame } from "../lib/export";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
-import { discardProcessCheckpoint, listProcessCheckpoints, saveProcessCheckpoint, type ProcessCheckpoint } from "../lib/persistence/process-drafts";
+import { checkpointConnections, discardProcessCheckpoint, listProcessCheckpoints, saveProcessCheckpoint, type ProcessCheckpoint } from "../lib/persistence/process-drafts";
 
-export type GuidedProcessDraft = { title: string; text: string; checkpoint?: ProcessCheckpoint };
+export type GuidedProcessDraft = {
+  title: string;
+  text: string;
+  steps?: ProcessStep[];
+  connections?: ProcessConnections;
+  unsaved?: boolean;
+  checkpoint?: ProcessCheckpoint;
+};
 type Review = { document: Awaited<ReturnType<typeof prepareGuidedProcess>>["document"]; url: string };
 
 export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose }: {
@@ -16,7 +25,6 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
   onClose: () => void;
 }) {
   const [stage, setStage] = useState<"input" | "connections" | "review">("input");
-  const [steps, setSteps] = useState<ProcessStep[]>([]);
   const [review, setReview] = useState<Review>();
   const [imageReady, setImageReady] = useState(false);
   const [busy, setBusy] = useState<"normalize" | "preview" | "save" | "checkpoint" | "discard">();
@@ -28,6 +36,8 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
   const writing = useRef(false);
   const titleInput = useRef<HTMLInputElement>(null);
   const stepHeading = useRef<HTMLHeadingElement>(null);
+  const steps = draft.steps ?? [];
+  const connections = draft.connections;
   useEffect(() => () => { controller.current?.abort(); }, []);
   useEffect(() => () => { if (review) URL.revokeObjectURL(review.url); }, [review]);
   useEffect(() => {
@@ -45,12 +55,12 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
     return () => { closed = true; };
   }, []);
 
-  async function checkpoint(normalized: ProcessStep[]) {
+  async function checkpoint(normalized: ProcessStep[], explicit = connections) {
     setBusy("checkpoint");
     setDraftError("");
     try {
-      const saved = await withDatabase(db => saveProcessCheckpoint(db, draft.title, normalized, draft.checkpoint));
-      onDraft(current => ({ ...current, checkpoint: saved }));
+      const saved = await withDatabase(db => saveProcessCheckpoint(db, draft.title, normalized, draft.checkpoint, explicit));
+      onDraft(current => ({ ...current, checkpoint: saved, unsaved: false }));
       setDrafts(current => [saved, ...current.filter(item => item.id !== saved.id)]);
     } catch (reason) {
       setDraftError(reason instanceof Error ? reason.message : "The draft could not be saved.");
@@ -61,6 +71,11 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
 
   async function showConnections(extended = false) {
     if (controller.current) return;
+    if (draft.steps) {
+      setError("");
+      setStage("connections");
+      return;
+    }
     const attempt = new AbortController();
     controller.current = attempt;
     setBusy("normalize");
@@ -68,7 +83,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
     try {
       const normalized = await normalizeProcessInWorker(draft.text, attempt.signal, extended);
       attempt.signal.throwIfAborted();
-      setSteps(normalized);
+      onDraft(current => ({ ...current, steps: normalized, unsaved: true }));
       setStage("connections");
       setNormalization(null);
       void checkpoint(normalized);
@@ -86,11 +101,23 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
 
   function resume(saved: ProcessCheckpoint) {
     const normalized = saved.payload.nodes.map(node => ({ line: node.sourceRow, original: node.label, label: node.label }));
-    onDraft({ title: saved.payload.title, text: normalized.map(row => row.label).join("\n"), checkpoint: saved });
-    setSteps(normalized);
+    onDraft({ title: saved.payload.title, text: normalized.map(row => row.label).join("\n"),
+      steps: normalized, connections: checkpointConnections(saved), checkpoint: saved });
     setDraftError("");
     setError("");
     setStage("connections");
+  }
+
+  function editConnections(explicit: ProcessConnections) {
+    setError("");
+    onDraft(current => ({ ...current, connections: explicit, unsaved: true }));
+  }
+
+  function moveStep(index: number, offset: -1 | 1) {
+    const reordered = [...steps];
+    const destination = index + offset;
+    [reordered[index], reordered[destination]] = [reordered[destination], reordered[index]];
+    onDraft(current => ({ ...current, steps: reordered, unsaved: true }));
   }
 
   async function discard(saved: ProcessCheckpoint) {
@@ -114,7 +141,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
     setBusy("preview");
     setError("");
     try {
-      const { document, rendered } = await prepareGuidedProcess(draft.title, steps, attempt.signal);
+      const { document, rendered } = await prepareGuidedProcess(draft.title, steps, attempt.signal, connections);
       attempt.signal.throwIfAborted();
       const svg = buildExportFrame(rendered, document).svg;
       setImageReady(false);
@@ -173,17 +200,23 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
             </ul>
           )}
           <label>Project title<input name="process-title" ref={titleInput} maxLength={120} value={draft.title} readOnly={busy === "normalize"}
-            onChange={event => onDraft({ ...draft, title: event.target.value })} /></label>
+            onChange={event => onDraft({ ...draft, title: event.target.value, unsaved: true })} /></label>
           <label>Put one step on each line
-            <textarea value={draft.text} rows={7} readOnly={busy === "normalize"} placeholder={"Receive request\nReview request\nSend decision"}
+            <textarea value={draft.text} rows={7} readOnly={busy === "normalize" || !!connections} placeholder={"Receive request\nReview request\nSend decision"}
               onChange={event => {
                 setNormalization(null);
                 setError("");
-                onDraft({ ...draft, text: event.target.value });
+                onDraft({ title: draft.title, text: event.target.value, checkpoint: draft.checkpoint, unsaved: true });
               }} />
           </label>
           <p className="muted-note">Leading bullets and numbered prefixes are removed when followed by a space. Unreviewed input stays in this session.</p>
+          {connections && <p className="muted-note">These steps are tied to your explicit connections. Starting a new list keeps the last saved draft.</p>}
           <div className="dialog-actions">
+            {connections && <button type="button" className="button quiet" onClick={() => {
+              setError("");
+              setDraftError("");
+              onDraft({ title: draft.title, text: draft.text, unsaved: true });
+            }}>{draft.unsaved ? "Discard unsaved changes and start a new list" : "Start a new step list"}</button>}
             {normalization === "retry" ? (
               <button type="button" className="button primary" disabled={!!busy} onClick={() => void showConnections(true)}>Retry for five seconds</button>
             ) : (
@@ -194,21 +227,52 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
       )}
       {stage !== "input" && (
         <>
-          <p>{steps.length} steps · {steps.length - 1} connections · New project</p>
-          <ol className="guided-process-connections">
+          <p>{steps.length} steps · {connections?.edges.length ?? steps.length - 1} connections · New project</p>
+          <ol aria-label="Process steps" className="guided-process-connections">
             {steps.map((step, index) => (
               <li key={step.line}>
                 <strong>{step.label}</strong>
                 {step.label !== step.original && <small>From line {step.line}: {step.original}</small>}
-                {steps[index + 1] && <span>Next: {steps[index + 1].label}</span>}
+                {!connections && steps[index + 1] && <span>Next: {steps[index + 1].label}</span>}
+                {connections?.decisions.includes(step.line) && <span>Decision</span>}
+                {stage === "connections" && steps.length >= 3 && !connections?.decisions.includes(step.line) && (
+                  <button type="button" className="button quiet" disabled={!!busy}
+                    onClick={() => editConnections(markProcessDecision(steps, connections, step.line))}>Make {step.label} a decision</button>
+                )}
+                {stage === "connections" && connections && !connections.decisions.includes(step.line) && (
+                  <label className="check-label"><input type="checkbox" checked={connections.terminal.includes(step.line)} disabled={!!busy}
+                    onChange={event => editConnections({ ...connections, terminal: event.target.checked
+                      ? [...connections.terminal, step.line] : connections.terminal.filter(line => line !== step.line) })} /> Mark {step.label} as an end</label>
+                )}
+                {stage === "connections" && connections && (
+                  <div className="process-step-actions">
+                    <button type="button" className="button quiet" disabled={!!busy || index === 0}
+                      onClick={() => moveStep(index, -1)}>Move {step.label} up</button>
+                    <button type="button" className="button quiet" disabled={!!busy || index === steps.length - 1}
+                      onClick={() => moveStep(index, 1)}>Move {step.label} down</button>
+                  </div>
+                )}
+                {stage === "review" && connections?.terminal.includes(step.line) && <span>End</span>}
               </li>
             ))}
           </ol>
+          {connections && stage === "connections" && (
+            <ProcessConnectionTable steps={steps} connections={connections} disabled={!!busy} onChange={editConnections} />
+          )}
+          {connections && stage === "review" && (
+            <ol aria-label="Reviewed connections" className="guided-process-connections">
+              {connections.edges.map(edge => <li key={edge.id}>
+                {steps.find(step => step.line === edge.from)?.label} → {steps.find(step => step.line === edge.to)?.label}
+                {edge.label && <> ({edge.label})</>}
+              </li>)}
+            </ol>
+          )}
         </>
       )}
       {stage === "connections" && (
         <div className="dialog-actions">
           <button className="button quiet" disabled={!!busy} onClick={() => { setError(""); setStage("input"); }}>Back to steps</button>
+          {draft.unsaved && <button className="button" disabled={!!busy} onClick={() => void checkpoint(steps)}>Save draft</button>}
           <button className="button primary" disabled={!!busy} onClick={() => void showReview()}>Preview process</button>
         </div>
       )}
@@ -229,9 +293,10 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onClose
       {busy === "preview" && <p role="status">Checking and rendering the process…</p>}
       {busy === "save" && <p role="status">Saving the new project…</p>}
       {busy === "checkpoint" && <p role="status">Saving draft…</p>}
-      {stage !== "input" && !busy && !draftError && draft.checkpoint && (
+      {stage !== "input" && !busy && !draftError && draft.checkpoint && !draft.unsaved && (
         <p role="status">Draft saved locally · expires {formatTime(draft.checkpoint.expiresAt)}</p>
       )}
+      {stage !== "input" && !busy && !draftError && draft.unsaved && <p role="status">Session-only draft changes</p>}
       {draftError && <p role="alert">{stage === "input" ? draftError : `Session-only draft. ${draftError}`}</p>}
       {error && <p role="alert">{error}</p>}
     </Modal>
