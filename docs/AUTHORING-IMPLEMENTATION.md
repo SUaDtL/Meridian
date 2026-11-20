@@ -31,7 +31,7 @@ Each row applies to every listed story. In Progress indicates that a slice is im
 | F05 Automatic stories · In Progress | AS-01, AS-02, AS-03, AS-04, AS-05, AS-06, AS-07, AS-08, AS-09 | F00a one transaction; F00b typed targets; F00c persistence | `lib/storyboard.ts`, `lib/storyboard-runtime.ts`, `lib/export.ts`; *story generation and visibility closure* | M3 story generation |
 | F10 Quantitative charts · In Progress | CH01, CH02, CH03, CH04, CH05, CH06, CH07, CH08, CH09 | F00a/c shared shell; exact-number and rendering proof | `lib/storage.ts`, `lib/export.ts`; *typed dataset, transforms and chart renderer* | M4 chart model and marks |
 | F11 Engineering imports · In Progress | IM01, IM02, IM03, IM04, IM05, IM06, IM07, IM08 | F00a/b/c; bounded local readers and resolver | `components/OpenApiImportDialog.tsx`, `lib/authoring/openapi-facts.ts`, `lib/authoring/openapi-project.ts`; *multi-file resolver and remaining adapters* | M4 one PR per import adapter |
-| F08 External assistant · Blocked | AI01, AI02, AI03, AI04, AI05, AI06, AI07, AI08, AI09, AI10 | F00a/b/c; scoped contracts; approved hosting, identity, spend and operator | `lib/authoring/`; *file exchange and independently operated companion* | M5 local exchange, then separately approved pilot |
+| F08 External assistant · In Progress | AI01, AI02, AI03, AI04, AI05, AI06, AI07, AI08, AI09, AI10 | F00a/b/c; scoped contracts; approved hosting, identity, spend and operator | `lib/authoring/assist-exchange.ts`, `lib/persistence/pending-assist.ts`; *independently operated companion* | M5 local exchange, then separately approved pilot |
 
 ## Milestone 0 checkpoint
 
@@ -189,8 +189,8 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 
 | Track | Implemented slice | Remaining work |
 | --- | --- | --- |
-| Guided creation | Local worker review, explicit branching and normalized process/table checkpoints. [#22–26](https://github.com/SUaDtL/Meridian/pulls?q=is%3Apr+is%3Amerged+guided) | Additional input modes and insertion into an existing diagram |
-| Navigation and checks | Command search, typed outline and source locations, source suggestions at supported statement positions, label checks and supported rendered contrast. [#25](https://github.com/SUaDtL/Meridian/pull/25) · [#27](https://github.com/SUaDtL/Meridian/pull/27) · [#28](https://github.com/SUaDtL/Meridian/pull/28) · [#29](https://github.com/SUaDtL/Meridian/pull/29) | Source diagnostics, bulk selection, and guarded suggested fixes |
+| Guided creation | Local worker review, explicit branching and normalized process/table checkpoints. [#22–26](https://github.com/SUaDtL/Meridian/pulls?q=is%3Apr+is%3Amerged+guided) | Insertion into an existing diagram and the full guided-entry accessibility gates |
+| Navigation and checks | Command search, typed outline and source locations, source suggestions at supported statement positions, label checks and supported rendered contrast. [#25](https://github.com/SUaDtL/Meridian/pull/25) · [#27](https://github.com/SUaDtL/Meridian/pull/27) · [#28](https://github.com/SUaDtL/Meridian/pull/28) · [#29](https://github.com/SUaDtL/Meridian/pull/29) | Source diagnostics and guarded suggested fixes |
 | Design and layout | Diagram-wide recipe previews and measured direction alternatives. [#30](https://github.com/SUaDtL/Meridian/pull/30) · [#31](https://github.com/SUaDtL/Meridian/pull/31) | Scoped design changes and routing verification |
 | Visual builder and stories | Atomic Add Next, explicit connection/node deletion with annotation recovery, reviewed group creation and removal for explicit declarations, and group- and path-based storyboard suggestions. [#32](https://github.com/SUaDtL/Meridian/pull/32) · [#33](https://github.com/SUaDtL/Meridian/pull/33) · [#34](https://github.com/SUaDtL/Meridian/pull/34) · [#36](https://github.com/SUaDtL/Meridian/pull/36) · [#40](https://github.com/SUaDtL/Meridian/pull/40) | Nested grouping, moving members, additional story tools and the remaining interaction gates |
 | Components | Local library with conflict-safe packs, reviewed projects from flat forward definitions and detachable instance bindings. [#35](https://github.com/SUaDtL/Meridian/pull/35) · [#51](https://github.com/SUaDtL/Meridian/pull/51) | Grouped generation, insertion, port binding, and extraction |
@@ -205,7 +205,7 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - Follow a path starts from a selected node and uses individually chosen connections with explicit traversal direction. It stops after the first loop, retains only selected path content and optional one-hop context, and adds group containers without expanding unrelated descendants.
 - The shared story proposal and player preview exact coverage before append or replacement. Fixture coverage verifies loops and motion direction. Chromium verifies selection, settled visibility and one saved scene in the existing v3 workspace. This advances AS-02 and AS-06.
 - Group and path choices can be saved as seven-day local drafts with the exact project token. A resumed draft from an earlier revision needs a fresh preview. Browser coverage verifies reload, a changed base, preserved choices, and applying only after review.
-- Branch scenes and multi-path ordering remain open.
+- Authors can save a separate story copy, then build explicit branch paths from reviewed nodes. Ordered paths and individual titles survive a local checkpoint. The shared preview verifies exact visible nodes and connections before one Append transaction. The narrower UI still needs the package’s full story authoring and mobile parity coverage.
 
 ## Milestone 4 typed chart projects
 
@@ -251,3 +251,29 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The review offers declared property relationships, required-property facts, editable display labels and optional unresolved placeholders. Composition and dynamic semantics are disclosed as coverage limitations. A browser fixture confirms duplicate basename recovery, hidden selection, precise exported provenance, no raw description or unresolved URI retention, and no external request.
 - This advances IM01–IM03 and IM05–IM08 for the supported JSON Schema subset. Restricted YAML, broader dialect constructs, import checkpointing and the full accessible scope corpus remain open.
 - [Implementation PR #52](https://github.com/SUaDtL/Meridian/pull/52) · [Workflow and browser evidence](https://github.com/SUaDtL/Meridian/actions/runs/44822219196)
+
+
+## Milestone 1 manual systems
+
+- Manual entry assigns each system a distinct draft ID, with independently selected semantic role and source shape. Relationships use named endpoints and preserve the selected one-way, bidirectional or arrow-free notation.
+- The Chromium fixture tests incomplete endpoints, two systems with identical display labels, checkpoint recovery after reload, two explicit directions and exact portable source and role bindings. The relationship-table fixture also passes in the standalone artifact. This advances SC-03, SC-05 and SC-07.
+- [Implementation PR #58](https://github.com/SUaDtL/Meridian/pull/58) · [Workflow and browser evidence](https://github.com/SUaDtL/Meridian/actions/runs/44825753385)
+
+## Milestone 3 outline bulk label color
+
+- The outline distinguishes selecting visible results from selecting the whole diagram. A filtered selection counts hidden elements. The appearance proposal enumerates labels with verified text color, previews the affected count and checks that every eligible label received the reviewed result.
+- Chromium filters eleven selected elements to two visible nodes, applies to all ten eligible labels and verifies source and identity preservation and one Undo. This advances PX03 and the appearance portion of VB08. Structural bulk editing and remaining style controls are open.
+- [Implementation PR #56](https://github.com/SUaDtL/Meridian/pull/56) · [Workflow and browser evidence](https://github.com/SUaDtL/Meridian/actions/runs/44825729432)
+
+## Milestone 3 ordered paths and project copies
+
+- Story suggestions can be saved as a separate project. Browser evidence verifies that the original portable project matches byte for byte afterward and that the copy opens with independent history.
+- The branch-scene browser journey selects branch starts and edges explicitly, reorders paths, resumes them after reload, verifies exact omitted content and undoes one append. This advances AS-02, AS-03, AS-06 and AS-09. Old single-path checkpoints remain readable.
+- [Copy PR #53](https://github.com/SUaDtL/Meridian/pull/53) · [Branch-scene PR #57](https://github.com/SUaDtL/Meridian/pull/57) · [Branch workflow evidence](https://github.com/SUaDtL/Meridian/actions/runs/44824959675)
+
+## Milestone 5 local assistant exchange
+
+- The local exchange exports only scoped flat-flowchart facts and a reviewed instruction. The stored matching record contains the digest, full project token, readable and writable IDs, permitted operation, and expiry. Expired records are removed when the file exchange opens or another request is saved.
+- The supported proposal applies one node rename through the same source proof as native editing. The database compares the saved anchor and consumes the matching request atomically with the project write. A separate Undo restores the prior working project.
+- Chromium runs the exchange with networking disabled and verifies scoped disclosure, forged origin and digest rejection, a context-only rename rejection, exact Undo and replay refusal. This advances AI01, AI02, AI05, AI06 and AI09 for the supported rename. More operations and independent hosted pilot work require their separate gates. Hosting, identity, provider, spend and operation approvals remain open.
+- [Implementation PR #55](https://github.com/SUaDtL/Meridian/pull/55) · [Workflow and browser evidence](https://github.com/SUaDtL/Meridian/actions/runs/44824348209)
