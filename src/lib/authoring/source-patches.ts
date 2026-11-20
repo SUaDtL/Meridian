@@ -1,0 +1,211 @@
+import { authoringLimits, encodeMermaidLabel, writeEdgeDeclaration, writeNodeDeclaration, type Shape } from './flowchart-source';
+
+export interface SourcePatch {
+  from: number;
+  to: number;
+  expectedText: string;
+  replacement: string;
+}
+
+interface RecordSpan {
+  start: number;
+  end: number;
+  text: string;
+}
+
+const unsupported = () => new Error('This source uses syntax outside the supported editing subset. Edit it in the source panel.');
+const id = '[A-Za-z_][A-Za-z_0-9]*';
+const header = /^(?:flowchart|graph)[ \t]+(?:TB|TD|BT|LR|RL)$/;
+const edge = new RegExp(`^(${id})[ \t]+(?:(${id})@)?-->(?:\\|"[^"]*"\\|)?[ \t]+(${id})$`);
+const node = new RegExp(`^(${id})(\\(\\[|\\[\\(|\\(\\(|\\{\\{|\\[|\\(|\\{)("[^"]*"|[A-Za-z0-9 _-]+)(\\]\\)|\\)\\]|\\)\\)|\\}\\}|\\]|\\)|\\})$`);
+const closing = new Map([['([', '])'], ['[(', ')]'], ['((', '))'], ['{{', '}}'], ['[', ']'], ['(', ')'], ['{', '}']]);
+const reserved = new Set(['end', 'subgraph', 'flowchart', 'graph', 'class', 'classDef', 'style', 'click', 'linkStyle', 'direction']);
+const indexedStyle = /^linkStyle[ \t]+(default|\d+(?:,\d+)*)(?=[ \t]|$)[ \t]+([^;%]+)$/;
+const recordLimit = 40_000;
+
+/**
+ * Retain exact offsets while recognizing top-level separators only. This first
+ * subset admits quoted literals, ASCII labels, and standalone/inline comments.
+ */
+function scanRecords(source: string): RecordSpan[] {
+  if (source.length > authoringLimits.sourceCodeUnits) throw unsupported();
+  const records: RecordSpan[] = [];
+  let start = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  let quoted = false;
+  let comment = false;
+  let depth = 0;
+
+  const finish = (end: number) => {
+    let from = start;
+    let to = end;
+    while (from < to && (source[from] === ' ' || source[from] === '\t')) from++;
+    while (to > from && (source[to - 1] === ' ' || source[to - 1] === '\t')) to--;
+    if (from === to) return;
+    if (records.length === recordLimit) throw unsupported();
+    records.push({ start: from, end: to, text: source.slice(from, to) });
+  };
+
+  for (let position = start; position < source.length; position++) {
+    const character = source[position];
+    if (character === '\n' || (character === '\r' && source[position + 1] === '\n')) {
+      if (quoted || depth) throw unsupported();
+      if (!comment) finish(position);
+      if (character === '\r') position++;
+      start = position + 1;
+      comment = false;
+      continue;
+    }
+    if (comment) continue;
+    if ('\r\u2028\u2029'.includes(character)) throw unsupported();
+    if (character === '"') quoted = !quoted;
+    if (quoted) continue;
+    if (source.startsWith('%%', position) && depth === 0) {
+      if (source[position + 2] === '{') throw unsupported();
+      finish(position);
+      comment = true;
+    } else if ('([{'.includes(character)) {
+      if (++depth > 2) throw unsupported();
+    } else if (')]}'.includes(character)) {
+      if (--depth < 0) throw unsupported();
+    } else if (character === ';' && depth === 0) {
+      finish(position);
+      start = position + 1;
+    }
+  }
+  if (quoted || depth) throw unsupported();
+  if (!comment) finish(source.length);
+  return records;
+}
+
+function readSubset(source: string) {
+  const [first, ...records] = scanRecords(source);
+  if (!first || !header.test(first.text)) throw unsupported();
+  const nodes = new Map<string, RecordSpan>();
+  const edges: { id?: string; from: string; to: string; record: RecordSpan }[] = [];
+  const edgeIds = new Set<string>();
+  const styles: { record: RecordSpan; indices: string }[] = [];
+
+  for (const record of records) {
+    let match = node.exec(record.text);
+    if (match) {
+      const [, name, open, label, close] = match;
+      if (closing.get(open) !== close || reserved.has(name) || nodes.has(name)) throw unsupported();
+      const start = record.start + name.length + open.length;
+      nodes.set(name, { start, end: start + label.length, text: label });
+      continue;
+    }
+    match = edge.exec(record.text);
+    if (match) {
+      const [, from, edgeId, to] = match;
+      if (edgeId && (edgeIds.has(edgeId) || reserved.has(edgeId))) throw unsupported();
+      if (edgeId) edgeIds.add(edgeId);
+      edges.push({ id: edgeId, from, to, record });
+      continue;
+    }
+    match = indexedStyle.exec(record.text);
+    if (!match) throw unsupported();
+    styles.push({ record, indices: match[1] });
+  }
+
+  if (edges.some(({ from, to, id }) => !nodes.has(from) || !nodes.has(to) || (id && nodes.has(id)))) throw unsupported();
+  for (const { indices } of styles) {
+    if (indices === 'default') continue;
+    if (indices.split(',').some(index => !Number.isSafeInteger(Number(index)) || Number(index) >= edges.length)) {
+      throw unsupported();
+    }
+  }
+  return { nodes, edges, edgeIds, styles };
+}
+
+function replace(span: RecordSpan, replacement: string): SourcePatch {
+  return { from: span.start, to: span.end, expectedText: span.text, replacement };
+}
+
+function appendStatement(source: string, statement: string): SourcePatch {
+  const newline = source.match(/\r?\n/)?.[0] ?? '\n';
+  const separator = source.endsWith('\n') ? '' : newline;
+  return { from: source.length, to: source.length, expectedText: '', replacement: separator + '  ' + statement + newline };
+}
+
+function allocateSourceId(prefix: string, nodes: ReadonlyMap<string, RecordSpan>, edges: ReadonlySet<string>): string {
+  let ordinal = 1;
+  while (nodes.has(prefix + ordinal) || edges.has(prefix + ordinal)) ordinal++;
+  return prefix + ordinal;
+}
+
+/** Candidate-only plans for the explicitly declared top-level subset. */
+export function planNodeAddition(source: string, label: string, shape: Shape = 'rect') {
+  const { nodes, edges, edgeIds } = readSubset(source);
+  if (nodes.size >= authoringLimits.graphNodes || edges.length > authoringLimits.graphEdges) {
+    throw new Error('The diagram is too large for a generated edit.');
+  }
+  const sourceId = allocateSourceId('m_n', nodes, edgeIds);
+  return { sourceId, patches: [appendStatement(source, writeNodeDeclaration(sourceId, label, shape))] };
+}
+
+export function planEdgeAddition(source: string, from: string, to: string, label?: string) {
+  const { nodes, edges, edgeIds } = readSubset(source);
+  if (!nodes.has(from) || !nodes.has(to)) throw new Error('Choose two declared nodes to connect.');
+  if (edges.length >= authoringLimits.graphEdges || nodes.size > authoringLimits.graphNodes) {
+    throw new Error('The diagram is too large for a generated edit.');
+  }
+  const sourceId = allocateSourceId('m_e', nodes, edgeIds);
+  return { sourceId, patches: [appendStatement(source, writeEdgeDeclaration(sourceId, from, to, label))] };
+}
+
+/** Plan an exact label replacement for the explicit-declaration spike. The caller still needs the Mermaid oracle. */
+export function planNodeLabel(source: string, nodeId: string, label: string): SourcePatch[] {
+  const span = readSubset(source).nodes.get(nodeId);
+  if (!span) throw unsupported();
+  const replacement = encodeMermaidLabel(label);
+  const literal = span.text.startsWith('"') ? span.text.slice(1, -1) : span.text;
+  if (replacement === span.text || (label === literal && !literal.includes('#'))) return [];
+  return [replace(span, replacement)];
+}
+
+/** Remove one explicitly identified edge and repair affected linkStyle ordinals. */
+export function planEdgeRemoval(source: string, edgeId: string): SourcePatch[] {
+  const { edges, styles } = readSubset(source);
+  const removed = edgeId ? edges.findIndex(edge => edge.id === edgeId) : -1;
+  if (removed === -1) throw unsupported();
+  const patches = [replace(edges[removed].record, '')];
+  for (const { record, indices } of styles) {
+    if (indices === 'default') continue;
+    const remaining = indices.split(',').flatMap(value => {
+      const index = Number(value);
+      if (index === removed) return [];
+      return [index > removed ? String(index - 1) : value];
+    });
+    const replacement = remaining.join(',');
+    if (replacement === indices) continue;
+    if (!replacement) {
+      patches.push(replace(record, ''));
+      continue;
+    }
+    const from = record.start + /^linkStyle[ \t]+/.exec(record.text)![0].length;
+    patches.push({ from, to: from + indices.length, expectedText: indices, replacement });
+  }
+  return patches;
+}
+
+/** Check all preconditions against the original string before producing a candidate. */
+export function applySourcePatches(source: string, patches: readonly SourcePatch[]): string {
+  const ordered = [...patches].sort((left, right) => left.from - right.from);
+  const parts: string[] = [];
+  let last = 0;
+  let previousStart = -1;
+  let length = source.length;
+  for (const patch of ordered) {
+    if (!Number.isSafeInteger(patch.from) || !Number.isSafeInteger(patch.to)
+      || patch.from < last || patch.from === previousStart || patch.to < patch.from || patch.to > source.length
+      || source.slice(patch.from, patch.to) !== patch.expectedText) {
+      throw new Error('The diagram changed. Rebuild the proposed source edit.');
+    }
+    length += patch.replacement.length - (patch.to - patch.from);
+    parts.push(source.slice(last, patch.from), patch.replacement);
+    previousStart = patch.from;
+    last = patch.to;
+  }
+  if (length > authoringLimits.sourceCodeUnits) throw new Error('The proposed edit exceeds the source limit.');
+  return parts.join('') + source.slice(last);
+}

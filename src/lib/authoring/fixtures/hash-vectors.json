@@ -1,0 +1,41 @@
+{
+  "algorithm": "meridian-canonical-json/v1",
+  "projectBase": {
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "revision": 7,
+    "contentHash": "abb7d2eb86476c42ca367946d2d653e90f8cc6a55272fcca45ff87479d13bd17",
+    "stateDigest": "48742842413a5a5449898e99ac69e0ebab6236bd3bf5f5b928da4aee878746b4"
+  },
+  "sourceExamples": [
+    {
+      "source": "flowchart LR\n",
+      "canonical": "\"flowchart LR\\n\"",
+      "digest": "aa76bff50cf5c3f90dc5f44c714c7420928e747ea5376d076aca6423adb6c785"
+    },
+    {
+      "source": "flowchart LR\r\n",
+      "canonical": "\"flowchart LR\\r\\n\"",
+      "digest": "5f5e76f00a14a9a3d360506b81574a3f6b592a0bf44130b67e2cf9178a2b6c26"
+    },
+    {
+      "source": "\ud800",
+      "canonical": "\"\\ud800\"",
+      "digest": "e939f0b8de223befa6ed22e3d2f8292eb33557fe76d5421c84e6687fb93f3714"
+    },
+    {
+      "source": "\ud801",
+      "canonical": "\"\\ud801\"",
+      "digest": "8b236737bb1ee9619be53173d92888483c8af7af5ccad3a75c40f1afc3a351ba"
+    },
+    {
+      "source": "á",
+      "canonical": "\"á\"",
+      "digest": "da2835d1a2e0ce213325184f93088d655272fa8e9b40124fbcf6268b43ff5bcf"
+    },
+    {
+      "source": "á",
+      "canonical": "\"á\"",
+      "digest": "97880459baca26cfb6f025eec2ee3df54121459062211c11fd8c43851858302d"
+    }
+  ]
+}

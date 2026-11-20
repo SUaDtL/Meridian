@@ -1,0 +1,46 @@
+{
+  "purpose": "Expected literal-encoder fixtures for the future pinned-Mermaid oracle; not parser/render results",
+  "encoding": "Unicode strings; encodedToken is expected Mermaid quoted label syntax",
+  "fixtures": [
+    {
+      "input": "Approve request",
+      "encodedToken": "\"Approve request\"",
+      "expectedLogicalText": "Approve request"
+    },
+    {
+      "input": "A\"B",
+      "encodedToken": "\"A#34;B\"",
+      "expectedLogicalText": "A\"B"
+    },
+    {
+      "input": "x[y]",
+      "encodedToken": "\"x#91;y#93;\"",
+      "expectedLogicalText": "x[y]"
+    },
+    {
+      "input": "A|B",
+      "encodedToken": "\"A#124;B\"",
+      "expectedLogicalText": "A|B"
+    },
+    {
+      "input": "#quot;",
+      "encodedToken": "\"#35;quot#59;\"",
+      "expectedLogicalText": "#quot;"
+    },
+    {
+      "input": "end",
+      "encodedToken": "\"end\"",
+      "expectedLogicalText": "end"
+    },
+    {
+      "input": "API < v2",
+      "encodedToken": "\"API #60; v2\"",
+      "expectedLogicalText": "API < v2"
+    },
+    {
+      "input": "\u6771\u4eac \ud83d\udd12",
+      "encodedToken": "\"\u6771\u4eac \ud83d\udd12\"",
+      "expectedLogicalText": "\u6771\u4eac \ud83d\udd12"
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "schema": "meridian/v3",
+  "documentKind": "mermaid",
+  "id": "11111111-1111-4111-8111-111111111111",
+  "revision": 7,
+  "title": "Order request",
+  "subtitle": "A minimal contract fixture",
+  "updatedAt": "2026-11-20T07:00:00Z",
+  "source": "flowchart LR\n  A[\"Client\"]\n  B[\"API\"]\n  A e1@--> B\n",
+  "settings": {
+    "theme": "obsidian",
+    "layout": "elk",
+    "curve": "linear",
+    "spacing": "balanced",
+    "finish": "solid",
+    "shadow": false,
+    "glow": false,
+    "motion": "none",
+    "speed": 1,
+    "background": "dots",
+    "ambient": false,
+    "frame": "16:9",
+    "font": "sans",
+    "edgeWidth": 1.5,
+    "padding": 32,
+    "showTitle": true,
+    "showBrand": true
+  },
+  "design": {
+    "preset": "custom",
+    "elements": {},
+    "recipe": null,
+    "recipeElements": {},
+    "applyRoleShapes": false
+  },
+  "identity": {
+    "version": 1,
+    "elements": [
+      {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "elementKind": "node",
+        "binding": {
+          "type": "source-id",
+          "sourceId": "A"
+        },
+        "status": "resolved"
+      },
+      {
+        "id": "33333333-3333-4333-8333-333333333333",
+        "elementKind": "node",
+        "binding": {
+          "type": "source-id",
+          "sourceId": "B"
+        },
+        "status": "resolved"
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "elementKind": "edge",
+        "binding": {
+          "type": "edge-id",
+          "sourceId": "e1"
+        },
+        "status": "resolved"
+      }
+    ],
+    "orphans": []
+  },
+  "roles": [
+    {
+      "elementId": "33333333-3333-4333-8333-333333333333",
+      "role": "service"
+    }
+  ],
+  "storyboard": {
+    "version": 2,
+    "scenes": [],
+    "loop": false
+  },
+  "componentInstances": [],
+  "provenance": []
+}
