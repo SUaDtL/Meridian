@@ -60,3 +60,53 @@ test('reviews a connection deletion, preserves retired scene references, and res
   expect(restored.storyboard).toEqual(original.storyboard);
   expect(restored.design).toEqual(original.design);
 });
+
+test('names both incident connections when deleting a node and keeps the retained scene references', async ({ page }) => {
+  const source = 'flowchart LR\nA[First]\nB[Middle]\nC[Last]\nA incoming@-->|"Enter"| B\nA kept@--> C\nB outgoing@-->|"Leave"| C\nlinkStyle 0,1,2 stroke:#123456\n';
+  const middle = 'node:B';
+  const incoming = 'edge:id:incoming';
+  const outgoing = 'edge:id:outgoing';
+  const scene = { ...createScene(), title: 'Middle scene', visible: ['node:A', middle, outgoing], highlight: [middle, incoming],
+    flow: [incoming, outgoing], camera: { mode: 'elements' as const, keys: [middle, 'node:C'], padding: 20 } };
+  const project = { ...createDocument(), title: 'Delete a node', source, storyboard: { version: 1 as const, scenes: [scene], loop: false } };
+  project.design.elements[middle] = { stroke: '#abcdef' };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Delete a node' }).click();
+  const live = page.getByRole('dialog', { name: 'Delete a node' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Delete a node' })).toBeVisible();
+  const original = await downloadProject(page, live);
+  const ids = new Map<string, string>(original.identity.elements.map((item: { id: string; binding: { sourceId: string } }) => [item.binding.sourceId, item.id]));
+  await live.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await edit.getByRole('combobox', { name: 'Operation' }).selectOption('removeNode');
+  await edit.getByRole('combobox', { name: 'Node to delete' }).selectOption({ label: 'Middle (B)' });
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  const impact = edit.getByRole('region', { name: 'Deletion impact' });
+  await expect(impact).toContainText('Incident connections to remove (2)');
+  await expect(impact.getByRole('listitem').filter({ hasText: 'Enter' })).toBeVisible();
+  await expect(impact.getByRole('listitem').filter({ hasText: 'Leave' })).toBeVisible();
+  await expect(impact).toContainText('7 scene references will be kept as unresolved annotations.');
+  await edit.getByRole('button', { name: 'Apply change' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const removed = await downloadProject(page, live);
+  expect(removed.source).toBe('flowchart LR\nA[First]\n\nC[Last]\n\nA kept@--> C\n\nlinkStyle 0 stroke:#123456\n');
+  for (const removedSourceId of ['B', 'incoming', 'outgoing']) {
+    const id = ids.get(removedSourceId);
+    expect(removed.identity.elements).toContainEqual(expect.objectContaining({ id, status: 'retired' }));
+    expect(removed.identity.orphans).toContainEqual(expect.objectContaining({ formerElementId: id, reason: 'retired' }));
+  }
+  expect(removed.identity.elements).toContainEqual(expect.objectContaining({ id: ids.get('kept'), status: 'resolved' }));
+  expect(removed.storyboard.scenes[0].camera.keys).toEqual([ids.get('C')]);
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await downloadProject(page, live);
+  expect(restored.source).toBe(original.source);
+  expect(restored.identity).toEqual(original.identity);
+  expect(restored.storyboard).toEqual(original.storyboard);
+  expect(restored.design).toEqual(original.design);
+});

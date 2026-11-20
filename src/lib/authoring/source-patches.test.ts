@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { applySourcePatches, planEdgeAddition, planEdgeRemoval, planNodeAddition, planNodeLabel } from './source-patches';
+import { applySourcePatches, planEdgeAddition, planEdgeRemoval, planNodeAddition, planNodeLabel, planNodeRemoval } from './source-patches';
+
+it('removes only the exact incident set and preserves unaffected linkStyle positions', () => {
+  const source = 'flowchart LR\nA[First]\nB[Middle] %% keep this\nC[Last]\nA incoming@--> B\nA kept@--> C\nB outgoing@--> C\nB loop@--> B\nlinkStyle 0,1,2,3 stroke:#123456\n';
+  expect(applySourcePatches(source, planNodeRemoval(source, 'B', ['outgoing', 'incoming', 'loop']))).toBe(
+    'flowchart LR\nA[First]\n %% keep this\nC[Last]\n\nA kept@--> C\n\n\nlinkStyle 0 stroke:#123456\n',
+  );
+  for (const incomplete of [['incoming', 'outgoing'], ['incoming', 'outgoing', 'loop', 'kept'], ['incoming', 'outgoing', 'loop', 'loop']]) {
+    expect(() => planNodeRemoval(source, 'B', incomplete)).toThrow('Review all incident connections');
+  }
+  expect(() => planNodeRemoval(source.replace('loop@', ''), 'B', ['incoming', 'outgoing'])).toThrow('explicit source ID');
+  expect(() => planNodeRemoval('flowchart LR\nA[Single]\n', 'A', [])).toThrow('Keep at least one node');
+});
 
 const source = [
   '\uFEFFflowchart LR',
