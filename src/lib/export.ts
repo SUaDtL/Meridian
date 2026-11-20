@@ -6,6 +6,7 @@ import { projectBaseToken, sameBaseToken } from './authoring/base-token';
 import { getTheme } from './themes';
 import { createStoryboardRuntime, validateStoryboard } from './storyboard';
 import { downloadBlob, safeFilename } from './download';
+import { exportScriptHash } from './export-script-hash';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -273,9 +274,7 @@ document.addEventListener('keydown',event=>{if(event.target.closest('input,selec
   }
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   if (scripts.length !== 1) throw new Error('The presentation must contain exactly one playback script.');
-  if (!globalThis.crypto?.subtle) throw new Error('Presentation export needs a secure browser context. Open Meridian over HTTPS or localhost.');
-  const hashBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(scripts[0][1])));
-  const hash = btoa(String.fromCharCode(...hashBytes));
+  const hash = await exportScriptHash(scripts[0][1]);
   return html.replace("script-src 'unsafe-inline'", `script-src 'sha256-${hash}'`);
 }
 

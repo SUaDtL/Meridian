@@ -3,7 +3,7 @@ import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram } from '../render';
 import { canonicalJson } from './base-token';
 import { flowchartEngineConnections, flowchartEngineShapes, type ConnectionDirection, type Shape } from './flowchart-source';
-import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval, type SourcePatch } from './source-patches';
+import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planFlowchartFragment, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval, type FlowchartFragment, type SourcePatch } from './source-patches';
 
 export type SourceIntent =
   | { op: 'addNode'; label: string; shape?: Shape }
@@ -119,6 +119,44 @@ function verifyVisibleLabel(result: RenderResult, intent: Exclude<SourceIntent, 
   if (matching.length !== 1 || matching[0].textContent !== intent.label) throw inexactLabel();
 }
 
+function semanticTopology(graph: SemanticGraph) {
+  return {
+    direction: graph.direction,
+    nodes: graph.nodes.map(({ id, shape }) => ({ id, shape })),
+    edges: graph.edges.map(({ id, from, to, type }) => ({ id, from, to, direction: directionsByEngineType.get(type ?? '') ?? null })),
+  };
+}
+
+/** Compare the complete parser graph and all new visible labels in one serialized render. */
+export async function proveFlowchartFragment(
+  document: Pick<StudioDocument, 'source' | 'settings'>, fragment: FlowchartFragment, signal?: AbortSignal,
+) {
+  const plan = planFlowchartFragment(document.source, fragment);
+  const source = applySourcePatches(document.source, plan.patches);
+  const render = (text: string) => renderDiagram(text, document.settings, {}, undefined, { signal });
+  const current = await render(document.source);
+  const before = readModel(flowchartModelFor(current));
+  if (canonicalJson(semanticTopology(before)) !== canonicalJson(flowchartSubsetTopology(document.source))) throw mismatch();
+  const rendered = await render(source);
+  const actual = readModel(flowchartModelFor(rendered));
+  let expected = before;
+  for (const item of plan.nodes) {
+    expected = expectedEdit(expected, { op: 'addNode', label: item.label, shape: item.shape }, item.sourceId, true);
+  }
+  for (const item of plan.edges) {
+    expected = expectedEdit(expected, { op: 'addEdge', from: item.from, to: item.to, label: item.label }, item.sourceId, true);
+  }
+  if (canonicalJson(actual) !== canonicalJson(expected)) throw mismatch();
+  const svg = new DOMParser().parseFromString(rendered.svg, 'image/svg+xml');
+  const nodeLabels = new Map(Array.from(svg.querySelectorAll('[data-node-key]'),
+    item => [item.getAttribute('data-node-key'), item.textContent]));
+  const edgeLabels = new Map(Array.from(svg.querySelectorAll('g.edgeLabel[data-element-owner]'),
+    item => [item.getAttribute('data-element-owner'), item.textContent]));
+  if (plan.nodes.some(item => nodeLabels.get(item.sourceId) !== item.label)
+    || plan.edges.some(item => item.label && edgeLabels.get(`edge:id:${item.sourceId}`) !== item.label)) throw inexactLabel();
+  return { ...plan, source, rendered };
+}
+
 /**
  * Prove one narrow edit against the real serialized Mermaid renderer. Only the
  * expected source-semantic delta and exact visible label may change.
@@ -137,12 +175,7 @@ export async function proveFlowchartEdit(
   const before = readModel(flowchartModelFor(initial), removingGroup);
   if (removingGroup && (before.groups.length !== 1 || before.groups[0].id !== intent.sourceId
     || canonicalJson(before.groups[0].members) !== canonicalJson(plan.memberIds?.sort()))) throw mismatch();
-  const observedTopology = {
-    direction: before.direction,
-    nodes: before.nodes.map(({ id, shape }) => ({ id, shape })),
-    edges: before.edges.map(({ id, from, to, type }) => ({ id, from, to, direction: directionsByEngineType.get(type ?? "") ?? null })),
-  };
-  if (canonicalJson(sourceTopology) !== canonicalJson(observedTopology)) throw mismatch();
+  if (canonicalJson(sourceTopology) !== canonicalJson(semanticTopology(before))) throw mismatch();
   const output = source === document.source ? initial : await render(source);
   const actual = readModel(flowchartModelFor(output), intent.op === 'addGroup');
   let expected: SemanticGraph;
