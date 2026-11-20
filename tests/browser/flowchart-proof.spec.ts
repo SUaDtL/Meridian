@@ -232,3 +232,48 @@ test('measured v3 SVG, UUID targets, endpoints, group membership and styles pair
   expect(next.targetTable).toMatchObject({ baseToken: { revision: 1 }, renderFingerprint: rendered.targetTable?.renderFingerprint, targets });
   expect(next.targetTable?.baseToken.stateDigest).not.toBe(rendered.targetTable?.baseToken.stateDigest);
 });
+
+test('studio and network-blocked v3 presentations use the same targets, camera and directional flow', async ({ page, browser }) => {
+  const { createDocument } = await import('../../src/lib/storage');
+  const { createScene } = await import('../../src/lib/storyboard');
+  const first = {
+    ...createScene(), title: 'Endpoint only', visible: ['node:A', 'edge:id:go'], flow: ['edge:id:go'],
+    camera: { mode: 'elements' as const, keys: ['node:A'], padding: 24 },
+  };
+  const second = { ...createScene(), title: 'Both endpoints', visible: ['node:A', 'node:B', 'edge:id:go'], flow: ['edge:id:go'] };
+  const project = {
+    ...createDocument(), source: 'flowchart LR\n  subgraph G\n  A[One]\n  B[Two]\n  C[Hidden]\n  end\n  A go@<--> B',
+    storyboard: { version: 1 as const, loop: false, scenes: [first, second] },
+  };
+  await expect(page.evaluate(input => window.seedProjectEditor(input), project)).resolves.toBe('migrated');
+  const original = await page.evaluate(id => window.openProjectEditorFixture(id), project.id);
+  const ids = Object.fromEntries(original.identity.elements.map(item => [item.binding.sourceId, item.id]));
+  const expected = await page.evaluate(() => window.compareProjectPresentation());
+  expect(expected.staleRejected).toBe(true);
+  expect(new Set(expected.first.visible)).toEqual(new Set([ids.A, ids.G, ids.go]));
+  expect(expected.first.flows).toEqual([]);
+  expect(new Set(expected.second.visible)).toEqual(new Set([ids.A, ids.B, ids.G, ids.go]));
+  expect(expected.second.flows).toEqual([ids.go, ids.go]);
+  expect(expected.second.camera).not.toBe(expected.first.camera);
+
+  const offline = await browser.newContext({ offline: true, reducedMotion: 'no-preference' });
+  try {
+    const exported = await offline.newPage();
+    const network: string[] = [];
+    exported.on('request', request => network.push(request.url()));
+    await exported.setContent(expected.html);
+    const inspect = () => exported.locator('main > svg').evaluate(root => ({
+      scene: root.getAttribute('data-story-scene'),
+      visible: Array.from(root.querySelectorAll('[data-element-key][aria-hidden="false"]'), element => element.getAttribute('data-element-key')),
+      flows: Array.from(root.querySelectorAll<SVGElement>('[data-story-flow]'))
+        .filter(element => element.style.display !== 'none').map(element => element.getAttribute('data-story-flow')),
+      camera: root.getAttribute('viewBox'),
+    }));
+    await expect.poll(inspect).toEqual(expected.first);
+    await exported.getByRole('button', { name: 'Next scene' }).click();
+    await expect.poll(inspect).toEqual(expected.second);
+    expect(network).toEqual([]);
+  } finally {
+    await offline.close();
+  }
+});

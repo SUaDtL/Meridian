@@ -255,3 +255,44 @@ declare global {
   }
 }
 window.renderProjectFixture = renderProjectFixture;
+
+async function compareProjectPresentation() {
+  const { buildExportFrame, buildMermaidProjectPresentation } = await import('../../src/lib/export');
+  const { createStoryboardPlayer } = await import('../../src/lib/storyboard');
+  const { renderMermaidProject } = await import('../../src/lib/authoring/project-render');
+  const project = window.projectEditor.snapshot();
+  const rendered = await renderMermaidProject(project);
+  if (!rendered.targetTable) throw new Error('This example needs measured UUID targets.');
+  const frame = buildExportFrame(rendered.result, project, { animated: true });
+  const stage = document.createElement('main');
+  stage.innerHTML = frame.svg;
+  document.body.append(stage);
+  const root = stage.querySelector('svg')!;
+  const player = createStoryboardPlayer(root, project.storyboard, {
+    targetTable: rendered.targetTable, reducedMotion: false, initialPreview: 0,
+  });
+  const inspect = () => ({
+    scene: root.getAttribute('data-story-scene'),
+    visible: Array.from(root.querySelectorAll('[data-element-key][aria-hidden="false"]'), element => element.getAttribute('data-element-key')),
+    flows: Array.from(root.querySelectorAll<SVGElement>('[data-story-flow]'))
+      .filter(element => element.style.display !== 'none').map(element => element.getAttribute('data-story-flow')),
+    camera: root.getAttribute('viewBox'),
+  });
+  const first = inspect();
+  player.next();
+  const second = inspect();
+  player.destroy();
+  stage.remove();
+  const html = await buildMermaidProjectPresentation(rendered, project);
+  await window.projectEditor.edit('An edited heading');
+  const staleRejected = await buildMermaidProjectPresentation(rendered, window.projectEditor.snapshot())
+    .then(() => false, error => error instanceof Error && error.message.includes('Render the current project'));
+  return { first, second, html, staleRejected };
+}
+
+declare global {
+  interface Window {
+    compareProjectPresentation: typeof compareProjectPresentation;
+  }
+}
+window.compareProjectPresentation = compareProjectPresentation;

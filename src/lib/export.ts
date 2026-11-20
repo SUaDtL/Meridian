@@ -1,4 +1,8 @@
 import type { RenderResult, StudioDocument } from '../types';
+import type { StoryScene } from '../types/storyboard';
+import type { MermaidProjectV3 } from './authoring/mermaid-project';
+import type { renderMermaidProject, RenderTargetTable } from './authoring/project-render';
+import { projectBaseToken, sameBaseToken } from './authoring/base-token';
 import { getTheme } from './themes';
 import { createStoryboardRuntime, validateStoryboard } from './storyboard';
 import { downloadBlob, safeFilename } from './download';
@@ -60,9 +64,10 @@ function wrapHeading(value: string, characters: number, width: number, font: str
 
 export interface ExportFrameOptions { transparent?: boolean; animated?: boolean; includeFrame?: boolean }
 export interface ExportFrame { svg: string; width: number; height: number }
+type FrameDocument = Pick<StudioDocument, 'title' | 'subtitle' | 'settings'>;
 
 /** Build framing and dimensions together so the stage never reparses the result. */
-export function buildExportFrame(result: RenderResult, doc: StudioDocument, opts: ExportFrameOptions = {}): ExportFrame {
+export function buildExportFrame(result: RenderResult, doc: FrameDocument, opts: ExportFrameOptions = {}): ExportFrame {
   const source = parseSvg(result.svg);
   const xml = source.ownerDocument;
   const settings = doc.settings;
@@ -194,7 +199,7 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]!));
 }
 
-function buildLegacyPresentationHtml(svg: string, doc: StudioDocument): string {
+function buildLegacyPresentationHtml(svg: string, doc: FrameDocument): string {
   const theme = getTheme(doc.settings.theme);
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(doc.title)} · Meridian</title>
@@ -218,7 +223,19 @@ function safeScriptJson(value: unknown): string {
 
 /** Export the exact same timeline engine used by the studio, with no runtime imports. */
 export async function buildPresentationHtml(svg: string, doc: StudioDocument): Promise<string> {
-  const story = validateStoryboard(doc.storyboard);
+  return buildTimelineHtml(svg, doc, validateStoryboard(doc.storyboard));
+}
+
+export async function buildMermaidProjectPresentation(rendered: Awaited<ReturnType<typeof renderMermaidProject>>, project: MermaidProjectV3) {
+  const { targetTable } = rendered;
+  if (!targetTable || !sameBaseToken(targetTable.baseToken, await projectBaseToken(project))) {
+    throw new Error('Render the current project before exporting its presentation.');
+  }
+  const frame = buildExportFrame(rendered.result, project, { animated: true });
+  return buildTimelineHtml(frame.svg, project, project.storyboard, targetTable);
+}
+
+async function buildTimelineHtml(svg: string, doc: FrameDocument, story: { version: 1 | 2; scenes: StoryScene[]; loop: boolean }, targetTable?: RenderTargetTable) {
   let html: string;
   if (!story.scenes.length) html = buildLegacyPresentationHtml(svg, doc);
   else {
@@ -235,7 +252,7 @@ const root=document.querySelector('main>svg'),playButton=document.getElementById
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 function stamp(value){const seconds=Math.max(0,Math.floor(value));return Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')}
 function update(state){playButton.textContent=state.playing?'Pause':'Play';playButton.setAttribute('aria-label',state.playing?'Pause presentation':'Play presentation');seekInput.max=String(state.duration);seekInput.value=String(state.time);seekInput.setAttribute('aria-valuetext',state.preview?'Preview of scene '+(state.sceneIndex+1):stamp(state.time)+' of '+stamp(state.duration));timeOutput.textContent=state.preview?'Scene '+(state.sceneIndex+1)+' / '+story.scenes.length+' · Preview':stamp(state.time)+' / '+stamp(state.duration);sceneSelect.value=String(state.sceneIndex);const scene=story.scenes[state.sceneIndex];sceneTitle.textContent=scene?scene.title:'';document.getElementById('previous').disabled=state.sceneIndex<=0;document.getElementById('next').disabled=state.sceneIndex>=story.scenes.length-1}
-const player=createPlayer(root,story,{accent,reducedMotion:reduced.matches,initialPreview:0,onUpdate:update});
+const player=createPlayer(root,story,{${targetTable ? `targetTable:${safeScriptJson(targetTable)},` : ''}accent,reducedMotion:reduced.matches,initialPreview:0,onUpdate:update});
 reduced.addEventListener('change',event=>player.setReducedMotion(event.matches));
 function toggle(){if(player.getState().playing)player.pause();else player.play()}
 async function fullscreen(){try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{document.getElementById('status').textContent='Fullscreen is unavailable in this browser.'}}
