@@ -15,21 +15,30 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
   const chart = page.getByRole('dialog', { name: 'Chart values' });
   await chart.getByLabel('Chart data file').setInputFiles({
     name: 'team.json', mimeType: 'application/json',
-    buffer: Buffer.from('[{"Team":"North","Requests":0.1},{"Team":"North","Requests":0.2},{"Team":"South","Requests":null}]'),
+    buffer: Buffer.from('[{"Team":"North","Requests":0.1},{"Team":"North","Requests":0.2},{"Team":"South","Requests":"pending"}]'),
   });
   await chart.getByRole('button', { name: 'Read data' }).click();
   const requests = chart.getByRole('group', { name: 'Requests' });
   await requests.getByLabel('Type').selectOption('number');
   await requests.getByLabel('Unit').fill('requests');
   await chart.getByRole('button', { name: 'Confirm columns' }).click();
+  await expect(chart.getByRole('alert')).toContainText('Input row 3, column “Requests”');
+  await requests.getByRole('combobox', { name: 'Invalid values' }).selectOption('null');
+  await chart.getByRole('button', { name: 'Confirm columns' }).click();
+  const conversion = chart.getByRole('region', { name: 'Data conversion' });
+  await expect(conversion).toContainText('Requests · 1 invalid · 0 empty');
   await chart.getByLabel('Title', { exact: true }).fill('Requests by team');
   await chart.getByLabel('Aggregation').selectOption('sum');
+  await chart.getByRole('button', { name: 'Review chart' }).click();
+  await expect(conversion).toContainText('Requests · 1 invalid · 0 empty');
+  await chart.getByRole('button', { name: 'Back to mapping' }).click();
   await chart.getByRole('button', { name: 'Save data draft' }).click();
   await expect(chart.getByText('Typed data and mapping draft saved in this browser.')).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   await page.getByRole('button', { name: 'Chart values' }).click();
   await chart.getByRole('button', { name: 'Resume Requests by team' }).click();
+  await expect(chart.getByText(/The restored draft uses the reviewed missing-value rules/)).toBeVisible();
   await expect(chart.getByLabel('Aggregation')).toHaveValue('sum');
   await chart.getByRole('button', { name: 'Review chart' }).click();
   await expect(chart.getByRole('img', { name: 'Requests by team' })).toBeVisible();
