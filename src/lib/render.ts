@@ -113,7 +113,8 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
     theme: 'base',
     look: 'classic',
     layout: settings.layout,
-    elk: { preset: 'default', straightenEdges: true, lineHops: 'gap', mergeEdges: false },
+    // Only an explicitly chosen preset changes the published ELK defaults.
+    elk: design.preset === 'infrastructure' ? { preset: 'default', straightenEdges: true, lineHops: 'gap', mergeEdges: false } : undefined,
     darkMode: theme.dark,
     fontFamily: font,
     deterministicIds: true,
@@ -333,7 +334,8 @@ async function performRender(source: string, settings: StudioSettings, nodeAccen
       viewBox = [0, 0, w, h];
     }
     // Filters extend beyond shape geometry, so retain breathing room in export.
-    const bleed = settings.shadow || settings.glow || Object.values(design.elements).some(style => style.shadow || style.glow || style.emphasis === 'highlight') ? 24 : 6;
+    const hasElementEffects = Object.values(design.elements).some(style => style.shadow || style.glow || style.emphasis === 'highlight');
+    const bleed = hasElementEffects ? 24 : settings.shadow || settings.glow ? 18 : 6;
     const width = viewBox[2] + bleed * 2;
     const height = viewBox[3] + bleed * 2;
     svg.setAttribute('viewBox', `${viewBox[0] - bleed} ${viewBox[1] - bleed} ${width} ${height}`);

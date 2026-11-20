@@ -62,9 +62,9 @@ test('connector and group overrides use stable identities and are included in pr
   const decorated = page.locator(`${DRAWING} path[data-element-key]`);
   const markers = await decorated.evaluateAll((items, selected) => {
     const item = items.find(el => el.getAttribute('data-element-key') === selected);
-    return { start: item?.getAttribute('marker-start'), end: item?.getAttribute('marker-end'), stroke: (item as SVGElement | undefined)?.style.stroke };
+    return { start: item?.getAttribute('marker-start'), end: item?.getAttribute('marker-end'), stroke: item ? getComputedStyle(item).stroke : undefined };
   }, key!);
-  expect(markers.start).toBeTruthy(); expect(markers.end).toBeTruthy(); expect(markers.stroke).toBe('#ff9933');
+  expect(markers.start).toBeTruthy(); expect(markers.end).toBeTruthy(); expect(markers.stroke).toBe('rgb(255, 153, 51)');
   await choose(page, 'group:network');
   await page.getByLabel('Element fill', { exact: true }).fill('#294635');
   await ready(page);
