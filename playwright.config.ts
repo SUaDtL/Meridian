@@ -18,7 +18,6 @@ export default defineConfig({
     baseURL: externalBase || 'http://127.0.0.1:4173',
     viewport: { width: 1600, height: 1000 },
     acceptDownloads: true,
-    actionTimeout: 15_000,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
