@@ -176,3 +176,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - Build with guidance opens a three-step linear process flow from Home and New Project. Input keeps one row per nonempty line, presents any removed list prefix beside the normalized label, and shows all adjacent relationships before preview.
 - Preview uses the canonical writer and pinned Mermaid to verify the exact labels, authored edge IDs and reviewed endpoints. Only the ready image can create the reserved v3 project. The IndexedDB write uses an absent-project anchor, then opens the saved project. Closing the dialog keeps the raw input for the current session.
 - Built-app browser coverage creates and exports a five-step flow with four connections and duplicate node labels while preserving separate identities. A punctuation mismatch retains the draft and prevents creation. This advances SC-01 and the exact-label portion of SC-07. Branch decisions, systems and table inputs, insertion, worker lifecycle and durable normalized draft recovery remain open.
+
+## Milestone 1 guided process checkpoints
+
+[PR #20](https://github.com/SUaDtL/Meridian/pull/20) merged the linear process wizard as [`54c4f12`](https://github.com/SUaDtL/Meridian/commit/54c4f122c7f3c01950166694609a0dc5fee3030e).
+
+- Reviewing connections saves normalized linear process rows and explicit edges as a bounded, expiring `meridian-draft/v1` checkpoint. Unreviewed input and the original raw lines stay in the current session. Resume opens a draft for review and displays its saved time and expiry.
+- The transaction checks capacity and the exact previously observed checkpoint before replacing it. Discard is explicit. Successful project creation clears its checkpoint after the document commit, and a cleanup failure keeps the saved project available.
+- Browser tests cover reload, expiry disclosure, separation from unreviewed input, checkpoint cleanup, and a quota failure that leaves the session usable. This advances SC-05 and SC-08 for the linear process path. Durable branch decisions and systems or table drafts remain open.

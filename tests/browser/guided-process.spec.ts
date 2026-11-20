@@ -48,3 +48,63 @@ test('keeps the guided input when the renderer cannot display a label exactly', 
   await wizard.getByRole('button', { name: 'Back to steps' }).click();
   await expect(wizard.getByLabel('Put one step on each line')).toHaveValue(input);
 });
+
+test('resumes a normalized draft after reload and clears it after creating the project', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
+  await wizard.getByLabel('Project title').fill('Reviewed draft');
+  await wizard.getByLabel('Put one step on each line').fill('1. Start\n\n• Review\nFinish');
+  await wizard.getByRole('button', { name: 'Review connections' }).click();
+  await expect(wizard.getByText(/Draft saved locally · expires/)).toBeVisible();
+  await wizard.getByRole('button', { name: 'Back to steps' }).click();
+  await wizard.getByLabel('Put one step on each line').fill('New unreviewed entry');
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  const resume = wizard.getByRole('button', { name: /Resume Reviewed draft/ });
+  await expect(resume).toContainText(/Saved .* expires /);
+  await resume.click();
+  await expect(wizard.getByText('3 steps · 2 connections · New project')).toBeVisible();
+  await expect(wizard.getByText('Next: Review')).toBeVisible();
+  await expect(wizard.getByText('New unreviewed entry')).toHaveCount(0);
+  await expect(wizard.getByText('From line 1: 1. Start')).toHaveCount(0);
+  await wizard.getByRole('button', { name: 'Preview process' }).click();
+  await wizard.getByRole('button', { name: 'Create process' }).click();
+  await expect(page.getByRole('dialog', { name: 'Reviewed draft' }).getByText('Saved in this browser.')).toBeVisible();
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await expect(wizard.getByRole('button', { name: /Resume Reviewed draft/ })).toHaveCount(0);
+  const storedDrafts = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const request = indexedDB.open('meridian-workspace');
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      const read = db.transaction('drafts').objectStore('drafts').count();
+      read.onerror = () => { db.close(); reject(read.error); };
+      read.onsuccess = () => { db.close(); resolve(read.result); };
+    };
+  }));
+  expect(storedDrafts).toBe(0);
+});
+
+test('guidance keeps session input available when draft storage fails', async ({ page }) => {
+  await page.addInitScript(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (...args) {
+      if (this.name === 'drafts') throw new DOMException('Draft storage is full.', 'QuotaExceededError');
+      return put.apply(this, args);
+    };
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
+  await wizard.getByLabel('Project title').fill('Session draft');
+  await wizard.getByLabel('Put one step on each line').fill('Read request\nReply');
+  await wizard.getByRole('button', { name: 'Review connections' }).click();
+  await expect(wizard.getByRole('alert')).toHaveText('Session-only draft. Draft storage is full.');
+  await wizard.getByRole('button', { name: 'Preview process' }).click();
+  await wizard.getByRole('button', { name: 'Create process' }).click();
+  await expect(page.getByRole('dialog', { name: 'Session draft' }).getByText('Saved in this browser.')).toBeVisible();
+});
