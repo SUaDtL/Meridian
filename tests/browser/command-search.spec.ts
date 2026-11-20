@@ -55,8 +55,8 @@ test('a v3 Connect command uses the same reviewed edit and durable save as the f
   await search.press('Enter');
   const editor = page.getByRole('dialog', { name: 'Edit flowchart' });
   await expect(editor.getByLabel('Operation')).toHaveValue('addEdge');
-  await editor.getByLabel('From').selectOption({ label: 'Second (m_n2)' });
-  await editor.getByLabel('To').selectOption({ label: 'First (m_n1)' });
+  await editor.getByRole('combobox', { name: 'From', exact: true }).selectOption({ label: 'Second (m_n2)' });
+  await editor.getByRole('combobox', { name: 'To', exact: true }).selectOption({ label: 'First (m_n1)' });
   await editor.getByLabel('Connection label (optional)').fill('Return');
   const apply = editor.getByRole('button', { name: 'Apply change' });
   await expect(apply).toBeDisabled();
