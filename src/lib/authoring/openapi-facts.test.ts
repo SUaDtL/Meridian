@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { readOpenApiFacts, validateVirtualPath } from './openapi-facts';
+import { readOpenApiFacts, readOpenApiSchemaFiles, validateVirtualPath } from './openapi-facts';
 import { readRestrictedOpenApiYaml } from './openapi-yaml';
 
 const bytes = (text: string) => new TextEncoder().encode(text).buffer;
@@ -97,15 +97,44 @@ it('extracts direct schema references, preserves cycles, and omits unsupported r
   });
   const { operations, schemaView } = readOpenApiFacts(bytes(input), 'api/spec.json', undefined, 'schemas');
   expect(operations).toEqual([]);
+  const key = (name: string) => `api/spec.json#/components/schemas/${name}`;
   expect(schemaView).toEqual({
-    schemas: ['Account', 'Customer', 'Boolean'].map(key => ({ key, pointer: `/components/schemas/${key}` })),
+    files: ['api/spec.json'],
+    schemas: ['Account', 'Customer', 'Boolean'].map(name => ({ name, key: key(name), virtualPath: 'api/spec.json', pointer: `/components/schemas/${name}` })),
     references: [
-      { from: 'Account', to: 'Customer', pointer: '/components/schemas/Account/properties/customer~1id/$ref' },
-      { from: 'Customer', to: 'Account', pointer: '/components/schemas/Customer/allOf/0/$ref' },
+      { from: key('Account'), to: key('Customer'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Account/properties/customer~1id/$ref' },
+      { from: key('Customer'), to: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Customer/allOf/0/$ref' },
     ],
     unresolved: 2, omitted: 1,
   });
   expect(JSON.stringify(schemaView)).not.toMatch(/example.invalid|private|examples/);
+});
+
+it('resolves distinct supplied virtual paths without fetching or collapsing their component identities', () => {
+  const pointer = '/components/schemas/Record';
+  const first = { virtualPath: 'api/models.yaml', format: 'yaml' as const, bytes: bytes([
+    'openapi: 3.1.0',
+    'components:',
+    '  schemas:',
+    '    Record:',
+    '      allOf:',
+    `        - $ref: "../shared/models.json#${pointer}"`,
+    `        - $ref: "../shared/Models.json#${pointer}"`,
+    `        - $ref: "%2e%2e/%2e%2e/unavailable.json#${pointer}"`,
+    `        - $ref: "../shared/models.json?private=revision#${pointer}"`,
+  ].join('\n')) };
+  const second = { virtualPath: 'shared/models.json', bytes: bytes(JSON.stringify({
+    openapi: '3.1.0', components: { schemas: { Record: { $ref: `https://meridian-import.invalid/api/models.yaml#${pointer}` } } },
+  })) };
+  const facts = readOpenApiSchemaFiles([first, second], readRestrictedOpenApiYaml).schemaView!;
+  expect(facts.schemas.map(item => item.key)).toEqual([`${first.virtualPath}#${pointer}`, `${second.virtualPath}#${pointer}`]);
+  expect(facts.references.map(item => [item.virtualPath, item.from, item.to])).toEqual([
+    [first.virtualPath, facts.schemas[0].key, facts.schemas[1].key],
+    [second.virtualPath, facts.schemas[1].key, facts.schemas[0].key],
+  ]);
+  expect(facts.unresolved).toBe(3);
+  expect(JSON.stringify(facts)).not.toMatch(/private=|unavailable|meridian-import\.invalid/);
+  expect(() => readOpenApiSchemaFiles([first, { ...second, virtualPath: first.virtualPath }], readRestrictedOpenApiYaml)).toThrow(/distinct virtual path/);
 });
 
 it('respects OpenAPI 3.0 reference siblings and reports unsupported 3.1 dialects', () => {

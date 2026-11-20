@@ -1,9 +1,10 @@
 import { decodeJson } from './decode-json';
-import { readOpenApiSchemaFacts, type OpenApiSchemaFacts } from './openapi-schema-facts';
+import { readOpenApiSchemaFacts, type OpenApiSchemaFacts, type OpenApiSchemaSource } from './openapi-schema-facts';
 
 const maxBytes = 2_000_000;
 const maxFacts = 10_000;
 const maxText = 2_000;
+const maxEntries = 50_000;
 const methods = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'] as const;
 const surrogate = /[\uD800-\uDFFF]/u;
 const virtualName = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
@@ -25,6 +26,9 @@ export type OpenApiFacts = {
   uncheckedSchemaCount: number;
   schemaView?: OpenApiSchemaFacts;
 };
+export type OpenApiInput = { bytes: ArrayBuffer; virtualPath: string; format?: 'yaml' };
+type OpenApiDecoder = (source: string) => unknown;
+const decodeOpenApiJson = (source: string) => decodeJson(source, maxEntries, 'skip');
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -44,27 +48,31 @@ function text(value: unknown, label: string, limit = 200): string {
   return value;
 }
 
-function enforceStringBudget(root: unknown) {
-  const pending = [root];
-  while (pending.length) {
-    const value = pending.pop();
-    if (typeof value === 'string' && (surrogate.test(value) || [...value].length > maxText)) {
+function enforceInputBudget(root: unknown, limit: number, countKeys: boolean) {
+  function verifyText(value: string) {
+    if (surrogate.test(value) || [...value].length > maxText) {
       throw new Error('OpenAPI input contains a string beyond the 2,000 character limit.');
     }
+  }
+  const pending = [root];
+  let entries = 0;
+  while (pending.length) {
+    if (++entries > limit) throw new Error('The OpenAPI inputs exceed the 50,000 entry limit.');
+    const value = pending.pop();
+    if (typeof value === 'string') verifyText(value);
     if (Array.isArray(value)) for (const child of value) pending.push(child);
     else if (record(value)) {
       for (const [key, child] of Object.entries(value)) {
-        pending.push(key, child);
+        verifyText(key);
+        if (countKeys && ++entries > limit) throw new Error('The OpenAPI inputs exceed the 50,000 entry limit.');
+        pending.push(child);
       }
     }
   }
+  return entries;
 }
 
-/** Extract allowlisted declared operations. Raw descriptions and examples never leave the worker. */
-export function readOpenApiFacts(
-  bytes: ArrayBuffer, virtualPath: string, decode = (source: string) => decodeJson(source, 50_000, 'skip'),
-  view: 'operations' | 'schemas' = 'operations',
-): OpenApiFacts {
+function parseOpenApi({ bytes, virtualPath, format }: OpenApiInput, decode: OpenApiDecoder, budget = maxEntries) {
   validateVirtualPath(virtualPath);
   if (bytes.byteLength > maxBytes) throw new Error('Choose an OpenAPI file no larger than 2,000,000 bytes.');
   let source: string;
@@ -74,17 +82,25 @@ export function readOpenApiFacts(
     throw new Error('Choose an OpenAPI file encoded as UTF-8.');
   }
   const base = decode(source);
-  enforceStringBudget(base);
+  const entries = enforceInputBudget(base, budget, format === 'yaml');
   if (!record(base) || typeof base.openapi !== 'string' || base.openapi.trim() !== base.openapi || !supportedVersion.test(base.openapi)) {
     throw new Error('Choose an OpenAPI 3.0 or 3.1 document.');
   }
   const schemas = record(base.components) && record(base.components.schemas) ? base.components.schemas : {};
+  return { base, schemas, version: base.openapi, entries };
+}
+
+/** Extract allowlisted declared operations. Raw descriptions and examples never leave the worker. */
+export function readOpenApiFacts(
+  bytes: ArrayBuffer, virtualPath: string, decode: OpenApiDecoder = decodeOpenApiJson,
+  view: 'operations' | 'schemas' = 'operations',
+): OpenApiFacts {
+  const { base, schemas, version } = parseOpenApi({ bytes, virtualPath }, decode);
   const uncheckedSchemaCount = Object.keys(schemas).length;
   if (view === 'schemas') {
-    return { version: base.openapi, virtualPath, operations: [], referencedPathCount: 0, uncheckedSchemaCount,
-      schemaView: readOpenApiSchemaFacts(schemas, base.openapi, base.jsonSchemaDialect) };
+    return describeSchemas([{ virtualPath, version, schemas, dialect: base.jsonSchemaDialect }]);
   }
-  const sourcePaths = base.paths === undefined && base.openapi.startsWith('3.1.')
+  const sourcePaths = base.paths === undefined && version.startsWith('3.1.')
     && (record(base.components) || record(base.webhooks)) ? {} : base.paths;
   if (!record(sourcePaths)) throw new Error('This OpenAPI document does not declare any paths in its root paths object.');
   const operations: OpenApiOperation[] = [];
@@ -115,5 +131,30 @@ export function readOpenApiFacts(
       if (operations.length > maxFacts) throw new Error('This file exceeds 10,000 supported operation facts.');
     }
   }
-  return { version: base.openapi, virtualPath, operations, referencedPathCount, uncheckedSchemaCount };
+  return { version, virtualPath, operations, referencedPathCount, uncheckedSchemaCount };
+}
+
+export function readOpenApiSchemaFiles(files: readonly OpenApiInput[], decodeYaml: OpenApiDecoder) {
+  if (!files.length || files.length > 20 || files.reduce((sum, file) => sum + file.bytes.byteLength, 0) > maxBytes) {
+    throw new Error('Choose up to 20 OpenAPI files totaling at most 2,000,000 bytes.');
+  }
+  const paths = new Set(files.map(file => validateVirtualPath(file.virtualPath)));
+  if (paths.size !== files.length) throw new Error('Assign a distinct virtual path to every OpenAPI file.');
+  let remaining = maxEntries;
+  const sources = files.map(file => {
+    const { base, schemas, version, entries } = parseOpenApi(file, file.format === 'yaml' ? decodeYaml : decodeOpenApiJson, remaining);
+    remaining -= entries;
+    return { virtualPath: file.virtualPath, version, schemas, dialect: base.jsonSchemaDialect };
+  });
+  return describeSchemas(sources);
+}
+
+function describeSchemas(sources: readonly OpenApiSchemaSource[]): OpenApiFacts {
+  return {
+    version: [...new Set(sources.map(source => source.version))].join(', '),
+    virtualPath: sources[0].virtualPath,
+    operations: [], referencedPathCount: 0,
+    uncheckedSchemaCount: sources.reduce((sum, source) => sum + Object.keys(source.schemas).length, 0),
+    schemaView: readOpenApiSchemaFacts(sources),
+  };
 }

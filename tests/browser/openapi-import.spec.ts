@@ -149,3 +149,48 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   expect(text).not.toMatch(/private-schema|example\.invalid|Audit/);
   expect(requested).toEqual([]);
 });
+
+test('requires reviewed distinct virtual paths and retains provenance across supplied OpenAPI files', async ({ page }) => {
+  const outgoing: string[] = [];
+  await page.route('https://meridian-import.invalid/**', route => {
+    outgoing.push(route.request().url());
+    return route.abort();
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Engineering file' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Engineering file' });
+  await dialog.getByRole('combobox', { name: 'OpenAPI view' }).selectOption('schemas');
+  const pointer = '/components/schemas/Record';
+  const first = { openapi: '3.1.0', components: { schemas: { Record: { $ref: `../shared/models.json#${pointer}` } } } };
+  const second = { openapi: '3.1.0', components: { schemas: { Record: { $ref: `https://meridian-import.invalid/api/models.json#${pointer}` } } } };
+  await dialog.getByLabel('OpenAPI specification').setInputFiles([first, second].map(spec => ({
+    name: 'models.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(spec)),
+  })));
+  const read = dialog.getByRole('button', { name: 'Read schema facts' });
+  await read.click();
+  await expect(dialog.getByRole('alert')).toContainText('Assign a distinct virtual path');
+  await dialog.getByRole('textbox', { name: 'Virtual path 1 for models.json' }).fill('api/models.json');
+  await dialog.getByRole('textbox', { name: 'Virtual path 2 for models.json' }).fill('shared/models.json');
+  await read.click();
+  await expect(dialog.getByText(/2 supplied files · 2 schemas/)).toBeVisible();
+  await expect(dialog.getByText(/2 resolved references · 0 unresolved references/)).toBeVisible();
+  const scopes = ['api/models.json', 'shared/models.json'];
+  for (const file of scopes) await dialog.getByRole('checkbox', { name: `Record · ${file}`, exact: true }).check();
+  await dialog.getByRole('button', { name: 'Preview diagram' }).click();
+  await expect(dialog.getByRole('img', { name: 'Proposed OpenAPI schema diagram' })).toBeVisible();
+  await expect(dialog.getByText('2 nodes · 2 connections · 0 schemas omitted')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Create new diagram' }).click();
+  const live = page.getByRole('dialog', { name: 'OpenAPI schema relationships' });
+  const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+  const path = await file.path();
+  if (!path) throw new Error('Missing multi-file OpenAPI project download.');
+  const text = await readFile(path, 'utf8');
+  const project = JSON.parse(text);
+  for (const virtualPath of scopes) {
+    expect(project.provenance).toContainEqual(expect.objectContaining({ virtualPath, pointer, relationship: 'Declared OpenAPI schema' }));
+    expect(project.provenance).toContainEqual(expect.objectContaining({ virtualPath, pointer: pointer + '/$ref', relationship: 'Declared OpenAPI schema reference' }));
+  }
+  expect(text).not.toContain('meridian-import.invalid');
+  expect(outgoing).toEqual([]);
+});

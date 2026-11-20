@@ -7,7 +7,7 @@ export type OpenApiSchemaChoice = { key: string; label: string };
 export type OpenApiChoice = OpenApiSchemaChoice & { tag: string | null };
 export const openApiNodeLimit = 100;
 type Graph = Parameters<typeof prepareGuidedFlowchart>[1];
-type Origin = { pointer: string; relationship: string };
+type Origin = { virtualPath: string; pointer: string; relationship: string };
 
 export async function prepareOpenApiProject(title: string, facts: OpenApiFacts, choices: readonly OpenApiChoice[], signal: AbortSignal) {
   const byKey = new Map(facts.operations.map(operation => [operation.key, operation]));
@@ -22,7 +22,7 @@ export async function prepareOpenApiProject(title: string, facts: OpenApiFacts, 
     if (!operation) throw new Error('A selected operation is no longer available in these extracted facts.');
     const key = `operation-${index + 1}`;
     nodes.push({ key, label: choice.label, role: 'process' });
-    nodeOrigins.set(key, { pointer: operation.pointer, relationship: 'Declared OpenAPI operation' });
+    nodeOrigins.set(key, { virtualPath: facts.virtualPath, pointer: operation.pointer, relationship: 'Declared OpenAPI operation' });
     if (choice.tag === null) continue;
     const tagIndex = operation.tags.indexOf(choice.tag);
     if (tagIndex < 0) throw new Error('Choose a tag declared by this operation.');
@@ -31,13 +31,13 @@ export async function prepareOpenApiProject(title: string, facts: OpenApiFacts, 
     if (!groupKey) {
       groupKey = `tag-${tagGroups.size + 1}`;
       tagGroups.set(choice.tag, groupKey);
-      nodeOrigins.set(groupKey, { pointer, relationship: 'Declared OpenAPI tag' });
+      nodeOrigins.set(groupKey, { virtualPath: facts.virtualPath, pointer, relationship: 'Declared OpenAPI tag' });
     }
     edges.push({ from: groupKey, to: key, label: 'Tags' });
-    edgeOrigins.push({ pointer, relationship: 'Declared OpenAPI tag membership' });
+    edgeOrigins.push({ virtualPath: facts.virtualPath, pointer, relationship: 'Declared OpenAPI tag membership' });
   }
   for (const [tag, key] of tagGroups) nodes.push({ key, label: tag, role: 'neutral' });
-  return renderFacts(title, facts.virtualPath, 'openapi-operations', { direction: 'LR', nodes, edges }, nodeOrigins, edgeOrigins, signal);
+  return renderFacts(title, 'openapi-operations', { direction: 'LR', nodes, edges }, nodeOrigins, edgeOrigins, signal);
 }
 
 export function openApiSchemaScope(facts: OpenApiFacts, selection: ReadonlyMap<string, OpenApiSchemaChoice>) {
@@ -53,12 +53,12 @@ export async function prepareOpenApiSchemaProject(title: string, facts: OpenApiF
   if (!schemas.length || schemas.length !== choices.size) throw new Error('Select one or more available schemas.');
   const nodes = schemas.map(schema => ({ key: schema.key, label: choices.get(schema.key)!.label }));
   const edges = references.map(reference => ({ from: reference.from, to: reference.to, label: 'Declared schema reference' }));
-  const nodeOrigins = new Map(schemas.map(({ key, pointer }) => [key, { pointer, relationship: 'Declared OpenAPI schema' }]));
-  const edgeOrigins = references.map(({ pointer }) => ({ pointer, relationship: 'Declared OpenAPI schema reference' }));
-  return renderFacts(title, facts.virtualPath, 'openapi-schemas', { direction: 'LR', nodes, edges }, nodeOrigins, edgeOrigins, signal);
+  const nodeOrigins = new Map(schemas.map(({ key, virtualPath, pointer }) => [key, { virtualPath, pointer, relationship: 'Declared OpenAPI schema' }]));
+  const edgeOrigins = references.map(({ virtualPath, pointer }) => ({ virtualPath, pointer, relationship: 'Declared OpenAPI schema reference' }));
+  return renderFacts(title, 'openapi-schemas', { direction: 'LR', nodes, edges }, nodeOrigins, edgeOrigins, signal);
 }
 
-async function renderFacts(title: string, virtualPath: string, adapter: string, graph: Graph,
+async function renderFacts(title: string, adapter: string, graph: Graph,
   nodeOrigins: ReadonlyMap<string, Origin>, edgeOrigins: readonly Origin[], signal: AbortSignal) {
   const { nodes, edges } = graph;
   if (nodes.length > openApiNodeLimit || edges.length > 200) {
@@ -68,12 +68,12 @@ async function renderFacts(title: string, virtualPath: string, adapter: string, 
   signal.throwIfAborted();
   const provenance: MermaidProjectV3['provenance'] = [];
   const identities = new Map(prepared.document.identity.elements.map(item => [item.binding.sourceId, item.id]));
-  function append(sourceId: string | undefined, pointer: string, relationship: string) {
+  function append(sourceId: string | undefined, origin: Origin) {
     const elementId = sourceId && identities.get(sourceId);
     if (!elementId) throw new Error('The rendered diagram could not retain an OpenAPI fact binding.');
-    provenance.push({ elementId, adapter, adapterVersion: '1.0.0', virtualPath, pointer, relationship });
+    provenance.push({ elementId, adapter, adapterVersion: '1.0.0', ...origin });
   }
-  for (const [key, { pointer, relationship }] of nodeOrigins) append(prepared.generated.nodeIds.get(key), pointer, relationship);
-  for (const [index, { pointer, relationship }] of edgeOrigins.entries()) append(prepared.generated.edgeIds[index], pointer, relationship);
+  for (const [key, origin] of nodeOrigins) append(prepared.generated.nodeIds.get(key), origin);
+  for (const [index, origin] of edgeOrigins.entries()) append(prepared.generated.edgeIds[index], origin);
   return { ...prepared, document: validateMermaidProject({ ...prepared.document, provenance }), nodes: nodes.length, edges: edges.length };
 }
