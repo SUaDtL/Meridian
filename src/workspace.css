@@ -80,6 +80,9 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
+.start-guided {
+  grid-column: 1 / -1;
+}
 .start-card {
   position: relative;
   display: flex;
@@ -798,11 +801,20 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.heading-form select {
+.heading-form select,
+.heading-form textarea {
   min-width: 0;
   padding: 8px 10px;
   border: 1px solid #405255;
   border-radius: 6px;
   color: inherit;
   background: #142127;
+}
+.guided-process-connections li {
+  margin-block: .5rem;
+  overflow-wrap: anywhere;
+}
+.guided-process-connections li small,
+.guided-process-connections li span {
+  display: block;
 }

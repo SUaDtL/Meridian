@@ -11,6 +11,7 @@ import { CircleAlert, LoaderCircle } from "lucide-react";
 import Home, { StartChoices } from "./components/Home";
 import Modal from "./components/Modal";
 import WorkspaceBoundary from "./components/WorkspaceBoundary";
+import type { GuidedProcessDraft } from "./components/GuidedProcessDialog";
 import { NoticeContext, NoticeMessage, type Notice } from "./components/Notice";
 import { useWorkspace } from "./hooks/useWorkspace";
 import {
@@ -31,7 +32,8 @@ const ExampleGallery = lazy(() => import("./components/ExampleGallery"));
 const ProjectManager = lazy(() => import("./components/ProjectManager"));
 const Guide = lazy(() => import("./components/Guide"));
 const WorkspaceMigrationReview = lazy(() => import("./components/WorkspaceMigrationReview"));
-type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | null;
+const GuidedProcessDialog = lazy(() => import("./components/GuidedProcessDialog"));
+type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | "guided" | null;
 export type Notify = (
   message: string,
   tone?: "success" | "error",
@@ -42,6 +44,8 @@ export default function App() {
   const workspace = useWorkspace();
   const [screen, setScreen] = useState<"home" | "studio">("home");
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [guidedDraft, setGuidedDraft] = useState<GuidedProcessDraft>({ title: "", text: "" });
+  const [requestedV3Project, setRequestedV3Project] = useState<string>();
   const [notice, setNotice] = useState<Notice | null>(null);
   const [openModals, setOpenModals] = useState(0);
   const dismissNotice = useCallback(() => setNotice(null), []);
@@ -80,6 +84,7 @@ export default function App() {
   const showProjects = useCallback(() => setDialog("projects"), []);
   const showMigration = useCallback(() => {
     workspaceRef.current.flush();
+    setRequestedV3Project(undefined);
     setDialog("migration");
   }, []);
   const showNew = useCallback(() => setDialog("new"), []);
@@ -226,6 +231,7 @@ export default function App() {
   };
 
   const actions = {
+    onGuided: () => setDialog("guided"),
     onBlank: blankProject,
     onExamples: showExamples,
     onImport: importClick,
@@ -342,7 +348,15 @@ export default function App() {
             )}
             {dialog === "guide" && <Guide onClose={closeDialog} />}
             {dialog === "migration" && (
-              <WorkspaceMigrationReview onClose={showProjects} onDownloadLegacy={backupWorkspace} />
+              <WorkspaceMigrationReview nextProjectId={requestedV3Project} onClose={showProjects} onDownloadLegacy={backupWorkspace} />
+            )}
+            {dialog === "guided" && (
+              <GuidedProcessDialog draft={guidedDraft} onDraft={setGuidedDraft} onClose={closeDialog}
+                onCreated={(id) => {
+                  setGuidedDraft({ title: "", text: "" });
+                  setRequestedV3Project(id);
+                  setDialog("migration");
+                }} />
             )}
           </Suspense>
           {dialog === "new" && (

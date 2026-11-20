@@ -168,3 +168,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The v3 project session offers Add node, Rename node and Connect nodes for supported flat flowcharts. Node choices come from measured targets and show their Mermaid identifiers so duplicate labels remain distinguishable. Other diagram forms retain rendering and heading editing.
 - Preview applies the established parser proof to a detached draft and renders the resulting v3 snapshot. Apply is available after the preview image loads and still checks the current snapshot. Cancelling or changing the draft leaves the project data untouched.
 - Chromium exercises the public controls, cancellation, all three operations, exact BOM and CRLF source preservation, stable existing identities, durable revisions and one-step Undo. This advances the supported portions of G01 and G03. The default editor still uses v1/v2 storage, and guided creation and broader source editing remain open.
+
+## Milestone 1 guided linear process creation
+
+[PR #19](https://github.com/SUaDtL/Meridian/pull/19) merged the first live v3 flowchart operations as [`a37167d`](https://github.com/SUaDtL/Meridian/commit/a37167d2117796f75e46ca1dcd4450f27028b3fa).
+
+- Build with guidance opens a three-step linear process flow from Home and New Project. Input keeps one row per nonempty line, presents any removed list prefix beside the normalized label, and shows all adjacent relationships before preview.
+- Preview uses the canonical writer and pinned Mermaid to verify the exact labels, authored edge IDs and reviewed endpoints. Only the ready image can create the reserved v3 project. The IndexedDB write uses an absent-project anchor, then opens the saved project. Closing the dialog keeps the raw input for the current session.
+- Built-app browser coverage creates and exports a five-step flow with four connections and duplicate node labels while preserving separate identities. A punctuation mismatch retains the draft and prevents creation. This advances SC-01 and the exact-label portion of SC-07. Branch decisions, systems and table inputs, insertion, worker lifecycle and durable normalized draft recovery remain open.
