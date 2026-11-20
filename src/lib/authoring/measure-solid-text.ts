@@ -17,7 +17,7 @@ function dropShadowOnly(filter: string, svg: SVGSVGElement) {
     && Array.from(target.children).every(child => child.localName === 'feDropShadow' && !child.hasAttribute('in'));
 }
 
-function hasPlainCompositing(element: Element, svg: SVGSVGElement, view: Window) {
+export function hasPlainCompositing(element: Element, svg: SVGSVGElement, view: Window) {
   for (let current: Element | null = element; current; current = current.parentElement) {
     const style = view.getComputedStyle(current);
     if (Number(style.opacity) !== 1 || style.visibility !== 'visible' || style.display === 'none'
@@ -29,7 +29,7 @@ function hasPlainCompositing(element: Element, svg: SVGSVGElement, view: Window)
   return false;
 }
 
-function projectedBox(box: DOMRect, transform: DOMMatrix): Bounds {
+export function projectedBox(box: DOMRect, transform: DOMMatrix): Bounds {
   const left = box.x;
   const top = box.y;
   const right = left + box.width;

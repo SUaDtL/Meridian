@@ -9,6 +9,7 @@ export type ReadabilityTarget = {
   sourceId?: string;
   typography: boolean;
   measuredLabelSize?: number;
+  labelOverflowInDiagram?: number;
   solidTextPaint?: SolidTextPaint;
   from: string | null;
   to: string | null;
@@ -17,6 +18,7 @@ export type ReadabilityTarget = {
 export type ReadabilityFinding =
   | { rule: 'QC-01'; target: string; ratio: number; threshold: number }
   | { rule: 'QC-03'; target: string; pixels: number }
+  | { rule: 'QC-04'; target: string; pixels: number }
   | { rule: 'QC-05'; targets: string[] }
   | { rule: 'QC-06'; regions: string[][] };
 
@@ -26,6 +28,7 @@ export type ReadabilityReport = {
 };
 
 export const minimumAdvisoryLabelSize = 14;
+export const labelOverflowTolerance = 0.5;
 
 export function viewingScale(profile: ViewingProfile, frame: FrameGeometry): number {
   if (!Number.isInteger(profile.width) || !Number.isInteger(profile.height) || !Number.isInteger(profile.padding)
@@ -90,8 +93,17 @@ export function analyzeReadability(targets: readonly ReadabilityTarget[], profil
   const names = coverageFor('QC-05');
   const separation = coverageFor('QC-06');
   const contrast = coverageFor('QC-01');
+  const containment = coverageFor('QC-04');
   const duplicateNames = new Map<string, string[]>();
   for (const item of targets) {
+    const overflow = item.labelOverflowInDiagram;
+    if (!item.typography) containment.inapplicable++;
+    else if (overflow === undefined || !Number.isFinite(overflow) || overflow < 0) containment.unknown++;
+    else {
+      containment.measured++;
+      const pixels = overflow * scale;
+      if (pixels > labelOverflowTolerance) findings.push({ rule: 'QC-04', target: item.id, pixels });
+    }
     const measured = item.measuredLabelSize;
     if (!item.typography) {
       size.inapplicable++;
@@ -133,5 +145,5 @@ export function analyzeReadability(targets: readonly ReadabilityTarget[], profil
     separation.measured = 1;
     if (regions.length > 1) findings.push({ rule: 'QC-06', regions });
   }
-  return { findings, coverage: [size, names, separation, contrast] };
+  return { findings, coverage: [size, names, separation, contrast, containment] };
 }

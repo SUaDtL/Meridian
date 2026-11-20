@@ -198,7 +198,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       const element = elements.get(target.id);
       return { id: target.id, kind: target.elementKind, label: target.label, sourceId: sourceIds.get(target.id), from: target.sourceId, to: target.targetId,
         typography: !!element?.capabilities.includes("typography"), measuredLabelSize: element?.appearance?.labelSizeInDiagram,
-        solidTextPaint: element?.appearance?.solidTextPaint };
+        solidTextPaint: element?.appearance?.solidTextPaint, labelOverflowInDiagram: element?.appearance?.labelOverflowInDiagram };
     });
   }, [readabilityOpen, currentFrame, targetTable]);
   const identities = project?.identity.elements;

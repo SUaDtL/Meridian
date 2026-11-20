@@ -2,6 +2,7 @@ import type { DiagramTheme, RenderNode, StudioDocument, StudioSettings } from '.
 import type { DesignPresetId, DesignState, ElementCapability, ElementStyle, RenderElement } from '../types/design';
 import { DEFAULT_SETTINGS, getTheme } from './themes';
 import { boxesOverlap, measureSolidNodeText, svgTextFragments, type MeasuredSolidText } from './authoring/measure-solid-text';
+import { measureLabelOverflow } from './authoring/measure-label-containment';
 
 const NS = 'http://www.w3.org/2000/svg';
 const FORBIDDEN = new Set(['__proto__', 'prototype', 'constructor']);
@@ -446,6 +447,9 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
       if (canMeasurePaint && item.kind === 'node' && shapes.length === 1 && item.appearance.labelSizeInDiagram !== undefined) {
         const measured = measureSolidNodeText(svg, shape, label, view, inverse);
         if (measured) contrast.set(item.key, measured);
+      }
+      if (item.kind === 'node' && shapes.length === 1 && item.appearance.labelSizeInDiagram !== undefined) {
+        item.appearance.labelOverflowInDiagram = measureLabelOverflow(svg, shape, label, view, inverse);
       }
     }
     try {
