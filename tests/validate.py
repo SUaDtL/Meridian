@@ -4,11 +4,15 @@ from html.parser import HTMLParser
 from hashlib import sha256
 import base64
 import re
+import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
-PUBLIC = ROOT / "public"
-INDEX = PUBLIC / "index.html"
-assert INDEX.is_file(), "Run python3 scripts/assemble.py first"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--artifact", default="public/index.html", help="HTML artifact relative to the repository root")
+args = parser.parse_args()
+INDEX = ROOT / args.artifact
+PUBLIC = INDEX.parent
+assert INDEX.is_file(), "Build the specified artifact first"
 assert (PUBLIC / ".nojekyll").is_file(), "Missing .nojekyll"
 assert not any(ROOT.rglob("CNAME")), "STOP: CNAME would attach a custom domain"
 

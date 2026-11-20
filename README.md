@@ -1,41 +1,61 @@
 # Meridian
 
-A presentation-grade, browser-based Mermaid diagram studio. Meridian converts familiar Mermaid source into visually polished diagrams, with live editing, themes, purposeful motion, pan/zoom, and portable exports.
+A presentation-grade, browser-based Mermaid diagram studio. Meridian turns familiar Mermaid source into polished diagrams with live editing, themes, purposeful motion, pan/zoom, and portable exports.
 
-**Independent preview:** This is the standalone personal repository `SUaDtL/Meridian`, modeled after the independent `SUaDtL/SIM` project. This repository has no custom domain and no connection to the ArbiterForge site's publication pipeline. A future `arbiterforge.com` integration requires separate explicit approval.
+This is the independent repository **SUaDtL/Meridian**. Its GitHub Pages workflow publishes only this repository. Integration with `arbiterforge.com`, `arbiterForge/arbiterforge-site`, or `SUaDtL/SIM` requires separate approval.
 
 ## Features
 
-- React-based studio with Mermaid 12.3.0, a live source editor and last-known-good error recovery
-- Ten sample diagrams, a large pan/zoom canvas, fit, presentation mode and replay
-- Six themes, diagram layout/style controls, per-node emphasis where the Mermaid format supports it, reduced-motion support
-- Local project persistence, import/export of `.mmd` and project JSON
-- SVG, high-resolution PNG and standalone animated HTML export
-- Mobile-friendly Canvas, Source and Style panels
-- No backend, API key, accounts, analytics, runtime CDNs, or external runtime assets
+- React and TypeScript studio using pinned Mermaid 12.3.0.
+- Live source editing with last-known-good recovery when syntax is incomplete.
+- Ten examples, six themes, node accents and spotlight, layout controls, pan/zoom, presentation mode, and replay.
+- Browser-local projects, autosave, `.mmd` import, and portable `.meridian.json` project files.
+- SVG, high-resolution PNG, and standalone animated HTML exports.
+- Mobile Canvas, Source, and Style panels and reduced-motion support.
+- No backend, accounts, API keys, telemetry, runtime CDNs, or external runtime assets.
 
-## Local preview
+## Development
 
-The deployable app is a self-contained compiled HTML bundle stored as eight numbered, text-only parts. Assemble it without any external dependencies:
+Use the Node version in `.nvmrc` and the committed lockfile:
 
 ```sh
-python3 scripts/assemble.py
-python3 tests/validate.py
-python3 -m http.server 8000 --directory public
+npm ci
+npm run dev
 ```
 
-Open `http://localhost:8000`. The build script verifies the exact SHA-256 of the recovered app before writing `public/index.html`. You may also open that HTML file directly.
+The authoring source is in `src/`. Edit source files and rebuild; do not edit compiled HTML or `bundle/meridian.part-*` by hand.
 
-## GitHub Pages
+## Build and verify
 
-The workflow `.github/workflows/pages.yml` validates every pull request and deploys **only on pushes to `main`** or manual dispatch from `main`. After merging the PR, set **Settings → Pages → Source → GitHub Actions** if it is not already enabled. Use the URL shown by the deploy job, normally `https://suadtl.github.io/Meridian/`.
+```sh
+npm ci
+npm run verify:legacy
+npm test
+npm run build:pages
+npm run verify:artifact
+npx playwright install --with-deps chromium
+npm run test:browser
+```
 
-Do **not** create a `CNAME`, edit DNS, add links from the existing site, modify `SUaDtL/SIM`, or modify `arbiterForge/arbiterforge-site` without separate approval.
+`npm run build:pages` typechecks the project, compiles from source, embeds the app and dependency notices into a single HTML file, and stages `site/index.html` with a checksum receipt. The browser suite tests this exact production artifact. It covers examples, error recovery, persistence, actual imports/downloads, presentation controls, mobile panels, reduced motion, and visual comparisons against the archived published application.
 
-## Source and maintainability
+Additional builds:
 
-This first PR preserves the previously built and tested application **as a compiled bundle**. It is not falsely represented as a reconstructed/unminified React source tree. The third-party license notices bundled by its dependencies remain embedded in the HTML. A follow-up source-recovery or proper Vite/React source migration should preserve the existing features, replace the opaque bundled pieces with maintainable source, lock dependencies, and add browser-level regression tests. Do not edit generated HTML by hand.
+| Command | Output | Purpose |
+| --- | --- | --- |
+| `npm run build` | `dist/` | Standard Vite build with relative asset URLs |
+| `npm run build:standalone` | `standalone/Meridian.html` | Portable application in one HTML file |
+| `npm run build:pages` | `site/` | Exact standalone artifact used by GitHub Pages |
+| `npm run test:visual` | Browser report attachments | Published-reference comparisons across themes and diagram types |
 
-## Security
+## Source recovery and regression reference
 
-Client-side only. The HTML includes a restrictive Content Security Policy, source-sanitization safeguards, and `noindex` for the temporary public preview. Autosaves remain in the viewer's browser. See `DEPLOYMENT.md` for the publish and approval boundary.
+The original React/TypeScript authoring project has been recovered. Rebuilding it reproduced the published application's JavaScript **byte for byte**. [Source provenance](docs/SOURCE-PROVENANCE.md) records the hashes and the small HTML metadata/line-ending differences.
+
+The eight historical bundle pieces remain a frozen regression reference. Their original SHA-256 guard is unchanged. `scripts/assemble.py` reconstructs that reference into `public/index.html`; it is no longer the publication build. The source-built application is published only after the independent integrity and browser checks pass.
+
+## Deployment
+
+The workflow validates pull requests and deploys only a successful push or manual dispatch on `main`. The deploy job receives the exact artifact that passed verification; it does not rebuild it. GitHub Pages must use **GitHub Actions** as its source. See [DEPLOYMENT.md](DEPLOYMENT.md).
+
+The preview remains `noindex`. There is no `CNAME` or custom-domain automation. The exported application has a restrictive Content Security Policy, an exact SHA-256 authorization for its inline module, and no runtime network connections. Autosaves remain in the visitor's browser.

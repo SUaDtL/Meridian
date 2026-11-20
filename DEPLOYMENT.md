@@ -1,26 +1,44 @@
 # Meridian Pages preview: deployment and approval boundary
 
-## Authorized
+## Repository scope
 
-Publish the new independent public repository `SUaDtL/Meridian` to **its own** GitHub Pages URL. Test and review it there. The existing `SUaDtL/SIM` repository is only an architectural reference.
+Publish **SUaDtL/Meridian** only to its own GitHub Pages preview. No `CNAME`, custom domain, DNS modifications, shared-site navigation changes, or writes to `arbiterForge/arbiterforge-site` or `SUaDtL/SIM` are part of this workflow. A later integration with `arbiterforge.com` requires separate explicit approval.
 
-## Not authorized
+## Source build and verification
 
-- No `CNAME`, custom-domain mapping, DNS modifications or changes to `arbiterforge.com`
-- No PR or code change in `arbiterForge/arbiterforge-site`
-- No changes to `SUaDtL/SIM` or integration into `/news/` or `/SIM/`
-- No link or navigation integration with the existing site
+1. Work on a feature branch and open a PR against `main`.
+2. CI installs exact dependencies with `npm ci` and the Node version from `.nvmrc`.
+3. `npm run verify:legacy` reconstructs and checks the archived published bundle. Its original checksum is unchanged.
+4. `npm test` verifies renderer and document boundaries.
+5. `npm run build:pages` builds from React/TypeScript source into the self-contained `site/index.html` artifact and a SHA-256 receipt in `site/build.json`.
+6. `npm run verify:artifact` checks the deployable artifact, including the inline script hash, preview metadata, embedded resources, and repository isolation.
+7. Playwright tests that production artifact and compares its default diagram appearance with the archived application in the same pinned Chromium browser. Browser evidence is retained as a workflow artifact.
+8. After all checks pass, a merge to `main` runs the same verification. The deploy job publishes those exact verified bytes to this repository's Pages environment.
 
-## Deployment procedure
+PR checks do not publish. Deployment requires `github.ref == 'refs/heads/main'` and a successful verification job. Only the deploy job receives Pages/OIDC write permissions.
 
-1. Open a feature PR in `SUaDtL/Meridian`. The PR runs build/checksum/static integrity validation but **does not publish**.
-2. Review and merge after checks pass. A push to `main` runs the same validation, then attempts an independent Pages deployment.
-3. Set **Settings → Pages → Build and deployment → Source → GitHub Actions** in this repository when needed. Pages may require this one-time repository configuration; if the first deploy fails before enabling Pages, rerun the workflow afterward.
-4. Open the URL reported by the deploy job, normally `https://suadtl.github.io/Meridian/`. Confirm it over HTTPS and check that Mermaid editor, sample gallery, theme controls, presentation mode, local save/load, and all exports function.
-5. Check mobile UI, reduced-motion behavior, refresh persistence, and that the repo has no custom domain.
+## Local reproduction
 
-Only a later separate, explicitly approved PR may expose Meridian through `arbiterforge.com`.
+```sh
+npm ci
+npm run verify:legacy
+npm test
+npm run build:pages
+npm run verify:artifact
+npx playwright install --with-deps chromium
+npm run test:browser
+```
+
+The browser configuration starts the candidate at port 4173 and the historical reference at port 4174. `PLAYWRIGHT_CHROMIUM_EXECUTABLE` can select a locally installed browser. CI uses the browser pinned by the Playwright dependency.
+
+For a quick manual inspection, run `python3 -m http.server 8000 --directory site`. The optional standard Vite output in `dist/` is available with `npm run build`, but Pages intentionally publishes the self-contained source build.
+
+## Verify a publication
+
+Use the URL reported by the deploy job, normally `https://suadtl.github.io/Meridian/`. Verify HTTPS, editor/rendering, themes, presentation mode, project import/export, mobile panels, and reduced motion. Compare the retrieved HTML's SHA-256 with `build.json` if verifying exact deployment bytes.
+
+The build receipt names the source commit and artifact hash. An uncommitted local build may include working-copy changes; CI always builds the checked-out commit.
 
 ## Rollback
 
-Revert the `main` commit or disable this repository's Pages deployment. There is no shared site or DNS migration to roll back.
+Revert the relevant `main` commit and allow the normal checks and deployment to run, or disable this repository's Pages deployment. Do not overwrite the historical bundle guard to roll back a source build. No shared site or DNS migration is involved.
