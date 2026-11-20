@@ -12,6 +12,7 @@ import Home, { StartChoices } from "./components/Home";
 import Modal from "./components/Modal";
 import WorkspaceBoundary from "./components/WorkspaceBoundary";
 import type { GuidedProcessDraft } from "./components/GuidedProcessDialog";
+import { emptySystemsSession } from "./lib/authoring/systems-session";
 import type { RelationshipTableDraft } from "./components/GuidedRelationshipTableDialog";
 import { NoticeContext, NoticeMessage, type Notice } from "./components/Notice";
 import { useWorkspace } from "./hooks/useWorkspace";
@@ -34,13 +35,14 @@ const ProjectManager = lazy(() => import("./components/ProjectManager"));
 const Guide = lazy(() => import("./components/Guide"));
 const WorkspaceMigrationReview = lazy(() => import("./components/WorkspaceMigrationReview"));
 const GuidedProcessDialog = lazy(() => import("./components/GuidedProcessDialog"));
+const GuidedSystemsDialog = lazy(() => import("./components/GuidedSystemsDialog"));
 const GuidedRelationshipTableDialog = lazy(() => import("./components/GuidedRelationshipTableDialog"));
 const ComponentProjectDialog = lazy(() => import("./components/ComponentProjectDialog"));
 const ChartProjectDialog = lazy(() => import("./components/ChartProjectDialog"));
 const OpenApiImportDialog = lazy(() => import("./components/OpenApiImportDialog"));
 const TerraformImportDialog = lazy(() => import("./components/TerraformImportDialog"));
 const SchemaImportDialog = lazy(() => import("./components/SchemaImportDialog"));
-type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | "guided" | "guided-table" | "components" | "guided-chart" | "saved-charts" | "engineering-file" | "terraform-file" | "schema-file" | null;
+type Dialog = "new" | "examples" | "projects" | "guide" | "recovery" | "migration" | "guided" | "guided-table" | "guided-systems" | "components" | "guided-chart" | "saved-charts" | "engineering-file" | "terraform-file" | "schema-file" | null;
 const emptyRelationshipTable: RelationshipTableDraft = { title: "", text: "", delimiter: ",", header: true };
 export type Notify = (
   message: string,
@@ -53,6 +55,7 @@ export default function App() {
   const [screen, setScreen] = useState<"home" | "studio">("home");
   const [dialog, setDialog] = useState<Dialog>(null);
   const [guidedDraft, setGuidedDraft] = useState<GuidedProcessDraft>({ title: "", text: "" });
+  const [guidedSystems, setGuidedSystems] = useState(emptySystemsSession);
   const [relationshipTable, setRelationshipTable] = useState(emptyRelationshipTable);
   const [requestedV3Project, setRequestedV3Project] = useState<string>();
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -375,7 +378,7 @@ export default function App() {
             )}
             {dialog === "guided-table" && (
               <GuidedRelationshipTableDialog draft={relationshipTable} onDraft={setRelationshipTable} onClose={closeDialog}
-                onProcess={() => setDialog("guided")}
+                onProcess={() => setDialog("guided")} onSystems={() => setDialog("guided-systems")}
                 onCreated={(id, draftRetained) => {
                   if (draftRetained) notify("Project saved. The local draft could not be cleared.", "error");
                   setRelationshipTable(emptyRelationshipTable);
@@ -383,6 +386,13 @@ export default function App() {
                   setDialog("migration");
                 }} />
             )}
+            {dialog === "guided-systems" && <GuidedSystemsDialog session={guidedSystems} onSession={setGuidedSystems}
+              onBack={() => setDialog("guided-table")} onClose={closeDialog} onCreated={(id, draftRetained) => {
+                if (draftRetained) notify("Project saved. The local draft could not be cleared.", "error");
+                setGuidedSystems(emptySystemsSession);
+                setRequestedV3Project(id);
+                setDialog("migration");
+              }} />}
             {dialog === "components" && <ComponentProjectDialog onBack={() => setDialog("guided")} onClose={closeDialog}
               onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
             {(dialog === "guided-chart" || dialog === "saved-charts") && <ChartProjectDialog fromProjects={dialog === "saved-charts"}

@@ -1,6 +1,6 @@
 import { flowchartModelFor, renderDiagram } from '../render';
 import { createDocument } from '../storage';
-import { flowchartEngineShapes, verifyNodeLabels, writeFlowchart, type FlowchartInput } from './flowchart-source';
+import { flowchartEngineConnections, flowchartEngineShapes, verifyNodeLabels, writeFlowchart, type FlowchartInput } from './flowchart-source';
 import type { SemanticRole } from './mermaid-project';
 import { migrateLegacyProject } from './migrate-legacy-project';
 import { validateMermaidProject } from './validate-mermaid-project';
@@ -19,7 +19,7 @@ export async function prepareGuidedFlowchart(title: string, input: GuidedFlowcha
       || nodes.some(node => model.vertices.get(generated.nodeIds.get(node.key) ?? '')?.type !== flowchartEngineShapes[node.shape ?? 'rect'])
       || model.edges.some((edge, index) => !edge.isUserDefinedId || edge.id !== generated.edgeIds[index]
         || edge.start !== generated.nodeIds.get(edges[index].from)
-        || edge.end !== generated.nodeIds.get(edges[index].to) || edge.type !== 'arrow_point'
+        || edge.end !== generated.nodeIds.get(edges[index].to) || edge.type !== flowchartEngineConnections[edges[index].direction ?? 'forward']
         || (edge.text ?? '') !== (edges[index].label ?? ''))) {
     throw new Error('The renderer did not preserve the reviewed diagram connections.');
   }
