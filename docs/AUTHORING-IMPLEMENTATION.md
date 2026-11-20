@@ -66,3 +66,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The generated Pages artifact has 106 files and totals 6,847,382 bytes. The initial dependency graph remains at 336,880 bytes, against the 370,568-byte budget. Portable HTML is 6,914,934 bytes. The before/after artifact checks also verify CSP and dependency integrity.
 - All 34 Playwright tests passed locally in pinned Chromium 159.0.8154.6, including six themes, ten example comparisons, standalone offline rendering and the five new authoring checks. The browser spec attaches desktop and touch viewport screenshots. The installed system Chromium blocked standalone file navigation during the baseline run. That baseline case passed with the pinned browser.
 - `npm audit --audit-level=high` reported zero advisories.
+
+## Milestone 0 native heading proposals
+
+- The canvas heading editor now prepares a closed `meridian-proposal/v1` envelope against its captured in-memory v2 project snapshot. `src/lib/authoring/proposals.ts` checks the full base token, prepares a privately held candidate, and uses the same UTF-8 byte ceiling as the project file import and export path.
+- `src/lib/workspace.ts` rechecks the exact project snapshot and revision at Apply. Title, subtitle and canvas visibility commit together with one Undo entry. Stale, invalid or oversized results preserve authored state and history. A workspace reload advances the revision, while autosave tracks the actual last saved workspace snapshot.
+- The heading dialog retains the draft on a stale result and shows the current heading. Reviewing the new base requires an explicit action before resubmitting. Headings use the existing frame path. The performance regression test verifies zero additional Mermaid layouts for a heading edit.
+- Unit and browser evidence covers equal-revision metadata mismatch, source change during hashing, forged readiness, out-of-scope fields, one-step Undo/Redo, UTF-8 budget enforcement and draft recovery after a stale Apply. See `src/lib/authoring/proposals.test.ts` and `tests/browser/authoring-foundation.spec.ts`.
+- This advances FN01, FN04, FN05, FN10 and FN11 for one native metadata operation. Structural validation, v3 IDs, selection and composition history, durable compare-and-swap, and imported proposals remain open. G01–G03 remain open for visual authoring.

@@ -7,6 +7,7 @@ import { validateStoryboard } from './storyboard';
 
 export const STORAGE_KEY = 'meridian:v2';
 export const LEGACY_STORAGE_KEY = 'meridian:v1';
+export const MAX_PROJECT_FILE_BYTES = 2_000_000;
 const MAX_PROJECTS = 50;
 const MAX_SOURCE = 100_000;
 const MAX_WORKSPACE_BYTES = 8_000_000;
@@ -141,8 +142,16 @@ export function createDocument(template?: DiagramTemplate): StudioDocument {
   };
 }
 
+export function serializeProject(document: StudioDocument): string {
+  return JSON.stringify(document, null, 2);
+}
+
+export function fitsProjectFile(text: string): boolean {
+  return text.length <= MAX_PROJECT_FILE_BYTES && new TextEncoder().encode(text).byteLength <= MAX_PROJECT_FILE_BYTES;
+}
+
 export function parseProject(text: string): StudioDocument {
-  if (text.length > 2_000_000) throw new Error('This project file is too large. Open a file smaller than 2 MB.');
+  if (!fitsProjectFile(text)) throw new Error('This project file is too large. Open a file smaller than 2 MB.');
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);

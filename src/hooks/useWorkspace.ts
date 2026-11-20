@@ -10,6 +10,7 @@ import {
   workspaceState,
   type DocumentPatch,
 } from "../lib/workspace";
+import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { StudioDocument, StudioSettings } from "../types";
 
 export function useWorkspace() {
@@ -25,18 +26,20 @@ export function useWorkspace() {
   const [externalChange, setExternalChange] = useState(false);
   const latest = useRef({ state, autosave });
   latest.current = { state, autosave };
-  const savedRevision = useRef(0);
+  const saved = useRef({ documents: initial.documents, activeId: initial.activeId });
+  const isSaved = useCallback((snapshot: typeof saved.current) =>
+    snapshot.documents === saved.current.documents && snapshot.activeId === saved.current.activeId, []);
 
   const flush = useCallback(() => {
     const current = latest.current;
-    if (!current.autosave || current.state.revision === savedRevision.current)
+    if (!current.autosave || isSaved(current.state))
       return;
     const result = saveWorkspace(
       current.state.documents,
       current.state.activeId,
     );
     if (result.ok) {
-      savedRevision.current = current.state.revision;
+      saved.current = current.state;
       setWarning("");
     } else
       setWarning(
@@ -44,14 +47,15 @@ export function useWorkspace() {
           "Browser storage is unavailable. Download your project to keep it.",
       );
     setSaveState(result.ok ? "saved" : "error");
-  }, []);
+  }, [isSaved]);
 
+  const { documents, activeId } = state;
   useEffect(() => {
-    if (!autosave || state.revision === savedRevision.current) return;
+    if (!autosave || isSaved({ documents, activeId })) return;
     setSaveState("saving");
     const timer = window.setTimeout(flush, 450);
     return () => window.clearTimeout(timer);
-  }, [state.revision, autosave, flush]);
+  }, [documents, activeId, autosave, flush, isSaved]);
 
   useEffect(() => {
     const hidden = () => {
@@ -95,7 +99,7 @@ export function useWorkspace() {
       setWarning(fresh.warning);
       return false;
     }
-    savedRevision.current = 0;
+    saved.current = fresh;
     dispatch({
       type: "replace",
       documents: fresh.documents,
@@ -116,7 +120,7 @@ export function useWorkspace() {
       setSaveState("error");
       return;
     }
-    savedRevision.current = current.revision;
+    saved.current = current;
     setAutosave(true);
     setExternalChange(false);
     setWarning("");
@@ -126,6 +130,10 @@ export function useWorkspace() {
   const patch = useCallback(
     (value: DocumentPatch, label = "Edit project", group?: string) =>
       dispatch({ type: "patch", patch: value, label, group, at: Date.now() }),
+    [],
+  );
+  const applyProposal = useCallback(
+    (proposal: ReadyProposal) => dispatch({ type: "proposal", proposal, at: Date.now() }),
     [],
   );
   const settings = useCallback(
@@ -150,14 +158,17 @@ export function useWorkspace() {
   const redo = useCallback(() => dispatch({ type: "redo" }), []);
 
   return {
-    documents: state.documents,
-    activeId: state.activeId,
+    documents,
+    activeId,
     document:
       state.documents.find((value) => value.id === state.activeId) ?? null,
     saveState,
     warning,
     autosave,
     externalChange,
+    revision: state.revision,
+    proposalOutcome: state.proposalOutcome,
+    applyProposal,
     patch,
     settings,
     open,
