@@ -12,7 +12,7 @@ The previously published application was introduced by commit `17b45b4a90d622d47
 
 ## Recovery method and evidence
 
-The original authoring workspace was available locally, including React components, TypeScript types, rendering/storage/export modules, Vite configuration, the dependency lockfile, and existing unit/browser tests. These files were copied into this repository in commit `cc437c1`. The source was not reverse engineered from the compiled bundle.
+The original authoring workspace was available locally, including React components, TypeScript types, rendering/storage/export modules, Vite configuration, the dependency lockfile, and existing unit/browser tests. These authoring files were restored into this repository. The executable identity below establishes their provenance; the source was not reverse engineered from the compiled bundle.
 
 After `npm ci`, a fresh `npm run build:standalone` reproduced the embedded JavaScript hash above exactly. The compiler output's inline script authorization was `sha256-4zL0aGLXRnA+WdMTXslFwgBVq5iTmD/zAc/ypE2bL4w=`. The source, locked dependencies, and build thus reproduce the deployed application code.
 

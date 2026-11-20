@@ -18,3 +18,27 @@
 /* Accessible selection outlines also apply to connections and collections. */
 .drawing [data-element-key][data-element-kind="edge"]{cursor:pointer;pointer-events:stroke}
 .drawing .studio-dimmed,.drawing .studio-edge-dimmed{opacity:.21!important}
+
+.inspector-mode{display:flex;gap:4px;flex-shrink:0;padding:7px 12px;border-bottom:1px solid var(--border);background:#101a20}
+.inspector-mode>button{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:8px 10px;border:1px solid transparent;border-radius:6px;font-size:12px;color:#94aab2}
+.inspector-mode>button.active{background:#203b33;color:#c4e8d9;border-color:#3e5b50}
+.inspector-mode>button>span{font:10px ui-monospace,monospace;padding:1px 5px;border-radius:4px;background:#0e1b18;color:#9fc9b7}
+.story-toggle{font-size:11px;min-height:29px;padding:5px 9px}
+.story-toggle.active{background:#213a31;color:#bce4d0}
+.story-render-note{padding:10px 15px;margin:0;background:#392c23;color:#ebc5a6;font-size:11px;line-height:1.5}
+.story-preview-banner{position:absolute;top:48px;left:18px;z-index:9;display:flex;align-items:center;gap:6px;border:1px solid #4a6f60;background:#162d25ef;color:#c4e8d8;font-size:11px;padding:7px 10px;border-radius:6px}
+.presentation-playhead{width:140px;accent-color:#a7dcbf;cursor:pointer}
+.presentation-controls.has-storyboard .presentation-label{max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.presentation-controls.has-storyboard .presentation-label>span{overflow:hidden;text-overflow:ellipsis;max-width:220px}
+@media(max-width:800px){
+  .workspace.mobile-story .inspector-panel{display:flex}
+  .workspace.mobile-story .canvas-panel{visibility:hidden}
+  .mobile-nav>button{width:25%}
+  .workspace-tools{gap:4px}
+  .story-toggle{padding:5px;min-height:28px}
+  .story-toggle>span{display:none}
+  .inspector-mode{padding:7px 16px}
+  .story-preview-banner{top:46px;left:14px}
+  .presentation-controls.has-storyboard{flex-wrap:wrap;justify-content:center;width:350px;max-width:calc(100vw - 24px)}
+  .presentation-controls.has-storyboard .presentation-playhead{order:3;width:calc(100% - 24px);height:20px;margin:0 12px 3px}
+}

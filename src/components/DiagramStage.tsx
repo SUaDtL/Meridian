@@ -3,6 +3,8 @@ import { Minus, Plus, Maximize, Move, MousePointer2, RotateCcw, Focus, X } from 
 import type { RenderResult, StudioDocument } from '../types';
 import { buildExportSvg } from '../lib/export';
 import { getTheme } from '../lib/themes';
+import { createStoryboardPlayer } from '../lib/storyboard';
+import type { StoryboardController, StoryPlaybackState } from '../types/storyboard';
 
 type Point = { x: number; y: number };
 type TrackedPointer = Point & { type: string };
@@ -30,9 +32,13 @@ interface Props {
   present: boolean;
   motionPaused: boolean;
   fitRequest: number;
+  storyPreview?: boolean;
+  reducedMotion?: boolean;
+  onStoryController?: (controller: StoryboardController | null) => void;
+  onStoryPlayback?: (state: StoryPlaybackState) => void;
 }
 
-export default function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, present, motionPaused, fitRequest}: Props) {
+export default function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, present, motionPaused, fitRequest, storyPreview = false, reducedMotion = false, onStoryController, onStoryPlayback}: Props) {
   const viewport = useRef<HTMLDivElement>(null);
   const drawing = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -46,6 +52,8 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
   const camera = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
   const hadPinch = useRef(false);
   const suppressClickUntil = useRef(0);
+  const storyController = useRef<StoryboardController | null>(null);
+  const previousPlayback = useRef<StoryPlaybackState | null>(null);
   // Pointer events can arrive before React commits the preceding render.
   // Keep the gesture's camera synchronous while React paints the same values.
   const updateCamera = useCallback((nextZoom: number, nextPan: Point) => {
@@ -60,6 +68,35 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
     const el = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement;
     return {width:Number(el.getAttribute('width'))||900, height:Number(el.getAttribute('height'))||700};
   }, [svg]);
+
+  useEffect(() => {
+    if (!storyPreview || !doc.storyboard?.scenes.length) {
+      previousPlayback.current = null;
+      return;
+    }
+    const root = drawing.current?.querySelector<SVGSVGElement>('[data-meridian-export]');
+    if (!root) return;
+    setFocused(false);
+    root.querySelectorAll('.studio-selected,.studio-dimmed,.studio-edge-dimmed').forEach(element=>element.classList.remove('studio-selected','studio-dimmed','studio-edge-dimmed'));
+    const resume = previousPlayback.current;
+    const controller = createStoryboardPlayer(root, doc.storyboard, {
+      initialTime: resume?.time,
+      reducedMotion,
+      accent: theme.accent,
+      onUpdate: onStoryPlayback,
+    });
+    storyController.current = controller;
+    onStoryController?.(controller);
+    if (resume?.playing) controller.play();
+    return () => {
+      previousPlayback.current = controller.getState();
+      controller.destroy();
+      storyController.current = null;
+      onStoryController?.(null);
+    };
+  }, [svg, storyPreview, doc.storyboard, replayKey, onStoryController, onStoryPlayback]);
+
+  useEffect(() => { storyController.current?.setReducedMotion(reducedMotion); }, [reducedMotion]);
 
   const fit = useCallback(() => {
     const el = viewport.current;
@@ -104,16 +141,16 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
     if (selectedKey) visit(selectedKey);
     el.querySelectorAll<SVGElement>('[data-element-key], [data-element-owner]').forEach(node => {
       const key = node.getAttribute('data-element-key') || node.getAttribute('data-element-owner');
-      node.classList.toggle('studio-selected', key === selectedKey && node.hasAttribute('data-element-key'));
-      node.classList.toggle('studio-dimmed', focused && !!selectedKey && !!key && !active.has(key));
-      if (node.hasAttribute('data-element-key')) {
+      node.classList.toggle('studio-selected', !storyPreview && key === selectedKey && node.hasAttribute('data-element-key'));
+      node.classList.toggle('studio-dimmed', !storyPreview && focused && !!selectedKey && !!key && !active.has(key));
+      if (!storyPreview && node.hasAttribute('data-element-key')) {
         node.setAttribute('tabindex', '0');
         node.setAttribute('role', 'button');
         node.setAttribute('aria-label', `Select ${result?.elements?.find(item => item.key === key)?.label || node.textContent?.trim() || key}`);
         node.setAttribute('aria-pressed', String(key === selectedKey));
       }
     });
-  }, [svg, selectedKey, focused, replayKey, result]);
+  }, [svg, selectedKey, focused, replayKey, result, storyPreview]);
   useEffect(() => { if(!selectedKey) setFocused(false); },[selectedKey]);
 
   useEffect(() => {
@@ -230,9 +267,9 @@ export default function DiagramStage({result, document: doc, selectedKey, onSele
       <div className="drawing-position" style={{width:dimensions.width,height:dimensions.height,transform:`translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`}}>
         <div key={replayKey} ref={drawing} className={`drawing ${replayKey>0?'replay':''}`} data-testid="rendered-diagram" dangerouslySetInnerHTML={{__html:svg}}
           onClick={(e) => {if (Date.now() < suppressClickUntil.current) { e.preventDefault(); e.stopPropagation(); return; } const key=elementKey(e.target); if(key&&tool==='select'){e.stopPropagation();onSelect(key);}}}
-          onKeyDown={(e)=>{ if(e.key==='Enter'||e.key===' '){const key=elementKey(e.target);if(key){e.preventDefault();onSelect(key);}} }} />
+          onKeyDown={(e)=>{ if(storyPreview)return; if(e.key==='Enter'||e.key===' '){const key=elementKey(e.target);if(key){e.preventDefault();onSelect(key);}} }} />
       </div>}
-    {selectedKey && <div className="selection-toolbar"><span>{result?.elements?.find(element=>element.key===selectedKey)?.label||selectedKey}</span><button className={focused?'active':''} onClick={()=>setFocused(!focused)} title="Spotlight this element" aria-pressed={focused}><Focus size={15}/>Spotlight</button><button className="icon-button" aria-label="Clear selected node" onClick={()=>onSelect(null)}><X size={15}/></button></div>}
+    {!storyPreview && selectedKey && <div className="selection-toolbar"><span>{result?.elements?.find(element=>element.key===selectedKey)?.label||selectedKey}</span><button className={focused?'active':''} onClick={()=>setFocused(!focused)} title="Spotlight this element" aria-pressed={focused}><Focus size={15}/>Spotlight</button><button className="icon-button" aria-label="Clear selected node" onClick={()=>onSelect(null)}><X size={15}/></button></div>}
     <div className="canvas-controls">
       <div className="control-group tool-buttons"><button className={tool==='select'?'active':''} onClick={()=>setTool('select')} aria-label="Select diagram elements" aria-pressed={tool==='select'} title="Select diagram elements"><MousePointer2 size={17}/></button><button className={tool==='pan'?'active':''} onClick={()=>setTool('pan')} aria-label="Pan canvas" aria-pressed={tool==='pan'} title="Pan canvas"><Move size={17}/></button></div>
       <div className="control-group"><button onClick={()=>zoomTo(zoom/1.2)} aria-label="Zoom out"><Minus size={17}/></button><button className="zoom-value" onClick={()=>zoomTo(1)} title="Actual size">{Math.round(zoom*100)}%</button><button onClick={()=>zoomTo(zoom*1.2)} aria-label="Zoom in"><Plus size={17}/></button><span className="control-separator"/><button onClick={fit} aria-label="Fit diagram to view" title="Fit to view"><Maximize size={17}/></button></div>

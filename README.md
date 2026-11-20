@@ -10,8 +10,9 @@ This is the independent repository **SUaDtL/Meridian**. Its GitHub Pages workflo
 - Live source editing with last-known-good recovery when syntax is incomplete.
 - Ten examples, six themes, node accents and spotlight, layout controls, pan/zoom, presentation mode, and replay.
 - Browser-local projects, autosave, `.mmd` import, and portable `.meridian.json` project files.
-- SVG, high-resolution PNG, and standalone animated HTML exports.
-- Mobile Canvas, Source, and Style panels and reduced-motion support.
+- A storyboard composer with named scenes, progressive reveals, selected connector flow, camera regions, timing, and playback.
+- SVG, high-resolution PNG, and standalone HTML presentations with offline scene playback.
+- Mobile Canvas, Source, Style, and Story panels and reduced-motion support.
 - No backend, accounts, API keys, telemetry, runtime CDNs, or external runtime assets.
 
 ## Design inspector
@@ -21,6 +22,14 @@ Choose Executive, Infrastructure, Cyberpunk, Minimal, or Technical Blueprint for
 Flowcharts expose node shapes, typography, fill/text/border colors, line patterns, arrowheads, shadows, glow, and emphasis. Shape and font overrides are applied to a temporary rendering copy before layout; the Mermaid text and downloaded `.mmd` remain unchanged. Dagre exposes per-connector curves and density; ELK uses its supported layered routing controls. Other diagram families retain their existing themes and expose only properties supported by their renderer.
 
 Projects now use `meridian/v2`. Version 1 files and the existing browser workspace migrate automatically. The previous browser storage entry is retained, while subsequent writes use a separate v2 entry. Download project JSON to keep source and all styling together.
+
+## Presentation storyboard
+
+Open **Storyboard** in the toolbar, or **Story** on mobile. Create a scene, choose its visible elements, and duplicate it to reveal more of the diagram in the next scene. Add a spotlight, choose the connectors that should show flow, and set a camera region. Arrange the scenes and adjust their duration, transition time, and easing.
+
+The playhead previews the exact sequence; scrubbing pauses playback. **Present** plays the storyboard with the editing panels hidden. **Export → HTML** creates a self-contained presentation using the same playback engine, with previous/next scene, replay, timeline, loop, and fullscreen controls. Reduced-motion preferences suppress camera interpolation and moving flow while retaining the scene content and controls.
+
+Scenes and their stable element references are saved in project JSON without rewriting Mermaid source. SVG and PNG exports remain complete static diagrams. See [STORYBOARD.md](docs/STORYBOARD.md) for the complete workflow, timing semantics, and diagram targeting limits.
 
 ## Development
 
