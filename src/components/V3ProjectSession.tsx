@@ -166,7 +166,8 @@ export default function V3ProjectSession({ id, onBack }: { id: string; onBack: (
     return targetTable.targets.map((target): ReadabilityTarget => {
       const element = elements.get(target.id);
       return { id: target.id, kind: target.elementKind, label: target.label, from: target.sourceId, to: target.targetId,
-        typography: !!element?.capabilities.includes("typography"), measuredLabelSize: element?.appearance?.labelSizeInDiagram };
+        typography: !!element?.capabilities.includes("typography"), measuredLabelSize: element?.appearance?.labelSizeInDiagram,
+        solidTextPaint: element?.appearance?.solidTextPaint };
     });
   }, [readabilityOpen, currentFrame, targetTable]);
   const identities = project?.identity.elements;
