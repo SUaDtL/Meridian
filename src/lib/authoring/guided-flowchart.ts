@@ -45,5 +45,5 @@ export async function prepareGuidedFlowchart(title: string, input: GuidedFlowcha
     if (!elementId) throw new Error('The renderer could not bind a role to its node.');
     return [{ elementId, role: node.role }];
   });
-  return { document: roles.length ? validateMermaidProject({ ...migrated.document, roles }) : migrated.document, rendered };
+  return { document: roles.length ? validateMermaidProject({ ...migrated.document, roles }) : migrated.document, rendered, generated };
 }

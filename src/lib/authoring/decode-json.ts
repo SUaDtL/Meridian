@@ -17,7 +17,7 @@ export class JsonInputError extends Error {
 }
 
 /** Check object keys and bounds before JSON.parse can discard repeated keys. */
-export function decodeJson(text: string): unknown {
+export function decodeJson(text: string, entryLimit = maxEntries): unknown {
   const scalar = /(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/y;
   let offset = 0;
   let entries = 0;
@@ -37,7 +37,7 @@ export function decodeJson(text: string): unknown {
 
   function visit(depth: number) {
     if (depth > maxDepth) throw new JsonInputError('depth');
-    if (++entries > maxEntries) throw new JsonInputError('entries');
+    if (++entries > entryLimit) throw new JsonInputError('entries');
     skipWhitespace();
     const start = text[offset];
     if (start === '"') {
