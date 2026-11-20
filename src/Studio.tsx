@@ -33,6 +33,7 @@ import {
   RefreshCw,
   RotateCcw,
   Scan,
+  Search,
   Settings2,
   ShieldCheck,
   SkipBack,
@@ -43,11 +44,13 @@ import {
   X,
 } from "lucide-react";
 import Brand from "./components/Brand";
+import CommandPalette from "./components/CommandPalette";
 import DiagramStage from "./components/DiagramStage";
 import Inspector from "./components/Inspector";
 import Storyboard from "./components/Storyboard";
 import HeadingEditor from "./components/HeadingEditor";
 import { prepareHeadingProposal } from "./lib/authoring/proposals";
+import type { WorkspaceCommand } from "./lib/authoring/command-search";
 import { useDiagram } from "./hooks/useDiagram";
 import { createDesign } from "./lib/design";
 import { DEFAULT_SETTINGS } from "./lib/themes";
@@ -134,6 +137,7 @@ export default function Studio({
   );
   const [heading, setHeading] = useState<"title" | "subtitle" | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [commandsOpen, setCommandsOpen] = useState(false);
   const [replayKey, setReplayKey] = useState(0);
   const [fitRequest, setFitRequest] = useState(0);
   const [motionPaused, setMotionPaused] = useState(false);
@@ -237,6 +241,12 @@ export default function Studio({
     setInspectorVisible(true);
     setTab("story");
   }, []);
+  const openDesign = useCallback(() => {
+    setInspectorMode("design");
+    setInspectorVisible(true);
+    setTab("style");
+  }, []);
+  const openExport = useCallback(() => setExportOpen(true), []);
   const selectElement = useCallback(
     (key: string | null) => {
       setSelectedKey(key);
@@ -371,6 +381,13 @@ export default function Studio({
       );
       const command = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
+      if (command && key === "k" && !event.altKey && !event.shiftKey) {
+        if (!present && !exportOpen && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229) {
+          event.preventDefault();
+          setCommandsOpen(true);
+        }
+        return;
+      }
       if (command && key === "s") {
         event.preventDefault();
         onDownload();
@@ -424,6 +441,7 @@ export default function Studio({
     return () => window.removeEventListener("keydown", keydown);
   }, [
     present,
+    exportOpen,
     storyPreview,
     onDownload,
     renderNow,
@@ -447,6 +465,21 @@ export default function Studio({
       : stale
         ? "Render the current diagram to preview scenes."
         : undefined;
+  const commands: WorkspaceCommand[] = [
+    { id: "edit-heading", title: "Edit heading", category: "Project", synonyms: ["title", "rename project"], run: editTitle },
+    { id: "show-source", title: "Show Mermaid source", category: "Diagram", synonyms: ["open source", "code"], run: showSource },
+    { id: "render-now", title: "Render diagram", category: "Diagram", synonyms: ["refresh"], shortcut: "Ctrl/⌘ Enter",
+      unavailable: blank ? "Enter Mermaid source to render a diagram." : undefined, run: renderNow },
+    { id: "copy-source", title: "Copy Mermaid source", category: "Diagram", unavailable: blank ? "There is no source to copy." : undefined, run: () => { void copySource(); } },
+    { id: "open-design", title: "Open design options", category: "Diagram", synonyms: ["style", "theme"], run: openDesign },
+    { id: "open-story", title: "Open storyboard", category: "Diagram", synonyms: ["scenes", "timeline"], run: openStoryboard },
+    { id: "present", title: "Present diagram", category: "Diagram", shortcut: "P",
+      unavailable: !result || stale || error ? "Render a valid diagram before presenting." : undefined, run: beginPresentation },
+    { id: "undo", title: "Undo", category: "History", shortcut: "Ctrl/⌘ Z", unavailable: undoLabel ? undefined : "There are no changes to undo.", run: undo },
+    { id: "redo", title: "Redo", category: "History", shortcut: "Ctrl/⌘ Shift Z", unavailable: redoLabel ? undefined : "There are no changes to redo.", run: redo },
+    { id: "export", title: "Export diagram", category: "Export", synonyms: ["download", "presentation", "png", "svg"], run: openExport },
+    { id: "download-project", title: "Download project", category: "Export", synonyms: ["backup", "save project"], shortcut: "Ctrl/⌘ S", run: onDownload },
+  ];
   return (
     <div
       className={`studio ${present ? "is-presenting" : ""} ${sourceVisible ? "" : "source-hidden"} ${inspectorVisible ? "" : "inspector-hidden"}`}
@@ -501,6 +534,10 @@ export default function Studio({
               </span>
             </div>
             <div className="app-actions">
+              <button className="button quiet commands-top" aria-label="Commands" aria-keyshortcuts="Control+K Meta+K"
+                title="Commands (Ctrl/⌘ K)" onClick={() => setCommandsOpen(true)}>
+                <Search size={16} /><span>Commands</span>
+              </button>
               <button
                 className="button quiet new-top"
                 onClick={onNew}
@@ -533,7 +570,7 @@ export default function Studio({
               </button>
               <button
                 className="button primary export-top"
-                onClick={() => setExportOpen(true)}
+                onClick={openExport}
               >
                 <ArrowDownToLine size={16} />
                 <span>Export</span>
@@ -842,10 +879,7 @@ export default function Studio({
               <button
                 className={inspectorMode === "design" ? "active" : ""}
                 aria-pressed={inspectorMode === "design"}
-                onClick={() => {
-                  setInspectorMode("design");
-                  setTab("style");
-                }}
+                onClick={openDesign}
               >
                 <Settings2 size={15} />
                 Design
@@ -1061,6 +1095,7 @@ export default function Studio({
           </button>
         </div>
       )}
+      {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
       {heading && (
         <HeadingEditor
           document={doc}
