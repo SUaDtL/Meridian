@@ -105,3 +105,34 @@
   .mi-theme-line { top: 23px; }
   .mi-inspector-scroll { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
 }
+
+/* Design is the primary surface; element controls reveal only when selected. */
+.mi-tabs { grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); }
+.mi-presets { padding-top: 4px; }
+.mi-preset-status { font-size: 10px; color: #91b3a8; font-weight: 500; }
+.mi-preset-list { display: grid; gap: 5px; }
+.mi-preset { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px; border: 1px solid #2a393e; border-radius: 8px; background: #152126; color: #e2eeea; text-align: left; cursor: pointer; }
+.mi-preset:hover { border-color: #63847b; background: #1a292d; }
+.mi-preset.is-active { border-color: #8bcbb7; background: #20322f; }
+.mi-preset > span:nth-child(2) { flex: 1; min-width: 0; }
+.mi-preset strong { display: block; font-size: 13px; font-weight: 600; }
+.mi-preset small { display: block; color: #9fb2b5; font-size: 11px; line-height: 1.5; margin-top: 3px; }
+.mi-preset-swatch { position: relative; flex-shrink: 0; width: 37px; height: 33px; border: 1px solid #71817b55; border-radius: 5px; display: flex; align-items: center; justify-content: space-evenly; }
+.mi-preset-swatch span { display: block; width: 9px; height: 11px; border: 1px solid currentColor; border-radius: 2px; }
+.mi-preset-swatch i { position: absolute; width: 11px; height: 1px; background: currentColor; left: 12px; top: 15px; opacity: .6; }
+.mi-auto-layout { display: flex; justify-content: center; align-items: center; gap: 7px; width: 100%; border: 1px solid #44685d; color: #b2e0cd; background: #20342d; padding: 9px; border-radius: 7px; font: inherit; font-size: 11px; cursor: pointer; }
+.mi-auto-layout:hover { background: #29483c; }
+.mi-element-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.mi-element-kind { color: #a2d7c4; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.3px; }
+.mi-element-title { font-size: 16px!important; font-weight: 600; line-height: 1.45; margin: 4px 0!important; overflow-wrap: anywhere; color: #e5f1ed; }
+.mi-element-id { display: block; color: #829c9c; font-size: 10px; overflow-wrap: anywhere; margin-bottom: 12px; }
+.mi-element-editor > .mi-text-button { margin-bottom: 10px; }
+.mi-color-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.mi-color-field { display: flex; flex: 1; min-width: 60px; align-items: center; justify-content: space-between; gap: 7px; font-size: 12px; color: #b5c7c6; padding: 7px; border: 1px solid #304146; border-radius: 7px; background: #17272b; }
+.mi-color-field input[type=color] { border: 0; background: none; padding: 0; width: 25px; height: 25px; cursor: pointer; }
+.mi-color-field input[type=color]::-webkit-color-swatch-wrapper { padding: 1px; }
+.mi-color-field input[type=color]::-webkit-color-swatch { border: 1px solid #93b2aa88; border-radius: 4px; }
+.mi-field select { max-width: 100%; }
+.mi-preset:focus-visible, .mi-auto-layout:focus-visible { outline: 2px solid #a2d7c4; outline-offset: 2px; }
+
+.mi-element-editor { padding-top: 18px; }

@@ -6,8 +6,9 @@ import Inspector from './components/Inspector';
 import Modal from './components/Modal';
 import { TEMPLATES } from './lib/templates';
 import { DEFAULT_SETTINGS, getTheme } from './lib/themes';
-import { createDocument, downloadText, loadWorkspace, normalizeSource, parseProject, safeFilename, saveWorkspace } from './lib/storage';
+import { createDocument, downloadText, loadWorkspace, normalizeSource, parseProject, safeFilename, saveWorkspace, STORAGE_KEY, LEGACY_STORAGE_KEY } from './lib/storage';
 import { renderDiagram } from './lib/render';
+import { createDesign } from './lib/design';
 import { buildExportSvg, downloadSvg, exportPng, exportPresentation } from './lib/export';
 import type { DiagramTemplate, RenderResult, StudioDocument, StudioSettings } from './types';
 
@@ -61,7 +62,7 @@ function App() {
   const previousActiveId = useRef(activeId);
   const document = documents.find(d=>d.id===activeId)||documents[0];
   const documentRef = useRef(document); documentRef.current=document;
-  const fingerprint = useMemo(()=>JSON.stringify([document.id,document.source,document.settings,document.nodeAccents]),[document.id,document.source,document.settings,document.nodeAccents]);
+  const fingerprint = useMemo(()=>JSON.stringify([document.id,document.source,document.settings,document.nodeAccents,document.design]),[document.id,document.source,document.settings,document.nodeAccents,document.design]);
   const stale = lastFingerprint!==fingerprint;
   const workspaceRef = useRef({documents,activeId,autosave}); workspaceRef.current={documents,activeId,autosave};
 
@@ -82,7 +83,9 @@ function App() {
   },[]);
   useEffect(()=>{
     const changed=(event:StorageEvent)=>{
-      if(event.key!=='meridian:v1'||event.newValue===event.oldValue)return;
+      if(![STORAGE_KEY,LEGACY_STORAGE_KEY].includes(event.key||'')||event.newValue===event.oldValue)return;
+      // Legacy tabs cannot overwrite v2, but warn if this tab is still migrating.
+      if(event.key===LEGACY_STORAGE_KEY && localStorage.getItem(STORAGE_KEY)!==null)return;
       workspaceRef.current.autosave=false;
       setAutosave(false);setExternalChange(true);
       setStorageWarning('Another tab changed this workspace. Autosave is paused here to protect both copies. Download this project before reloading the workspace.');
@@ -100,10 +103,10 @@ function App() {
     setRendering(true);
     const timer=window.setTimeout(async()=>{
       try {
-        const result=await renderDiagram(normalizeSource(document.source),document.settings,document.nodeAccents);
+        const result=await renderDiagram(normalizeSource(document.source),document.settings,document.nodeAccents,document.design);
         if(cancelled)return;
         setRenderResult(result);setRenderedDocument(document);setRenderError('');setLastFingerprint(fingerprint);
-        setSelectedKey(previous=>result.nodes.some(n=>n.key===previous)?previous:null);
+        setSelectedKey(previous=>(result.elements||[]).some(element=>element.key===previous)?previous:null);
       } catch(error) {if(!cancelled)setRenderError(error instanceof Error?error.message.slice(0,2200):'The diagram could not render. Check the source and try again.');}
       finally {if(!cancelled)setRendering(false);}
     },manual||newDocument?10:380);
@@ -114,7 +117,7 @@ function App() {
     setDocuments(list=>list.map(doc=>doc.id===activeId?{...doc,...patch,updatedAt:new Date().toISOString()}:doc));
   },[activeId]);
   const updateSettings = useCallback((patch:Partial<StudioSettings>)=>{
-    setDocuments(list=>list.map(doc=>doc.id===activeId?{...doc,settings:{...doc.settings,...patch},updatedAt:new Date().toISOString()}:doc));
+    setDocuments(list=>list.map(doc=>doc.id===activeId?{...doc,settings:{...doc.settings,...patch},design:{...doc.design,preset:'custom'},updatedAt:new Date().toISOString()}:doc));
   },[activeId]);
   const downloadProject = useCallback(()=>{
     const doc = documentRef.current;
@@ -134,7 +137,7 @@ function App() {
   const importFile = async(e:ChangeEvent<HTMLInputElement>)=>{
     const file=e.target.files?.[0];e.target.value='';if(!file)return;
     try {
-      if(file.size>1_000_000)throw new Error('Choose a project or Mermaid file smaller than 1 MB.');
+      if(file.size>2_000_000)throw new Error('Choose a project or Mermaid file smaller than 2 MB.');
       if(documents.length>=50)throw new Error('The workspace holds 50 projects. Download and remove one before importing.');
       const text=await file.text();
       let doc:StudioDocument;
@@ -185,7 +188,12 @@ function App() {
     }catch(error){setExportError(error instanceof Error?error.message:'The export could not be created. Try SVG or a lower PNG scale.');}
     finally{setExportBusy(false);}
   };
-  const selectedNode=renderResult?.nodes.find(n=>n.key===selectedKey)||null;
+  const selectedElement=renderResult?.elements?.find(element=>element.key===selectedKey)||null;
+  const selectedNode=selectedElement?.kind==='node' ? renderResult?.nodes.find(node=>node.key===selectedElement.sourceId)||null : null;
+  const selectElement=(key:string|null)=>{
+    setSelectedKey(key);
+    if(key){setInspectorVisible(true);if(window.innerWidth<1100)setTab('style');}
+  };
   const visualExport=['svg','png','html'].includes(exportFormat);
   const categories=['All',...Array.from(new Set(TEMPLATES.map(t=>t.category)))];
 
@@ -211,11 +219,11 @@ function App() {
         <div className="source-footer"><span>{document.source.split('\n').length} lines</span><span><kbd>⌘ / Ctrl</kbd> <kbd>↵</kbd> render</span></div>
       </aside>}
       <section className="canvas-panel" aria-label="Diagram canvas">
-        <DiagramStage result={renderResult} document={stale&&renderedDocument?{...renderedDocument,title:document.title,subtitle:document.subtitle}:document} selectedKey={selectedKey} onSelect={setSelectedKey} replayKey={replayKey} present={present} motionPaused={motionPaused||reducedMotion} fitRequest={fitRequest}/>
+        <DiagramStage result={renderResult} document={stale&&renderedDocument?{...renderedDocument,title:document.title,subtitle:document.subtitle}:document} selectedKey={selectedKey} onSelect={selectElement} replayKey={replayKey} present={present} motionPaused={motionPaused||reducedMotion} fitRequest={fitRequest}/>
         {(renderError||stale&&!rendering||rendering)&&<div className={`render-status ${renderError?'error':''}`} role="status">{rendering?<><LoaderCircle size={14} className="spin"/>Rendering diagram</>:renderError?<><CircleAlert size={14}/>{renderResult?'Showing last valid diagram':'Source needs a correction'}</>:<><Pause size={14}/>Canvas paused · Render to update</>}</div>}
         {renderResult?.warnings.length ? <details className="render-notes"><summary><CircleAlert size={13}/>{renderResult.warnings.length} rendering {renderResult.warnings.length===1?'note':'notes'}</summary><ul>{renderResult.warnings.map(w=><li key={w}>{w}</li>)}</ul></details>:null}
       </section>
-      {!present&&<aside className="inspector-panel" aria-label="Diagram styling"><div className="panel-heading"><div><Settings2 size={16}/><strong>Make it yours</strong></div><button className="icon-button" onClick={()=>{updateSettings({...DEFAULT_SETTINGS});updateDocument({nodeAccents:{}});notify('Style reset to the Meridian defaults.');}} title="Reset all styling" aria-label="Reset all styling"><RotateCcw size={15}/></button></div><Inspector document={document} onSettings={updateSettings} onDocument={updateDocument} selectedNode={selectedNode} onAccent={color=>{if(!selectedKey)return;const nodeAccents={...document.nodeAccents};if(color)nodeAccents[selectedKey]=color;else delete nodeAccents[selectedKey];updateDocument({nodeAccents});}} onClearSelection={()=>setSelectedKey(null)} onReplay={()=>setReplayKey(v=>v+1)} reducedMotion={reducedMotion}/></aside>}
+      {!present&&<aside className="inspector-panel" aria-label="Diagram styling"><div className="panel-heading"><div><Settings2 size={16}/><strong>Make it yours</strong></div><button className="icon-button" onClick={()=>{updateSettings({...DEFAULT_SETTINGS});updateDocument({nodeAccents:{},design:createDesign()});notify('Style reset to the Meridian defaults.');}} title="Reset all styling" aria-label="Reset all styling"><RotateCcw size={15}/></button></div><Inspector onSelectElement={selectElement} result={renderResult} selectedElement={selectedElement} onDesign={design=>updateDocument({design})} document={document} onSettings={updateSettings} onDocument={updateDocument} selectedNode={selectedNode} onAccent={color=>{if(!selectedNode)return;const nodeAccents={...document.nodeAccents};if(color)nodeAccents[selectedNode.key]=color;else delete nodeAccents[selectedNode.key];updateDocument({nodeAccents});}} onClearSelection={()=>setSelectedKey(null)} onReplay={()=>setReplayKey(v=>v+1)} reducedMotion={reducedMotion}/></aside>}
     </main>
     {!present&&<><footer className="status-bar"><span><ShieldCheck size={13}/>Made here. Stays here.<span className="status-sub"> Your diagrams stay in your browser.</span></span><div>{renderResult&&<><span>{renderResult.diagramType.replace(/[-_]/g,' ')}</span>{renderResult.nodes.length>0&&<span>{renderResult.nodes.length} nodes</span>}{renderResult.edgeCount>0&&<span>{renderResult.edgeCount} connections</span>}</>}<button onClick={()=>setDialog('help')}>Guide & shortcuts<BookOpen size={12}/></button></div></footer><nav className="mobile-nav" aria-label="Workspace panels">{([['canvas',Scan,'Canvas'],['source',Code2,'Source'],['style',Settings2,'Style']] as const).map(([id,Icon,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)} aria-current={tab===id?'page':undefined}><Icon size={19}/>{label}</button>)}</nav></>}
     {present&&<div className="presentation-controls"><span className="presentation-label">Meridian <span>Presentation</span></span><button onClick={()=>setMotionPaused(p=>!p)} aria-pressed={motionPaused} title={motionPaused?'Resume animation':'Pause animation'}>{motionPaused?<Play size={17}/>:<Pause size={17}/>}<span>{motionPaused?'Play':'Pause'}</span></button><button onClick={()=>setReplayKey(v=>v+1)}><RotateCcw size={16}/><span>Replay</span></button><button onClick={()=>setFitRequest(v=>v+1)}><Maximize2 size={16}/><span>Fit</span></button><span className="control-separator"/><button onClick={()=>setPresent(false)}><X size={17}/><span>Exit <kbd>Esc</kbd></span></button></div>}
@@ -233,7 +241,7 @@ function App() {
       <div className="export-bottom"><span>{document.title}</span><button className="button primary" disabled={exportBusy||(visualExport&&(stale||!!renderError||!renderResult))} onClick={doExport}>{exportBusy?<LoaderCircle className="spin" size={16}/>:<Download size={16}/>}Download {exportFormat==='project'?'project':exportFormat.toUpperCase()}</button></div>
     </Modal>}
 
-    {dialog==='help'&&<Modal title="From syntax to stage." eyebrow="THE MERIDIAN GUIDE" wide onClose={()=>setDialog(null)}><div className="guide-grid"><section><h3><Code2 size={19}/>Write or paste Mermaid</h3><p>Edit the source or import an .mmd file. Rendering updates as you type. When the syntax is incomplete, the canvas holds the last good picture.</p><pre className="guide-code">{'flowchart LR\n  A[An idea] --> B{A decision}\n  B -->|Yes| C[Make it happen]\n  B -->|Not yet| A'}</pre><p>Mermaid source stays intact when you change the look. Configuration directives are ignored so your studio settings remain in control.</p></section><section><h3><Sparkles size={19}/>Give it a visual language</h3><p>Choose a theme, then refine surfaces, shadows, connections, and motion. Click a supported node to give it an accent or spotlight it.</p><p>Flow effects follow diagram connections. They are presentation effects, not live traffic. Some diagram types have their own geometry and only use the shared theme and export controls.</p></section><section><h3><Play size={19}/>Present with purpose</h3><p>Present hides the editing panels. Drag the background to pan, scroll to zoom, and use Fit to reset the view. Replay gives your diagram a fresh entrance.</p><p>Reduced-motion preferences are respected. Turn motion off for a completely still diagram.</p></section><section><h3><Save size={19}/>Keep a portable copy</h3><p>Projects autosave in this browser. Download a Meridian project to preserve the code, palette, effects, and stage settings together.</p><p>Export PNG for slides, SVG for vector artwork, or a self-contained HTML presentation for motion. No account or upload is needed.</p></section></div><div className="shortcut-grid"><span><kbd>Ctrl / ⌘ S</kbd>Download project</span><span><kbd>Ctrl / ⌘ Enter</kbd>Render now</span><span><kbd>F</kbd>Fit diagram</span><span><kbd>P</kbd>Toggle presentation</span><span><kbd>Esc</kbd>Exit presentation</span><span><kbd>Ctrl / ⌘ Z</kbd>Undo in the editor</span></div><p className="guide-footnote">Meridian by ArbiterForge · Built with React and Mermaid 12.3.0 · <a href="https://mermaid.js.org/intro/" target="_blank" rel="noreferrer">Mermaid syntax reference</a></p></Modal>}
+    {dialog==='help'&&<Modal title="From syntax to stage." eyebrow="THE MERIDIAN GUIDE" wide onClose={()=>setDialog(null)}><div className="guide-grid"><section><h3><Code2 size={19}/>Write or paste Mermaid</h3><p>Edit the source or import an .mmd file. Rendering updates as you type. When the syntax is incomplete, the canvas holds the last good picture.</p><pre className="guide-code">{'flowchart LR\n  A[An idea] --> B{A decision}\n  B -->|Yes| C[Make it happen]\n  B -->|Not yet| A'}</pre><p>Mermaid source stays intact when you change the look. Configuration directives are ignored so your studio settings remain in control.</p></section><section><h3><Sparkles size={19}/>Give it a visual language</h3><p>Choose a theme, then refine surfaces, shadows, connections, and motion. Select a node, connection, or group to refine its typography, shape, colors, and effects. Design presets set a coordinated starting point; element overrides travel with your project.</p><p>Flow effects follow diagram connections. They are presentation effects, not live traffic. Some diagram types have their own geometry and only use the shared theme and export controls.</p></section><section><h3><Play size={19}/>Present with purpose</h3><p>Present hides the editing panels. Drag the background to pan, scroll to zoom, and use Fit to reset the view. Replay gives your diagram a fresh entrance.</p><p>Reduced-motion preferences are respected. Turn motion off for a completely still diagram.</p></section><section><h3><Save size={19}/>Keep a portable copy</h3><p>Projects autosave in this browser. Download a Meridian project to preserve the code, palette, effects, and stage settings together.</p><p>Export PNG for slides, SVG for vector artwork, or a self-contained HTML presentation for motion. No account or upload is needed.</p></section></div><div className="shortcut-grid"><span><kbd>Ctrl / ⌘ S</kbd>Download project</span><span><kbd>Ctrl / ⌘ Enter</kbd>Render now</span><span><kbd>F</kbd>Fit diagram</span><span><kbd>P</kbd>Toggle presentation</span><span><kbd>Esc</kbd>Exit presentation</span><span><kbd>Ctrl / ⌘ Z</kbd>Undo in the editor</span></div><p className="guide-footnote">Meridian by ArbiterForge · Built with React and Mermaid 12.3.0 · <a href="https://mermaid.js.org/intro/" target="_blank" rel="noreferrer">Mermaid syntax reference</a></p></Modal>}
     {toast&&<div className="toast" role="status"><Check size={17}/><span>{toast}</span><button className="icon-button" aria-label="Dismiss notification" onClick={()=>setToast('')}><X size={14}/></button></div>}
   </div>;
 }
