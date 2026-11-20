@@ -922,3 +922,9 @@
   color: #aac4b9;
   margin-block: 6px;
 }
+.story-suggestion-preview svg[data-meridian-export] {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 55svh;
+}
