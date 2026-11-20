@@ -115,7 +115,7 @@ test('SVG and PNG downloads have valid dimensions; exported HTML works offline w
     await page.getByRole('button', { name: 'Export', exact: true }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByRole('button', { name: new RegExp(`^${format}\\b`) }).click();
-    if (format === 'PNG') await dialog.getByLabel('Resolution', { exact: true }).selectOption('2');
+    if (format === 'PNG') await dialog.getByRole('combobox', { name: /^Resolution/ }).selectOption('2');
     const downloadPromise = page.waitForEvent('download');
     await dialog.getByRole('button', { name: `Download ${format}`, exact: true }).click();
     const download = await downloadPromise;
@@ -179,7 +179,7 @@ test('downloaded projects round-trip through the real file import control', asyn
   expect(project.source).toBe(SIMPLE_SOURCE);
   await dialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await page.locator('input[type=file]').setInputFiles({ name: 'round-trip.meridian.json', mimeType: 'application/json', buffer: data });
-  await expect(page.getByRole('status')).toContainText('Imported');
+  await expect(page.locator('.toast[role="status"]')).toContainText('Imported');
   await ready(page);
   await expect(page.locator('.cm-content')).toContainText('alpha[Client]');
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('meridian:v1') || '{}').activeId)).not.toBe(project.id);
