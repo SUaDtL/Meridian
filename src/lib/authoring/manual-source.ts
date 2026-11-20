@@ -3,6 +3,7 @@ import { authoringLimits } from './flowchart-source';
 import { reconcileIdentities } from './identities';
 import { observeFlowchartIdentities } from './identity-observation';
 import type { MermaidProjectV3 } from './mermaid-project';
+import { explainMermaidSourceError, SourceDiagnosticError } from './source-diagnostics';
 import { validateMermaidProject } from './validate-mermaid-project';
 
 export function sourceLineEndings(source: string) {
@@ -16,9 +17,12 @@ export async function prepareManualSource(base: MermaidProjectV3, source: string
   signal?.throwIfAborted();
   if (!source.trim() || source.length > authoringLimits.sourceCodeUnits) throw new Error('Enter Mermaid source of up to 100,000 characters.');
   if (base.source === source) throw new Error('Change the Mermaid source before previewing it.');
-  const candidate = await renderDiagram(source, base.settings, {}, undefined, { signal });
+  const candidate = await renderDiagram(source, base.settings, {}, undefined, { signal }).catch(reason => {
+    throw explainMermaidSourceError(reason, source);
+  });
   const model = flowchartModelFor(candidate);
-  if (!model || model.vertices.size === 0) throw new Error('Preview a valid Mermaid flowchart with at least one node.');
+  if (!model || model.vertices.size === 0) throw new SourceDiagnosticError('unsupported',
+    'Mermaid rendered this diagram. Reviewed source edits require a flowchart with at least one node.');
   const observed = await observeFlowchartIdentities(model);
   signal?.throwIfAborted();
   const accepted = base.identity.elements;
@@ -26,7 +30,7 @@ export async function prepareManualSource(base: MermaidProjectV3, source: string
   const elements = reconcileIdentities(accepted, observed, prior, base.identity.orphans.length);
   const byId = new Map(elements.map(item => [item.id, item]));
   if (accepted.some(item => byId.get(item.id) !== item)) {
-    throw new Error('This source change would lose an existing diagram binding. Use a reviewed deletion for supported elements or create a separate diagram from the revised source.');
+    throw new SourceDiagnosticError('unsupported', 'This source change would lose an existing diagram binding. Use a reviewed deletion for supported elements or create a separate diagram from the revised source.');
   }
   const document = validateMermaidProject({
     ...base, source, identity: { ...base.identity, elements },

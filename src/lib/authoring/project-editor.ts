@@ -19,6 +19,7 @@ import { renderMermaidProject, verifiedTopology } from './project-render';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
 import type { ViewingProfile } from './readability';
 import type { ElementRemovalImpact } from './retire-elements';
+import { SourceDiagnosticError } from './source-diagnostics';
 import { validateMermaidProject } from './validate-mermaid-project';
 
 const historyByteLimit = 8 * 1024 * 1024;
@@ -106,9 +107,10 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   async function prepareSource(source: string, expected: MermaidProjectV3, signal?: AbortSignal) {
     const base = current.document;
-    if (closed || base !== expected) throw new Error('The project changed. Reopen the source editor to review the current revision.');
+    const stale = () => new SourceDiagnosticError('stale', 'The project changed. Reopen the source editor to review the current revision.');
+    if (closed || base !== expected) throw stale();
     const { document, added, preserved } = await prepareManualSource(base, source, signal);
-    if (closed || current.document !== base) throw new Error('The project changed. Reopen the source editor to review the current revision.');
+    if (closed || current.document !== base) throw stale();
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     structure.set(proposal, { base, next: freezeSnapshot(document) });
     return { proposal, added, preserved };
