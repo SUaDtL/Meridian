@@ -1,0 +1,49 @@
+name: Meridian Preview - Verify and Deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: meridian-standalone-pages
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Assemble and validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble reviewed standalone app
+        run: python3 scripts/assemble.py
+      - name: Verify integrity, security and site isolation
+        run: python3 tests/validate.py
+
+  deploy:
+    name: Publish independent GitHub Pages preview
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble published artifact
+        run: python3 scripts/assemble.py
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload to GitHub Pages
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+      - name: Deploy independent preview
+        id: deployment
+        uses: actions/deploy-pages@v4
