@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { GroupStoryChoice, GroupStoryOptions } from "../lib/authoring/group-story";
+import { resolveStoryPath, type PathStoryOptions, type PathStep } from "../lib/authoring/path-story";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { RenderTargetTable } from "../lib/authoring/project-render";
 import type { ReadyProposal } from "../lib/authoring/proposals";
@@ -11,8 +12,14 @@ import Modal from "./Modal";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type StoryPreview = NonNullable<ReturnType<Editor["readStoryPreview"]>>;
-export type GroupStoryDraft = GroupStoryOptions & { destination: "append" | "replace" };
-export const initialGroupStoryDraft: GroupStoryDraft = { groups: [], overview: true, ungrouped: false, animate: false, duration: 5, destination: "append" };
+type PathDraft = Omit<PathStoryOptions, "animate" | "duration">;
+export type GroupStoryDraft = GroupStoryOptions & {
+  destination: "append" | "replace"; strategy: "groups" | "path"; path: PathDraft;
+};
+export const initialGroupStoryDraft: GroupStoryDraft = {
+  groups: [], overview: true, ungrouped: false, animate: false, duration: 5, destination: "append",
+  strategy: "groups", path: { startId: "", steps: [], includeContext: false, title: "" },
+};
 const count = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`;
 
 export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onApply, onClose }: {
@@ -29,10 +36,19 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
   const [error, setError] = useState("");
   const pending = useRef<AbortController | undefined>(undefined);
   const scenes = useMemo(() => prepared?.result.suggestions.map(item => item.scene) ?? [], [prepared]);
-  const existing = editor.snapshot().storyboard.scenes;
+  const snapshot = editor.snapshot();
+  const existing = snapshot.storyboard.scenes;
+  const sourceIds = useMemo(() => new Map(snapshot.identity.elements.flatMap(record => record.status === "resolved"
+    && record.binding.type !== "legacy-edge" ? [[record.id, record.binding.sourceId]] : [])), [snapshot.identity]);
   const groups = table.targets.filter(target => target.elementKind === "group");
   const canIncludeUngrouped = table.targets.some(target => target.elementKind === "node" && target.parentId === null);
   const total = draft.groups.length + Number(draft.overview) + Number(draft.ungrouped);
+  const path = useMemo(() => {
+    if (!draft.path.startId) return undefined;
+    try { return resolveStoryPath(table, draft.path.startId, draft.path.steps); }
+    catch { return undefined; }
+  }, [table, draft.path.startId, draft.path.steps]);
+  const sceneCount = draft.strategy === "path" ? Number(!!path) : total;
   useEffect(() => () => pending.current?.abort(), []);
 
   function pick(id: string, included: boolean) {
@@ -54,15 +70,16 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
   }
 
   async function prepare() {
-    if (!total || pending.current) return;
+    if (!sceneCount || pending.current) return;
     const controller = new AbortController();
     pending.current = controller;
     setBusy(true);
     setError("");
     setPreviewReady(false);
     try {
-      const { destination, ...options } = draft;
-      const proposal = await editor.prepareGroupStory(options, destination, controller.signal);
+      const { destination, strategy, path: selection, ...options } = draft;
+      const proposal = await editor.prepareStory(strategy === "groups" ? { strategy, options }
+        : { strategy, options: { ...selection, animate: options.animate, duration: options.duration } }, destination, controller.signal);
       const result = editor.readStoryPreview(proposal);
       if (!result?.rendered.targetTable) throw new Error("The project changed. Prepare the story preview again.");
       const { svg } = buildExportFrame(result.rendered.result, result.next, { animated: true });
@@ -89,6 +106,13 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
   return (
     <Modal title="Suggest scenes" wide onClose={onClose}>
       {!prepared && <div className="heading-form">
+        <label>Scene strategy<select value={draft.strategy} disabled={busy} onChange={event => {
+          setError("");
+          onDraft(current => ({ ...current, strategy: event.target.value === "path" ? "path" : "groups" }));
+        }}>
+          <option value="groups">Overview by groups</option><option value="path">Follow a path</option>
+        </select></label>
+        {draft.strategy === "groups" ? <>
         <fieldset className="guided-process-fieldset" disabled={busy}>
           <legend>Overview by groups</legend>
           <label className="check-label"><input type="checkbox" checked={draft.overview}
@@ -113,6 +137,10 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
             </div>
           </fieldset></li>;
         })}</ol>}
+        </> : <PathChoices table={table} sourceIds={sourceIds} draft={draft.path} resolved={path} disabled={busy} onChange={change => {
+          setError("");
+          onDraft(current => ({ ...current, path: { ...current.path, ...change } }));
+        }} />}
         <label>Scene duration in seconds<input type="number" min={0.5} max={120} step={0.5} value={Number.isFinite(draft.duration) ? draft.duration : ""} disabled={busy}
           onChange={event => onDraft(current => ({ ...current, duration: event.target.valueAsNumber }))} /></label>
         <label className="check-label"><input type="checkbox" checked={draft.animate} disabled={busy}
@@ -122,7 +150,7 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
           <option value="append">Append scenes</option><option value="replace">Replace scenes</option>
         </select></label>
         {draft.destination === "replace" && existing.length > 0 && <p>Replace {existing.length} current scenes: {existing.map(scene => scene.title || "Untitled scene").join(", ")}</p>}
-        <div className="dialog-actions"><button className="button primary" disabled={busy || total === 0} onClick={() => void prepare()}>Preview {total} {total === 1 ? "scene" : "scenes"}</button></div>
+        <div className="dialog-actions"><button className="button primary" disabled={busy || sceneCount === 0} onClick={() => void prepare()}>Preview {sceneCount} {sceneCount === 1 ? "scene" : "scenes"}</button></div>
       </div>}
       {busy && <p role="status">Checking the current diagram and preparing scenes…</p>}
       {error && <p role="alert">{error}</p>}
@@ -140,6 +168,70 @@ export default function V3GroupStoryDialog({ editor, table, draft, onDraft, onAp
       </>}
     </Modal>
   );
+}
+
+function PathChoices({ table, sourceIds, draft, resolved, disabled, onChange }: {
+  table: RenderTargetTable;
+  sourceIds: ReadonlyMap<string, string>;
+  draft: PathDraft;
+  resolved: ReturnType<typeof resolveStoryPath> | undefined;
+  disabled: boolean;
+  onChange: (change: Partial<PathDraft>) => void;
+}) {
+  const [selection, setSelection] = useState("");
+  const next = resolved?.following[Number(selection)];
+  const ids = table.targets.filter(target => target.elementKind === "node");
+  const label = (id?: string | null) => (id && resolved?.byId.get(id)?.label) || "Unnamed node";
+  const relationshipDirection = (edge: ReturnType<typeof resolveStoryPath>["following"][number]["edge"], traversal: PathStep["traversal"]) =>
+    edge.direction === "both" ? "Bidirectional" : edge.direction === "none" ? "Undirected"
+      : traversal === "forward" ? "Along the arrow" : "Against the arrow";
+
+  return <fieldset className="guided-process-fieldset" disabled={disabled}>
+    <legend>Path choices</legend>
+    <label>Start node<select value={draft.startId} onChange={event => {
+      setSelection("");
+      onChange({ startId: event.target.value, steps: [] });
+    }}>
+      <option value="">Choose a node</option>
+      {ids.map(node => <option key={node.id} value={node.id}>{node.label || "Unnamed node"}{sourceIds.has(node.id) && ` (${sourceIds.get(node.id)})`}</option>)}
+    </select></label>
+    {draft.startId && !resolved && <p role="alert">The diagram no longer matches this path. Choose the start and connections again.</p>}
+    {resolved && <>
+      <p>Starts at {label(resolved.start.id)}.</p>
+      {!!draft.steps.length && <ol aria-label="Chosen connections">
+        {draft.steps.map(({ edgeId, traversal }, index) => {
+          const edge = resolved.byId.get(edgeId)!;
+          const from = traversal === "forward" ? edge.sourceId : edge.targetId;
+          const to = traversal === "forward" ? edge.targetId : edge.sourceId;
+          return <li key={index}>{label(from)} → {label(to)} · {relationshipDirection(edge, traversal)}{sourceIds.has(edgeId) && ` · ${sourceIds.get(edgeId)}`}</li>;
+        })}
+      </ol>}
+      {resolved.loop && <p role="status">Loop returns to {label(resolved.loop.id)}. The path ends here.</p>}
+      {!resolved.loop && !resolved.following.length && <p>The path has no further available connections.</p>}
+      {resolved.following.length > 0 && <>
+        <label>Next connection from {label(resolved.endpoint.id)}
+          <select value={selection} onChange={event => setSelection(event.target.value)}>
+            <option value="">Choose a connection</option>
+            {resolved.following.map(({ edge, traversal, next }, index) => <option key={`${edge.id}:${traversal}`} value={index}>
+              {edge.label || `Connection to ${next.label || "unnamed node"}`} · {relationshipDirection(edge, traversal)} · {sourceIds.get(edge.id) ?? `Choice ${index + 1}`}
+            </option>)}
+          </select>
+        </label>
+        <button type="button" className="button secondary" disabled={!selection || !next} onClick={() => {
+          if (!next) return;
+          setSelection("");
+          onChange({ steps: [...draft.steps, { edgeId: next.edge.id, traversal: next.traversal }] });
+        }}>Add connection to path</button>
+      </>}
+      {!!draft.steps.length && <button type="button" className="button quiet" onClick={() => {
+        setSelection("");
+        onChange({ steps: draft.steps.slice(0, -1) });
+      }}>Remove last connection</button>}
+    </>}
+    <label>Scene title<input maxLength={120} value={draft.title} onChange={event => onChange({ title: event.target.value })} /></label>
+    <label className="check-label"><input type="checkbox" checked={draft.includeContext}
+      onChange={event => onChange({ includeContext: event.target.checked })} /> Include one-hop context</label>
+  </fieldset>;
 }
 
 function StoryPreviewPlayer({ svg, story, table, accent, onReady }: {

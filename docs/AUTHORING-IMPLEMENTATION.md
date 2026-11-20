@@ -195,6 +195,12 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 | Visual builder and stories | Atomic Add Next, explicit connection/node deletion with annotation recovery, and group-based storyboard suggestions. [#32](https://github.com/SUaDtL/Meridian/pull/32) · [#33](https://github.com/SUaDtL/Meridian/pull/33) · [#34](https://github.com/SUaDtL/Meridian/pull/34) · [#36](https://github.com/SUaDtL/Meridian/pull/36) | Group editing, path stories, and the remaining interaction gates |
 | Components | Local library with conflict-safe packs and reviewed projects from flat forward definitions. [#35](https://github.com/SUaDtL/Meridian/pull/35) | Grouped generation, insertion, port binding, and extraction |
 
+## Milestone 3 path-based story suggestions
+
+- Follow a path starts from a selected node and uses individually chosen connections with explicit traversal direction. It stops after the first loop, retains only selected path content and optional one-hop context, and adds group containers without expanding unrelated descendants.
+- The shared story proposal and player preview exact coverage before append or replacement. Fixture coverage verifies loops and motion direction. Chromium verifies selection, settled visibility and one saved scene in the existing v3 workspace. This advances AS-02 and AS-06.
+- Branch scenes, multi-path ordering and persistent story drafts remain open.
+
 ## Milestone 4 typed chart projects
 
 - Chart values in guided creation opens local delimited or JSON data, confirms column types, and previews an independent chart project. The parser keeps exact JSON number tokens until conversion. Confirmed chart drafts and saved projects use IndexedDB. Saved projects reopen from Chart projects and export portable JSON, SVG and offline HTML with a displayed-values table.

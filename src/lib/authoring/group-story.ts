@@ -1,8 +1,8 @@
 import { createScene } from '../storyboard';
 import type { StoryScene } from '../../types/storyboard';
 import type { RenderTargetTable } from './project-render';
+import { addStoryAncestors, countStoryCoverage, storyTargetLimit, type SceneCoverage, type StoryTarget } from './story-targets';
 
-type Target = RenderTargetTable['targets'][number];
 export type GroupStoryChoice = { id: string; depth: number; boundary: boolean; title?: string };
 export type GroupStoryOptions = {
   groups: GroupStoryChoice[];
@@ -11,21 +11,12 @@ export type GroupStoryOptions = {
   animate: boolean;
   duration: number;
 };
-export type SceneCoverage = Record<Target['elementKind'], { shown: number; omitted: number }>;
-
-const targetLimit = 1_500;
 const sceneLimit = 20;
 const maxDepth = 4;
 
-function countCoverage(table: RenderTargetTable, visible: ReadonlySet<string> | null): SceneCoverage {
-  const groups: SceneCoverage = { node: { shown: 0, omitted: 0 }, edge: { shown: 0, omitted: 0 }, group: { shown: 0, omitted: 0 } };
-  for (const target of table.targets) groups[target.elementKind][!visible || visible.has(target.id) ? 'shown' : 'omitted']++;
-  return groups;
-}
-
 /** Suggest ordinary scene records using only the verified render identities and membership. */
 export function suggestGroupScenes(table: RenderTargetTable, options: GroupStoryOptions) {
-  if (table.targets.length > targetLimit) throw new Error('Choose a diagram with at most 1,500 verified story targets.');
+  if (table.targets.length > storyTargetLimit) throw new Error('Choose a diagram with at most 1,500 verified story targets.');
   const count = options.groups.length + Number(options.overview) + Number(options.ungrouped);
   if (!count || count > sceneLimit || new Set(options.groups.map(group => group.id)).size !== options.groups.length) {
     throw new Error('Choose up to 20 distinct scenes.');
@@ -37,16 +28,7 @@ export function suggestGroupScenes(table: RenderTargetTable, options: GroupStory
   const edges = table.targets.filter(target => target.elementKind === 'edge');
   const result: { scene: StoryScene; coverage: SceneCoverage }[] = [];
 
-  function addContainers(visible: Set<string>) {
-    for (const id of [...visible]) {
-      for (let parent = byId.get(id)?.parentId; parent && !visible.has(parent); parent = byId.get(parent)?.parentId) {
-        if (byId.get(parent)?.elementKind !== 'group') throw new Error('The current group ancestry could not be verified.');
-        visible.add(parent);
-      }
-    }
-  }
-
-  function trueEndpoints(edge: Target, content: ReadonlySet<string>) {
+  function trueEndpoints(edge: StoryTarget, content: ReadonlySet<string>) {
     return edge.sourceId !== null && edge.targetId !== null && content.has(edge.sourceId) && content.has(edge.targetId);
   }
 
@@ -60,7 +42,7 @@ export function suggestGroupScenes(table: RenderTargetTable, options: GroupStory
           if (opposite && byId.get(opposite)?.elementKind === 'node') { visible.add(opposite); visible.add(edge.id); }
         }
       }
-      addContainers(visible);
+      addStoryAncestors(visible, byId);
     }
     const ordered = visible ? table.targets.filter(target => visible.has(target.id)) : table.targets;
     const flow = options.animate ? edges.filter(edge => edge.direction !== 'none' && edge.direction !== null
@@ -71,10 +53,10 @@ export function suggestGroupScenes(table: RenderTargetTable, options: GroupStory
       visible: visible ? ordered.map(target => target.id) : null, flow,
       camera: { mode: keys.length ? 'elements' : 'fit', keys, padding: 56 },
     };
-    result.push({ scene, coverage: countCoverage(table, visible) });
+    result.push({ scene, coverage: countStoryCoverage(table, visible) });
   }
 
-  function addedMembers(group: Target, depth: number, selected: Set<string>) {
+  function addedMembers(group: StoryTarget, depth: number, selected: Set<string>) {
     for (const id of group.members) {
       const child = byId.get(id);
       if (!child || child.parentId !== group.id) throw new Error('The current group membership could not be verified.');
