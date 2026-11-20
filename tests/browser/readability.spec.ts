@@ -77,3 +77,53 @@ test('compares verified solid text and leaves the gradient node unmeasured', asy
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   expect((await downloadProject(page, live)).design).toEqual(before.design);
 });
+
+test('reviews separate regions and keeps an ignored name finding across unrelated revision changes', async ({ page }, info) => {
+  const source = 'flowchart LR\n A[Service]\n B[Service]\n C[Warehouse]\n A route@--> B\n';
+  let live = await openProject(page, { ...createDocument(), title: 'Name review', source });
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  const report = check.getByRole('region', { name: 'Readability results' });
+  const duplicate = report.locator('li').filter({ has: page.getByText(/2 distinct elements share the name Service/) });
+  async function reviewNames() {
+    await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+    await check.getByRole('button', { name: 'Check diagram' }).click();
+    await expect(report).toBeVisible();
+  }
+  await reviewNames();
+  await expect(duplicate).toBeVisible();
+  await report.getByText('Review regions', { exact: true }).click();
+  await expect(report.getByText('Service, Service', { exact: true })).toBeVisible();
+  await expect(report.getByText('Warehouse', { exact: true })).toBeVisible();
+  await duplicate.getByRole('button', { name: 'Ignore for this session' }).click();
+  await expect(duplicate).toHaveCount(0);
+  await expect(report.getByRole('status')).toContainText('1 ignored this session');
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('button', { name: 'Edit heading', exact: true }).click();
+  const heading = page.getByRole('dialog', { name: 'Edit heading' });
+  await heading.getByRole('textbox', { name: 'Title', exact: true }).fill('Updated name review');
+  await heading.getByRole('button', { name: 'Apply heading' }).click();
+  live = page.getByRole('dialog', { name: 'Updated name review' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Updated name review' })).toBeVisible();
+  await reviewNames();
+  await expect(duplicate).toHaveCount(0);
+  await check.getByRole('checkbox', { name: 'Show ignored findings' }).check();
+  await duplicate.getByRole('button', { name: 'Restore finding' }).click();
+  await duplicate.getByText('Review elements with this name', { exact: true }).click();
+  await expect(duplicate.getByText('Service · node B')).toBeVisible();
+  await page.screenshot({ path: info.outputPath('coach-names-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('coach-names-mobile.png') });
+  await duplicate.getByRole('button', { name: 'Edit label 2' }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await expect(edit.getByRole('combobox', { name: 'Node to rename' }).locator('option:checked')).toHaveText('Service (B)');
+  await edit.getByRole('textbox', { name: 'Node label' }).fill('Payments');
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  await edit.getByRole('button', { name: 'Apply change' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const result = await downloadProject(page, live);
+  expect(result.source).toBe(source.replace('B[Service]', 'B["Payments"]'));
+  expect(JSON.stringify(result)).not.toContain('ignored');
+  await expect(live.getByRole('img', { name: 'Diagram preview for Updated name review' })).toBeVisible();
+  await reviewNames();
+  await expect(duplicate).toHaveCount(0);
+});

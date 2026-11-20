@@ -20,5 +20,12 @@ test('compares NFC and whitespace without changing display names or inventing co
   const result = analyzeReadability(input, profile, frame);
   expect(result.findings).toEqual([{ rule: 'QC-05', targets: ['a', 'b'] }, { rule: 'QC-06', regions: [['a', 'b'], ['c']] }]);
   expect(input[1].label).toBe('Cafe\u0301  API');
-  expect(analyzeReadability([...input, { ...node('g', 'Team'), kind: 'group' }], profile, frame).coverage[2].unknown).toBe(1);
+  const group: ReadabilityTarget = { ...node('g', 'Team'), kind: 'group' };
+  const withGroup = analyzeReadability([...input, group], profile, frame);
+  expect(withGroup.findings).toEqual(result.findings);
+  const withExplicitGroupEdge = analyzeReadability([...input, group,
+    { id: 'bound', label: '', typography: false, kind: 'edge', from: 'g', to: 'a' }], profile, frame);
+  expect(withExplicitGroupEdge.findings).toContainEqual({ rule: 'QC-06', regions: [['a', 'b', 'g'], ['c']] });
+  expect(analyzeReadability([...input, { id: 'broken', label: '', typography: false, kind: 'edge', from: 'g', to: 'a' }],
+    profile, frame).coverage[2].unknown).toBe(1);
 });
