@@ -58,7 +58,8 @@ test('compares a design recipe, preserves source and overrides, and undoes the a
 test('reviews a filtered selection recipe and keeps protected overrides and global settings', async ({ page }, info) => {
   const source = 'flowchart LR\n A[Client]\n B[Service]\n C[Warehouse]\n A route@--> B\n';
   const project = { ...createDocument(), title: 'Scoped recipe', source };
-  project.design.elements['node:A'] = { fill: '#abcdef' };
+  project.design.elements['node:A'] = { fill: '#abcdef', strokeWidth: 3 };
+  project.design.elements['node:C'] = { fill: '#123456' };
   await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
     { key: STORAGE_KEY, project });
   await page.goto('/');
@@ -80,6 +81,7 @@ test('reviews a filtered selection recipe and keeps protected overrides and glob
   const design = page.getByRole('dialog', { name: 'Explore designs' });
   await expect(design.getByRole('combobox', { name: 'Design scope' })).toHaveValue('selection');
   await expect(design.getByText('2 selected · 1 hidden in the outline')).toBeVisible();
+  await expect(design.getByRole('checkbox', { name: 'Preserve my element overrides' })).toBeChecked();
   await design.getByRole('group', { name: 'Design recipes' }).getByRole('button', { name: /Technical/ }).click();
   await design.getByRole('button', { name: 'Preview Technical' }).click();
   await expect(design.getByRole('img', { name: 'Proposed Technical design' })).toBeVisible();
@@ -104,6 +106,27 @@ test('reviews a filtered selection recipe and keeps protected overrides and glob
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const undone = await downloadProject(page, live);
   expect(undone).toEqual({ ...before, revision: after.revision + 1, updatedAt: undone.updatedAt });
+
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  await outline.getByRole('button', { name: 'Explore designs for selection' }).click();
+  await design.getByRole('group', { name: 'Design recipes' }).getByRole('button', { name: /Technical/ }).click();
+  await design.getByRole('checkbox', { name: 'Preserve my element overrides' }).uncheck();
+  await expect(design.getByRole('button', { name: 'Apply Technical' })).toBeDisabled();
+  await design.getByRole('button', { name: 'Preview Technical' }).click();
+  await expect(review).toContainText('Clears 1 user paint override from 1 element.');
+  await expect(design.getByRole('list', { name: 'Design changes' })).toContainText('Client (A) · Fill · Clear user override · #abcdef → #13212d');
+  await design.getByRole('button', { name: 'Apply Technical' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const cleared = await downloadProject(page, live);
+  expect(cleared).toEqual({
+    ...after, revision: undone.revision + 1, updatedAt: cleared.updatedAt,
+    design: { ...after.design, elements: { ...before.design.elements, [ids.get('A') as string]: { strokeWidth: 3 } },
+      recipeElements: { ...after.design.recipeElements, [ids.get('A') as string]: after.design.recipeElements[ids.get('B') as string] } },
+  });
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await downloadProject(page, live);
+  expect(restored).toEqual({ ...before, revision: cleared.revision + 1, updatedAt: restored.updatedAt });
 });
 
 test('applies the reviewed paint recipe only to nodes of one explicit role', async ({ page }) => {
