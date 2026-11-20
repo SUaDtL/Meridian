@@ -3,6 +3,7 @@ import { readWorkspaceProject, writeWorkspaceProject } from '../persistence/work
 import { serializeProject } from '../storage';
 import { canonicalJson } from './base-token';
 import { buildDesignRecipeCandidate, readDesignRecipe, type DesignRecipeId } from './design-recipes';
+import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
 import type { MermaidProjectV3 } from './mermaid-project';
 import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-flowchart';
@@ -51,6 +52,12 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     dependency: string;
     candidate: ReturnType<typeof buildLayoutCandidate>;
     current: Awaited<ReturnType<typeof renderMermaidProject>>;
+    rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
+  }>();
+  const stories = new WeakMap<ReadyProposal, {
+    base: MermaidProjectV3;
+    next: MermaidProjectV3;
+    suggestions: ReturnType<typeof suggestGroupScenes>;
     rendered: Awaited<ReturnType<typeof renderMermaidProject>>;
   }>();
   let closed = false;
@@ -161,6 +168,40 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return commit(change.candidate.document);
   }
 
+  async function prepareGroupStory(options: GroupStoryOptions, destination: 'append' | 'replace', signal?: AbortSignal) {
+    if (closed) throw new Error('The project is closed.');
+    if (destination !== 'append' && destination !== 'replace') throw new Error('Choose whether to append or replace scenes.');
+    signal?.throwIfAborted();
+    const base = current.document;
+    const choices = structuredClone(options);
+    const rendered = await renderMermaidProject(base, signal);
+    signal?.throwIfAborted();
+    if (!rendered.targetTable) throw new Error('Render a verified flowchart before suggesting scenes.');
+    if (closed || current.document !== base) throw new Error('The project changed. Prepare the story preview again.');
+    const suggestions = suggestGroupScenes(rendered.targetTable, choices);
+    const existing = destination === 'append' ? base.storyboard.scenes : [];
+    if (existing.length + suggestions.length > 50) throw new Error('Choose fewer scenes or review Replace. A story can contain at most 50 scenes.');
+    const next = freezeSnapshot(validateMermaidProject({
+      ...base, storyboard: { ...base.storyboard, scenes: [...existing, ...suggestions.map(item => item.scene)] },
+      revision: base.revision + 1, updatedAt: new Date().toISOString(),
+    }));
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    stories.set(proposal, { base, next, suggestions: freezeSnapshot(suggestions), rendered });
+    return proposal;
+  }
+
+  function readStoryPreview(proposal: ReadyProposal) {
+    const change = stories.get(proposal);
+    return !closed && change?.base === current.document
+      ? { next: change.next, suggestions: change.suggestions, rendered: change.rendered } : undefined;
+  }
+
+  function applyStory(proposal: ReadyProposal) {
+    const change = stories.get(proposal);
+    if (closed || !change) return 'invalid';
+    return change.base === current.document ? commit(change.next) : 'stale';
+  }
+
   function commit(document: MermaidProjectV3) {
     if (document === current.document) return 'unchanged';
     const next = historyEntry(document);
@@ -204,6 +245,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareLayout,
     readLayoutPreview,
     applyLayout,
+    prepareGroupStory,
+    readStoryPreview,
+    applyStory,
     undo: () => restore(past, future),
     redo: () => restore(future, past),
     canUndo: () => past.length > 0,
