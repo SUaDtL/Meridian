@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Modal from "./Modal";
 import { buildExportFrame } from "../lib/export";
 import { renderMermaidProject } from "../lib/authoring/project-render";
-import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
+import type { DecisionBranch, NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
 import type { SemanticRole } from "../lib/authoring/mermaid-project";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { ReadyProposal } from "../lib/authoring/proposals";
@@ -15,6 +15,10 @@ type NodeChoice = { id: string; label: string };
 type EdgeChoice = NodeChoice & { sourceId: string | null; targetId: string | null; explicit: boolean; text: string; direction: ConnectionDirection | null };
 type Preview = { proposal: ReadyProposal; url: string; impact?: ElementRemovalImpact };
 const nextRoles: readonly SemanticRole[] = ["process", "decision", "neutral", "service", "database", "queue", "external", "person"];
+const emptyBranches = (): DecisionBranch[] => [
+  { label: "", destination: { kind: "existing", id: "" } },
+  { label: "", destination: { kind: "existing", id: "" } },
+];
 
 export default function V3StructureEditor({ editor, nodes, edges, group, initialOperation = "addNode", initialTarget = "", onApply, onClose }: {
   editor: Editor;
@@ -38,6 +42,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
   const [from, setFrom] = useState("");
   const [to, setTo] = useState(initialOperation === "removeGroup" ? group?.id ?? "" : initialTarget);
   const [members, setMembers] = useState<ReadonlySet<string>>(new Set());
+  const [branches, setBranches] = useState(emptyBranches);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Preview>();
@@ -66,6 +71,11 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
     setError("");
   }
 
+  function editBranch(index: number, branch: DecisionBranch) {
+    setBranches(current => current.map((item, i) => i === index ? branch : item));
+    resetPreview();
+  }
+
   async function prepare() {
     if (work.current) return;
     resetPreview();
@@ -75,6 +85,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
     try {
       const edit: NativeFlowchartEdit = operation === "addNode" ? { op: operation, shape, label }
         : operation === "addNext" ? { op: operation, anchorId: from, shape, label, edgeLabel, incoming, role: role || undefined }
+        : operation === "addDecision" ? { op: operation, anchorId: from || undefined, label, branches }
         : (operation === "setNodeLabel" || operation === "setEdgeLabel") ? { op: operation, targetId: to, label }
         : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label, direction: edgeDirection }
         : operation === "addGroup" ? { op: operation, memberIds: [...members], label }
@@ -109,6 +120,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
 
   const canPreview = operation === "addNode" ? !!label
     : operation === "addNext" ? !!label && !!from
+    : operation === "addDecision" ? !!label.trim() && branches.every(branch => branch.label.trim() && (
+      branch.destination.kind === "existing" ? !!branch.destination.id : !!branch.destination.label.trim()))
     : operation === "setNodeLabel" ? !!label && !!to
     : operation === "addGroup" ? !!label && members.size > 0
     : operation === "removeGroup" ? !!to
@@ -133,11 +146,13 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
             setFrom("");
             setTo("");
             setMembers(new Set());
+            setBranches(emptyBranches());
             resetPreview();
           }}>
             {group ? <option value="removeGroup">Ungroup</option> : <>
               <option value="addNode">Add node</option>
               <option value="addNext" disabled={!nodes.length}>Add next</option>
+              <option value="addDecision">Add decision</option>
               <option value="setNodeLabel" disabled={!nodes.length}>Rename node</option>
               <option value="setEdgeLabel" disabled={!edges.some(edge => edge.explicit)}>Edit connection label</option>
               <option value="addEdge" disabled={!nodes.length}>Connect nodes</option>
@@ -180,9 +195,31 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
           </select>
         </label>}
         {!!unidentified.length && <p role="status">Each incident connection needs an explicit source ID before this node can be deleted.</p>}
-        {operation !== "removeEdge" && !removingNode && !ungrouping && <label>{(operation === "addEdge" || operation === "setEdgeLabel") ? "Connection label (optional)" : grouping ? "Group label" : "Node label"}
+        {operation !== "removeEdge" && !removingNode && !ungrouping && <label>{(operation === "addEdge" || operation === "setEdgeLabel")
+          ? "Connection label (optional)" : grouping ? "Group label" : operation === "addDecision" ? "Decision label" : "Node label"}
           <input value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
         </label>}
+        {operation === "addDecision" && <>
+          <label>Connect from this node (optional)<select value={from} disabled={busy}
+            onChange={event => { setFrom(event.target.value); resetPreview(); }}>
+            <option value="">No incoming connection</option>{nodeOptions}
+          </select></label>
+          {branches.map((branch, index) => <fieldset key={index} className="guided-process-fieldset" disabled={busy}>
+            <legend>Branch {index + 1}</legend>
+            <label>Connection label<input maxLength={400} value={branch.label}
+              onChange={event => editBranch(index, { ...branch, label: event.target.value })} /></label>
+            <label>Destination type<select value={branch.destination.kind} onChange={event => editBranch(index, {
+              ...branch, destination: event.target.value === "new" ? { kind: "new", label: "" } : { kind: "existing", id: "" },
+            })}><option value="existing">Existing node</option><option value="new">New step</option></select></label>
+            {branch.destination.kind === "existing"
+              ? <label>Destination node<select value={branch.destination.id}
+                onChange={event => editBranch(index, { ...branch, destination: { kind: "existing", id: event.target.value } })}>
+                <option value="">Choose a node</option>{nodeOptions}
+              </select></label>
+              : <label>New step label<input maxLength={400} value={branch.destination.label}
+                onChange={event => editBranch(index, { ...branch, destination: { kind: "new", label: event.target.value } })} /></label>}
+          </fieldset>)}
+        </>}
         {operation === "addEdge" && <>
           <label>Connection direction<select value={edgeDirection} disabled={busy} onChange={event => {
             setEdgeDirection(event.target.value as ConnectionDirection);
@@ -250,6 +287,11 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
           {boundary.length > 0 ? <ul aria-label="Connections crossing the group">
             {boundary.map(edge => <li key={edge.id}>{edge.label}</li>)}
           </ul> : <p>No connections cross this group.</p>}
+        </section>}
+        {preview && operation === "addDecision" && <section aria-label="Decision connections">
+          {from && <p>Incoming connection from {nodes.find(node => node.id === from)?.label}.</p>}
+          <ul>{branches.map(({ label: edge, destination }, index) => <li key={index}>{edge} → {destination.kind === "new"
+            ? `${destination.label} (new step)` : nodes.find(node => node.id === destination.id)?.label}</li>)}</ul>
         </section>}
         <div className="dialog-actions">
           <button className="button quiet" type="button" onClick={onClose}>Cancel</button>

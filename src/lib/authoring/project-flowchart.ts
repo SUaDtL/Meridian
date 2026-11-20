@@ -4,13 +4,18 @@ import type { ConnectionDirection, Shape } from './flowchart-source';
 import { reconcileIdentities } from './identities';
 import { observeFlowchartIdentities } from './identity-observation';
 import type { MermaidProjectV3, SemanticRole } from './mermaid-project';
+import { prepareProjectFragment } from './project-fragment';
 import { retireElements } from './retire-elements';
+import type { FlowchartFragment } from './source-patches';
 import { validateMermaidProject } from './validate-mermaid-project';
 
-/** The flat canvas operations currently supported by the pinned source proof. */
+export type DecisionBranch = { label: string; destination: { kind: 'existing'; id: string } | { kind: 'new'; label: string } };
+
+/** The canvas operations currently supported by the pinned source proof. */
 export type NativeFlowchartEdit =
   | { op: 'addNode'; label: string; shape: Shape }
   | { op: 'addNext'; anchorId: string; label: string; shape: Shape; edgeLabel?: string; incoming: boolean; role?: SemanticRole }
+  | { op: 'addDecision'; anchorId?: string; label: string; branches: readonly DecisionBranch[] }
   | { op: 'setNodeLabel' | 'setEdgeLabel'; targetId: string; label: string }
   | { op: 'addEdge'; sourceId: string; targetId: string; label?: string; direction?: ConnectionDirection }
   | { op: 'addGroup'; memberIds: readonly string[]; label: string }
@@ -34,6 +39,35 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
       throw new Error('Choose a current connection with an explicit source ID.');
     }
     return edge.binding.sourceId;
+  }
+
+  if (edit.op === 'addDecision') {
+    if (edit.branches.length !== 2 || edit.branches.some(branch => !branch.label.trim())) {
+      throw new Error('Give both decision branches a connection label.');
+    }
+    const [first, second] = edit.branches;
+    if (first.label === second.label && first.destination.kind === 'existing'
+      && second.destination.kind === 'existing' && first.destination.id === second.destination.id) {
+      throw new Error('Choose distinct labels or destinations for these branches.');
+    }
+    const decision = { key: 'decision' };
+    const nodes: FlowchartFragment['nodes'][number][] = [{ ...decision, shape: 'diamond', label: edit.label }];
+    const edges: FlowchartFragment['edges'][number][] = [];
+    if (edit.anchorId) edges.push({ key: 'entry', from: { current: nodeSourceId(edit.anchorId) }, to: decision, label: '' });
+    for (const [index, branch] of edit.branches.entries()) {
+      const key = `branch-${index + 1}`;
+      if (branch.destination.kind === 'new') nodes.push({ key, shape: 'rect', label: branch.destination.label });
+      const to = branch.destination.kind === 'existing' ? { current: nodeSourceId(branch.destination.id) } : { key };
+      edges.push({ key, from: decision, to, label: branch.label });
+    }
+    const resolved = await prepareProjectFragment(document, { nodes, edges }, signal);
+    const elementId = resolved.bind(resolved.nodes[0].sourceId);
+    const next = validateMermaidProject({
+      ...document, source: resolved.source, identity: { ...document.identity, elements: resolved.elements },
+      revision: document.revision + 1, updatedAt: new Date().toISOString(),
+      roles: [...document.roles, { elementId, role: 'decision' }],
+    });
+    return { document: next, elementId, impact: undefined };
   }
 
   let intent: SourceIntent;

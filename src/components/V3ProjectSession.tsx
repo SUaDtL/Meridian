@@ -307,6 +307,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "add-node", title: "Add node", category: "Diagram", unavailable: editingUnavailable, run: () => setEditFlowchart("addNode") },
     { id: "add-next", title: "Add next", category: "Diagram", synonyms: ["connected step", "new connected node"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose a current node to connect." : undefined), run: () => setEditFlowchart("addNext") },
+    { id: "add-decision", title: "Add decision", category: "Diagram", synonyms: ["branch", "diamond"],
+      unavailable: editingUnavailable, run: () => setEditFlowchart("addDecision") },
     { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
     { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("addEdge") },

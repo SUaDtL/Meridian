@@ -1,11 +1,8 @@
-import { flowchartModelFor } from '../render';
 import { canonicalDigest } from './base-token';
 import { validateComponentDefinition, type ComponentDefinition } from './component-definition';
 import { materializeComponent } from './component-project';
-import { proveFlowchartFragment } from './flowchart-proof';
-import { reconcileIdentities } from './identities';
-import { observeFlowchartIdentities } from './identity-observation';
 import type { MermaidProjectV3 } from './mermaid-project';
+import { prepareProjectFragment } from './project-fragment';
 import type { FlowchartFragment } from './source-patches';
 import { validateMermaidProject } from './validate-mermaid-project';
 
@@ -47,25 +44,8 @@ export async function prepareComponentInsertion(
   }
   const definitionHash = await canonicalDigest('meridian-component/v1', [component]);
   signal?.throwIfAborted();
-  const resolved = await proveFlowchartFragment(base, { nodes: graph.nodes, edges }, signal);
-  const model = flowchartModelFor(resolved.rendered);
-  if (!model) throw new Error('Mermaid could not verify the inserted component.');
-  const priorIds = new Set(base.identity.elements.map(item => item.id));
-  const targets = await observeFlowchartIdentities(model);
-  const identities = reconcileIdentities(base.identity.elements, targets, priorIds, base.identity.orphans.length);
-  signal?.throwIfAborted();
-  const byId = new Map(identities.map(item => [item.id, item]));
-  const added = identities.filter(item => !priorIds.has(item.id));
-  if (added.length !== resolved.nodes.length + resolved.edges.length
-    || base.identity.elements.some(item => byId.get(item.id) !== item)) {
-    throw new Error('The insertion could not retain all existing source bindings.');
-  }
-  const newBySource = new Map(added.map(item => [item.binding.sourceId, item.id]));
-  function bind(sourceId: string) {
-    const id = newBySource.get(sourceId);
-    if (!id) throw new Error('A new component element could not be verified.');
-    return id;
-  }
+  const resolved = await prepareProjectFragment(base, { nodes: graph.nodes, edges }, signal);
+  const { bind } = resolved;
   const bindings = [...resolved.nodes, ...resolved.edges.slice(0, graph.edges.length)]
     .map(item => ({ localId: item.key, elementId: bind(item.sourceId) }));
   const roles = graph.nodes.flatMap((item, index) => item.role
@@ -75,7 +55,7 @@ export async function prepareComponentInsertion(
     source: resolved.source,
     revision: base.revision + 1,
     updatedAt: new Date().toISOString(),
-    identity: { ...base.identity, elements: identities },
+    identity: { ...base.identity, elements: resolved.elements },
     roles: [...base.roles, ...roles],
     componentInstances: [...base.componentInstances, {
       id: crypto.randomUUID(), definitionId: component.id, definitionVersion: component.version, definitionHash, bindings,
