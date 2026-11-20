@@ -11,7 +11,7 @@ import { validateMermaidProject } from './validate-mermaid-project';
 export type NativeFlowchartEdit =
   | { op: 'addNode'; label: string; shape: Shape }
   | { op: 'addNext'; anchorId: string; label: string; shape: Shape; edgeLabel?: string; incoming: boolean; role?: SemanticRole }
-  | { op: 'setNodeLabel'; targetId: string; label: string }
+  | { op: 'setNodeLabel' | 'setEdgeLabel'; targetId: string; label: string }
   | { op: 'addEdge'; sourceId: string; targetId: string; label?: string }
   | { op: 'addGroup'; memberIds: readonly string[]; label: string }
   | { op: 'removeGroup'; targetId: string }
@@ -49,6 +49,9 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
     case 'setNodeLabel':
       intent = { op: 'setNodeLabel', sourceId: nodeSourceId(edit.targetId), label: edit.label };
       break;
+    case 'setEdgeLabel':
+      intent = { op: 'setEdgeLabel', sourceId: edgeSourceId(edit.targetId), label: edit.label };
+      break;
     case 'addEdge':
       intent = { op: 'addEdge', from: nodeSourceId(edit.sourceId), to: nodeSourceId(edit.targetId), label: edit.label };
       break;
@@ -82,7 +85,7 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
   const proof = await proveFlowchartEdit({ source: document.source, settings: document.settings }, intent, signal);
   signal?.throwIfAborted();
   const retired = removal.length ? retireElements(document, removal) : undefined;
-  if (edit.op === 'setNodeLabel' && proof.source === document.source) return { document, elementId: edit.targetId, impact: undefined };
+  if ((edit.op === 'setNodeLabel' || edit.op === 'setEdgeLabel') && proof.source === document.source) return { document, elementId: edit.targetId, impact: undefined };
   const model = flowchartModelFor(proof.render);
   if (!model) throw new Error('The edited flowchart could not be verified.');
   const observed = await observeFlowchartIdentities(model);
@@ -99,7 +102,7 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
     ? nextById.get(item.id)?.status === 'retired' : nextById.get(item.id) === item);
   const target = added.find(item => item.binding.sourceId === proof.sourceId
     && item.elementKind === (edit.op === 'addEdge' ? 'edge' : edit.op === 'addGroup' ? 'group' : 'node'));
-  const noNewIdentity = edit.op === 'setNodeLabel' || edit.op === 'removeEdge' || edit.op === 'removeNode' || edit.op === 'removeGroup';
+  const noNewIdentity = edit.op === 'setNodeLabel' || edit.op === 'setEdgeLabel' || edit.op === 'removeEdge' || edit.op === 'removeNode' || edit.op === 'removeGroup';
   const validAdded = noNewIdentity ? !added.length
     : edit.op === 'addNext' ? added.length === 2 && !!target && added.some(item => item.elementKind === 'edge' && item.binding.sourceId === proof.addedEdgeId)
     : added.length === 1 && !!target;

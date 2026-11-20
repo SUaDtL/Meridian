@@ -12,7 +12,7 @@ import { shapeDelimiters, type Shape } from "../lib/authoring/flowchart-source";
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Operation = NativeFlowchartEdit["op"];
 type NodeChoice = { id: string; label: string };
-type EdgeChoice = NodeChoice & { sourceId: string | null; targetId: string | null; explicit: boolean };
+type EdgeChoice = NodeChoice & { sourceId: string | null; targetId: string | null; explicit: boolean; text: string };
 type Preview = { proposal: ReadyProposal; url: string; impact?: ElementRemovalImpact };
 const nextRoles: readonly SemanticRole[] = ["process", "decision", "neutral", "service", "database", "queue", "external", "person"];
 
@@ -28,7 +28,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
 }) {
   const [operation, setOperation] = useState<Operation>(initialOperation);
   const [shape, setShape] = useState<Shape>("rect");
-  const [label, setLabel] = useState("");
+  const [label, setLabel] = useState(() => initialOperation === "setEdgeLabel" ? edges.find(edge => edge.id === initialTarget)?.text ?? "" : "");
   const [edgeLabel, setEdgeLabel] = useState("");
   const [incoming, setIncoming] = useState(false);
   const [role, setRole] = useState<SemanticRole | "">("");
@@ -66,7 +66,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
     try {
       const edit: NativeFlowchartEdit = operation === "addNode" ? { op: operation, shape, label }
         : operation === "addNext" ? { op: operation, anchorId: from, shape, label, edgeLabel, incoming, role: role || undefined }
-        : operation === "setNodeLabel" ? { op: operation, targetId: to, label }
+        : (operation === "setNodeLabel" || operation === "setEdgeLabel") ? { op: operation, targetId: to, label }
         : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label }
         : operation === "addGroup" ? { op: operation, memberIds: [...members], label }
         : operation === "removeNode" ? { op: operation, targetId: to, incidentEdgeIds: incident.map(edge => edge.id) }
@@ -103,7 +103,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
     : operation === "setNodeLabel" ? !!label && !!to
     : operation === "addGroup" ? !!label && members.size > 0
     : operation === "removeGroup" ? !!to
-    : operation === "removeEdge" ? !!to
+    : (operation === "removeEdge" || operation === "setEdgeLabel") ? !!to
     : operation === "removeNode" ? !!to && !unidentified.length : !!from && !!to;
   const nodeOptions = nodes.map(node => <option value={node.id} key={node.id}>{node.label}</option>);
   return (
@@ -125,6 +125,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
               <option value="addNode">Add node</option>
               <option value="addNext" disabled={!nodes.length}>Add next</option>
               <option value="setNodeLabel" disabled={!nodes.length}>Rename node</option>
+              <option value="setEdgeLabel" disabled={!edges.some(edge => edge.explicit)}>Edit connection label</option>
               <option value="addEdge" disabled={!nodes.length}>Connect nodes</option>
               <option value="addGroup" disabled={!nodes.length}>Create group</option>
               <option value="removeEdge" disabled={!edges.some(edge => edge.explicit)}>Delete connection</option>
@@ -147,8 +148,12 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
             <option value="">Choose a node</option>{nodeOptions}
           </select>
         </label>}
-        {operation === "removeEdge" && <label>Connection to delete
-          <select value={to} disabled={busy} onChange={event => { setTo(event.target.value); resetPreview(); }}>
+        {(operation === "removeEdge" || operation === "setEdgeLabel") && <label>{operation === "removeEdge" ? "Connection to delete" : "Connection to edit"}
+          <select value={to} disabled={busy} onChange={event => {
+            setTo(event.target.value);
+            if (operation === "setEdgeLabel") setLabel(edges.find(edge => edge.id === event.target.value)?.text ?? "");
+            resetPreview();
+          }}>
             <option value="">Choose a connection</option>{edges.filter(edge => edge.explicit).map(edge => <option value={edge.id} key={edge.id}>{edge.label}</option>)}
           </select>
         </label>}
@@ -158,7 +163,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
           </select>
         </label>}
         {!!unidentified.length && <p role="status">Each incident connection needs an explicit source ID before this node can be deleted.</p>}
-        {operation !== "removeEdge" && !removingNode && !ungrouping && <label>{operation === "addEdge" ? "Connection label (optional)" : grouping ? "Group label" : "Node label"}
+        {operation !== "removeEdge" && !removingNode && !ungrouping && <label>{(operation === "addEdge" || operation === "setEdgeLabel") ? "Connection label (optional)" : grouping ? "Group label" : "Node label"}
           <input value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
         </label>}
         {grouping && <fieldset className="guided-process-fieldset" disabled={busy}>

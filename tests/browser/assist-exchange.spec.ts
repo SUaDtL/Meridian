@@ -48,7 +48,7 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
   const request = JSON.parse(text);
   const requestHash = await canonicalDigest('meridian-assist-request/v1', request);
   expect(request.requestId).toMatch(/^[a-f0-9-]{14}7[a-f0-9-]+$/);
-  expect(request.graph.edges).toHaveLength(1);
+  expect(request.graph.edges).toEqual([expect.objectContaining({ label: '' })]);
   const writable = request.graph.nodes.find((node: { label: string }) => node.label === 'First');
   const contextOnly = request.graph.nodes.find((node: { label: string }) => node.label === 'Context node');
   expect(request.scope.writableElementIds).toEqual([writable.id]);

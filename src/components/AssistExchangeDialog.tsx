@@ -14,8 +14,8 @@ type RequestPreview = Awaited<ReturnType<typeof buildAssistRequest>>;
 const batchSize = 30;
 const durableActions = new Set(["Saving request", "Applying suggestion"]);
 
-export default function AssistExchangeDialog({ db, editor, project, table, onApplied, onClose }: {
-  db: IDBDatabase; editor: Editor; project: MermaidProjectV3; table: RenderTargetTable;
+export default function AssistExchangeDialog({ db, editor, project, table, edgeLabels, onApplied, onClose }: {
+  db: IDBDatabase; editor: Editor; project: MermaidProjectV3; table: RenderTargetTable; edgeLabels: ReadonlyMap<string, string>;
   onApplied: () => void; onClose: () => void;
 }) {
   const [mode, setMode] = useState<"export" | "import">("export");
@@ -53,7 +53,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, onApp
 
   function reviewRequest() {
     void run("Preparing request", async signal => {
-      const result = await buildAssistRequest(project, table, selected, instruction);
+      const result = await buildAssistRequest(project, table, edgeLabels, selected, instruction);
       signal.throwIfAborted();
       if (editor.snapshot() !== project) throw new Error("The project changed. Close this dialog and review the current diagram.");
       setRequest(result);
