@@ -70,6 +70,9 @@ export default function ExportDialog({
   const [success, setSuccess] = useState("");
   const report = notify ?? setSuccess;
   const visual = format === "png" || format === "svg" || format === "html";
+  const sourceIssue = /[\uD800-\uDFFF]/u.test(document.source)
+    ? "This source contains an unmatched Unicode surrogate. Download the project to preserve it exactly."
+    : "";
   const valid = result !== null && !stale && !renderError && !(format === "html" && presentation.unavailable);
   const frame = useMemo(
     () =>
@@ -91,6 +94,7 @@ export default function ExportDialog({
     try {
       if (format === "project") onDownload();
       else if (format === "source") {
+        if (sourceIssue) throw new Error(sourceIssue);
         downloadText(
           document.source,
           `${filename}.mmd`,
@@ -243,7 +247,7 @@ export default function ExportDialog({
                     ? "Rendering your latest changes…"
                     : "Update the canvas before exporting."}
             </strong>
-            <p>Project and Mermaid downloads are always available.</p>
+            <p>{sourceIssue ? "Download the project to preserve the exact source." : "Project and Mermaid downloads are always available."}</p>
             {(renderError || !document.source.trim() || onRender) && <button
               className="button secondary"
               disabled={rendering}
@@ -268,6 +272,7 @@ export default function ExportDialog({
           </div>
         </div>
       )}
+      {format === "source" && sourceIssue && <p role="status">{sourceIssue}</p>}
       {error && (
         <p className="inline-error" role="alert">
           <CircleAlert size={16} />
@@ -286,7 +291,7 @@ export default function ExportDialog({
         </span>
         <button
           className="button primary"
-          disabled={busy || (visual && !valid)}
+          disabled={busy || (visual && !valid) || (format === "source" && !!sourceIssue)}
           onClick={download}
         >
           {busy ? (

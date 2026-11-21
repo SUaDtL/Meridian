@@ -73,6 +73,40 @@ test('accepts and reimports a two-million-byte Mermaid project with exact Unicod
   } finally { await fresh.close(); }
 });
 
+test('keeps unmatched Unicode code units in the project download and refuses a lossy Mermaid file', async ({ page, browser }) => {
+  const fixture = JSON.parse(await readFile(new URL('../../src/lib/authoring/fixtures/example-project.json', import.meta.url), 'utf8'));
+  const title = 'Exact Unicode source recovery';
+  const source = '\uFEFFflowchart LR\r\n  A["Client 📦"]\r\n  B["API"]\r\n  A e1@--> B\r\n  %% "\\" \uD800 | \uDC00 | \uFFFD\r\n';
+  const project = { ...fixture, title, source, revision: 0 };
+  const migration = await migrationReview(page);
+  await migration.getByLabel('Import v3 project file').setInputFiles(projectFile('unicode', Buffer.from(JSON.stringify(project))));
+  await migration.getByRole('button', { name: `Open v3 project ${title}` }).click();
+  const live = page.getByRole('dialog', { name: title, exact: true });
+  await expect(live.getByRole('img', { name: `Diagram preview for ${title}` })).toBeVisible();
+  await live.getByRole('button', { name: 'Export diagram', exact: true }).click();
+  const choices = page.getByRole('dialog', { name: 'Take your diagram with you.' });
+  await choices.getByRole('button', { name: /^Mermaid Plain/ }).click();
+  await expect(choices.getByRole('button', { name: 'Download MERMAID' })).toBeDisabled();
+  await expect(choices.getByRole('status')).toContainText('Download the project to preserve it exactly.');
+  await choices.getByRole('button', { name: /^Project Editable/ }).click();
+  const exported = await download(page, choices.getByRole('button', { name: 'Download project', exact: true }));
+  const accepted = JSON.parse(exported.toString('utf8'));
+  expect(accepted.source).toBe(source);
+  expect(exported).toEqual(Buffer.from(JSON.stringify({ ...project, id: accepted.id }, null, 2)));
+  expect(exported.toString('utf8')).toContain('\\ud800 | \\udc00 | �');
+
+  const fresh = await browser.newContext({ baseURL: new URL(page.url()).origin, acceptDownloads: true });
+  try {
+    const target = await fresh.newPage();
+    const review = await migrationReview(target);
+    await review.getByLabel('Import v3 project file').setInputFiles(projectFile('recovered', exported));
+    const reexported = await download(target, review.getByRole('button', { name: `Download v3 copy of ${title}` }));
+    const recovered = JSON.parse(reexported.toString('utf8'));
+    expect(recovered.id).not.toBe(accepted.id);
+    expect(reexported).toEqual(Buffer.from(JSON.stringify({ ...accepted, id: recovered.id }, null, 2)));
+  } finally { await fresh.close(); }
+});
+
 test('reopens a chart with the maximum rows, cells and serialized typed dataset', async ({ page, browser }) => {
   test.setTimeout(75_000);
   const fixture = JSON.parse(await readFile(new URL('../../src/lib/authoring/fixtures/example-chart.json', import.meta.url), 'utf8'));
