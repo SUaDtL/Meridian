@@ -1,0 +1,215 @@
+{
+  "type": "object",
+  "properties": {
+    "step": {
+      "enum": [
+        "facts",
+        "scope",
+        "review"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 120
+    },
+    "subtitle": {
+      "type": "string",
+      "maxLength": 240
+    },
+    "adapter": {
+      "enum": [
+        "openapi",
+        "json-schema",
+        "terraform-show"
+      ]
+    },
+    "adapterVersion": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "dialect": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "virtualPaths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "maxItems": 20,
+      "minItems": 0
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+          },
+          "externalKey": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "kind": {
+            "enum": [
+              "operation",
+              "schema",
+              "property",
+              "resource",
+              "module",
+              "unresolved"
+            ]
+          },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Role"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "virtualPath": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "pointer": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "resolved",
+              "unresolved",
+              "unsupported"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "id",
+          "externalKey",
+          "label",
+          "kind",
+          "role",
+          "virtualPath",
+          "pointer",
+          "parentId",
+          "status",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000,
+      "minItems": 0
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+          },
+          "sourceId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+          },
+          "targetId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+          },
+          "type": {
+            "enum": [
+              "reference",
+              "property",
+              "module-membership",
+              "declared-dependency"
+            ]
+          },
+          "virtualPath": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "pointer": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "id",
+          "sourceId",
+          "targetId",
+          "type",
+          "virtualPath",
+          "pointer"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 2000,
+      "minItems": 0
+    },
+    "selectedFactIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+      },
+      "maxItems": 100,
+      "minItems": 0
+    },
+    "selectedRelationshipIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+      },
+      "maxItems": 200,
+      "minItems": 0
+    },
+    "unresolvedPolicy": {
+      "enum": [
+        "exclude",
+        "placeholders"
+      ]
+    }
+  },
+  "required": [
+    "step",
+    "title",
+    "subtitle",
+    "adapter",
+    "adapterVersion",
+    "dialect",
+    "virtualPaths",
+    "facts",
+    "relationships",
+    "selectedFactIds",
+    "selectedRelationshipIds",
+    "unresolvedPolicy"
+  ],
+  "additionalProperties": false
+}

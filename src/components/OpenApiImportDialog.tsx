@@ -5,10 +5,13 @@ import { validateVirtualPath, type OpenApiFacts, type OpenApiInput } from "../li
 import { openApiNodeLimit, openApiSchemaScope, prepareOpenApiProject, prepareOpenApiSchemaProject,
   type OpenApiChoice, type OpenApiSchemaChoice } from "../lib/authoring/openapi-project";
 import { buildExportFrame } from "../lib/export";
+import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
+import { listOpenApiCheckpoints, restoreOpenApiScope, saveOpenApiCheckpoint, type OpenApiCheckpoint } from "../lib/persistence/openapi-drafts";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import Modal from "./Modal";
 
 const rowLimit = 50;
+const draftSave = "Saving the schema scope";
 type Review = Awaited<ReturnType<typeof prepareOpenApiProject>> & { url: string };
 const countLabel = (count: number, singular: string) => `${count} ${singular}${count === 1 ? "" : "s"}`;
 
@@ -24,6 +27,10 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   const [choices, setChoices] = useState<ReadonlyMap<string, OpenApiChoice>>(new Map());
   const [schemas, setSchemas] = useState<ReadonlyMap<string, OpenApiSchemaChoice>>(new Map());
   const [includeUnresolved, setIncludeUnresolved] = useState(false);
+  const [checkpoints, setCheckpoints] = useState<OpenApiCheckpoint[]>([]);
+  const [checkpoint, setCheckpoint] = useState<OpenApiCheckpoint>();
+  const [restoredScope, setRestoredScope] = useState(false);
+  const [notice, setNotice] = useState("");
   const [review, setReview] = useState<Review>();
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState("");
@@ -35,6 +42,16 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => () => { if (review) URL.revokeObjectURL(review.url); }, [review]);
   useEffect(() => { if (facts || review) heading.current?.focus(); }, [facts, review]);
+  useEffect(() => {
+    let closed = false;
+    void openWorkspaceDatabase().then(async db => {
+      try {
+        const saved = await listOpenApiCheckpoints(db);
+        if (!closed) setCheckpoints(saved);
+      } finally { db.close(); }
+    }).catch(() => { if (!closed) setNotice("Saved OpenAPI scopes could not be read."); });
+    return () => { closed = true; };
+  }, []);
 
   async function run(label: string, task: (signal: AbortSignal) => Promise<void>, canRetry = false) {
     if (controller.current) return;
@@ -42,6 +59,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
     controller.current = action;
     setBusy(label);
     setError("");
+    setNotice("");
     setRetry(false);
     try {
       await task(action.signal);
@@ -77,10 +95,61 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
       setChoices(new Map());
       setSchemas(new Map());
       setIncludeUnresolved(false);
+      setCheckpoint(undefined);
+      setRestoredScope(false);
       setQuery("");
       setVisibleLimit(rowLimit);
       setTitle(schemaMode ? "OpenAPI schema relationships" : "New diagram from file");
     }, !extended);
+  }
+
+  function resume(saved: OpenApiCheckpoint) {
+    const resumed = restoreOpenApiScope(saved);
+    setView("schemas");
+    setFiles([]);
+    setFacts(resumed.facts);
+    setSchemas(new Map(resumed.selection));
+    setTitle(resumed.title);
+    setIncludeUnresolved(resumed.includeUnresolved);
+    setCheckpoint(saved);
+    setRestoredScope(true);
+    setQuery("");
+    setVisibleLimit(rowLimit);
+    setError("");
+    setNotice("Saved schema scope restored. Preview it before creating a diagram.");
+  }
+
+  function checkpointScope(close = false) {
+    if (!facts?.schemaView) return;
+    void run(draftSave, async signal => {
+      const db = await openWorkspaceDatabase();
+      try {
+        signal.throwIfAborted();
+        const next = await saveOpenApiCheckpoint(db, { facts, selection: schemas, title, includeUnresolved }, checkpoint);
+        setCheckpoints(previous => [next, ...previous.filter(item => item.id !== next.id)]);
+        setCheckpoint(next);
+        setNotice("Schema facts and scope saved in this browser.");
+        if (close) onClose();
+      } finally { db.close(); }
+    });
+  }
+
+  function discard(saved: OpenApiCheckpoint, close = false) {
+    void run("Discarding the saved scope", async signal => {
+      const db = await openWorkspaceDatabase();
+      try {
+        signal.throwIfAborted();
+        await discardGuidedCheckpoint(db, saved);
+        setCheckpoints(previous => previous.filter(item => item.id !== saved.id));
+        if (checkpoint?.id === saved.id) setCheckpoint(undefined);
+        if (close) onClose();
+      } finally { db.close(); }
+    });
+  }
+
+  function close() {
+    if (facts?.schemaView && !busy) checkpointScope(true);
+    else onClose();
   }
 
   function preview() {
@@ -105,6 +174,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
       try {
         signal.throwIfAborted();
         await writeWorkspaceProject(db, review.document, null);
+        if (checkpoint) await discardGuidedCheckpoint(db, checkpoint).catch(() => undefined);
         onCreated(review.document.id);
       } finally { db.close(); }
     });
@@ -143,11 +213,19 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   const totalNodes = choices.size + new Set(selected.flatMap(item => item.tag === null ? [] : [item.tag])).size;
   const selectedHidden = choices.size - visible.filter(item => choices.has(item.key)).length;
 
-  return <Modal title="Engineering file" wide busy={busy === "Saving the new diagram"} onClose={onClose}>
+  return <Modal title="Engineering file" wide busy={["Saving the new diagram", draftSave, "Discarding the saved scope"].includes(busy)} onClose={close}>
     <h3 ref={heading} tabIndex={-1}>{review ? "Review your new diagram" : facts
       ? schemaFacts ? "Choose schema scope" : "Choose operation scope" : "New diagram from file"}</h3>
     {!facts && <form className="heading-form" onSubmit={event => { event.preventDefault(); extract(); }}>
       <p>Import OpenAPI 3.0 or 3.1 JSON or restricted YAML. Meridian reads the files in this browser and retains only selected facts in the new diagram.</p>
+      {checkpoints.length > 0 && <ul className="project-list" aria-label="Saved OpenAPI scopes">
+        {checkpoints.map(item => <li className="project-row" key={item.id}>
+          <button type="button" className="project-open" disabled={!!busy} onClick={() => resume(item)}>
+            <strong>Resume {item.payload.title || "schema scope"}</strong><small>{item.payload.selectedFactIds.length} selected schemas</small>
+          </button>
+          <button type="button" className="button quiet" disabled={!!busy} onClick={() => discard(item)}>Discard scope draft</button>
+        </li>)}
+      </ul>}
       <label>OpenAPI view<select value={view} disabled={!!busy} onChange={event => {
         setView(event.target.value === "schemas" ? "schemas" : "operations");
         setError(""); setRetry(false);
@@ -179,7 +257,8 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
     {facts && schemaFacts && !review && <form className="heading-form" onSubmit={event => { event.preventDefault(); preview(); }}>
       <p>OpenAPI {facts.version} · {countLabel(schemaFacts.files.length, "supplied file")} · {countLabel(schemaFacts.schemas.length, "schema")}</p>
       <p>{countLabel(schemaFacts.references.length, "resolved reference")} · {countLabel(schemaFacts.unresolved.length, "unresolved reference")}
-        {" · "}{countLabel(schemaFacts.omitted, "unsupported schema location")}</p>
+        {!restoredScope && <>{" · "}{countLabel(schemaFacts.omitted, "unsupported schema location")}</>}</p>
+      {restoredScope && <p>This draft contains the extracted facts and choices. Input-level coverage is available when reading the files.</p>}
       <p>Resolved connections show declared references to named components in the supplied files.</p>
       <label>Diagram title<input value={title} maxLength={120} disabled={!!busy} onChange={event => setTitle(event.target.value)} /></label>
       <label>Find schemas<input value={query} maxLength={160} disabled={!!busy}
@@ -213,7 +292,9 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
         </details>
       </fieldset>}
       <div className="dialog-actions">
-        <button type="button" className="button quiet" disabled={!!busy} onClick={() => { setFacts(undefined); setError(""); }}>Choose another file</button>
+        <button type="button" className="button quiet" disabled={!!busy} onClick={() => { setFacts(undefined); setCheckpoint(undefined); setError(""); }}>Choose another file</button>
+        <button type="button" className="button quiet" disabled={!!busy} onClick={() => checkpoint ? discard(checkpoint, true) : onClose()}>Discard this scope</button>
+        <button type="button" className="button secondary" disabled={!!busy} onClick={() => checkpointScope()}>Save scope draft</button>
         <button type="submit" className="button primary" disabled={!!busy || !schemas.size || scopeTooLarge}>Preview diagram</button>
       </div>
     </form>}
@@ -257,7 +338,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
     </form>}
     {facts && review && <>
       <p>{countLabel(review.nodes, "node")} · {countLabel(review.edges, "connection")} · {schemaFacts
-        ? countLabel(facts.uncheckedSchemaCount - schemas.size, "schema")
+        ? countLabel(schemaFacts.schemas.length - schemas.size, "schema")
         : countLabel(facts.operations.length - choices.size, "operation fact")} omitted</p>
       <p>Connections show {schemaFacts ? "declared OpenAPI schema references" : "declared OpenAPI tag membership"}.
         {" "}The project keeps each fact’s virtual path, JSON pointer and relationship.</p>
@@ -271,6 +352,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
       </div>
     </>}
     {busy && <p role="status">{busy}…</p>}
+    {notice && <p role="status">{notice}</p>}
     {error && <p role="alert">{error}</p>}
     {retry && <button className="button secondary" onClick={() => extract(true)}>Retry with more time</button>}
   </Modal>;
