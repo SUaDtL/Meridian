@@ -14,6 +14,75 @@ async function openProject(page: Page, title: string, source: string) {
   return page.getByRole('dialog', { name: title });
 }
 
+test('frames measured outline targets with the keyboard and preserves hidden selections and project bytes', async ({ page }, info) => {
+  await page.addInitScript(() => {
+    const frames = new Map<string, Blob>();
+    Object.defineProperty(window, 'outlineFixtureFrames', { value: frames });
+    const create = URL.createObjectURL;
+    URL.createObjectURL = value => {
+      const url = create(value);
+      if (value instanceof Blob && value.type === 'image/svg+xml') frames.set(url, value);
+      return url;
+    };
+  });
+  const source = 'flowchart LR\n A[First step]\n B[Second step]\n C[Third step]\n D[Last step]\n A --> B\n B --> C\n C --> D\n';
+  const live = await openProject(page, 'Outline framing', source);
+  const image = live.getByRole('img', { name: 'Diagram preview for Outline framing' });
+  const readFrame = () => image.evaluate(async (image: HTMLImageElement) => {
+    const frames = (window as Window & { outlineFixtureFrames: ReadonlyMap<string, Blob> }).outlineFixtureFrames;
+    const source = await frames.get(image.src)?.text();
+    if (!source) throw new Error('Missing diagram frame.');
+    const svg = new DOMParser().parseFromString(source, 'image/svg+xml');
+    const diagram = svg.querySelector('svg[data-meridian-export] > svg');
+    return { viewBox: diagram?.getAttribute('viewBox')?.split(/\s+/u).map(Number) ?? [],
+      markers: diagram?.querySelectorAll('rect[stroke="#fde047"]').length };
+  });
+  const download = async () => {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing project backup.');
+    return readFile(path, 'utf8');
+  };
+  await expect(image).toBeVisible();
+  const full = await readFrame();
+  const original = await download();
+  const openOutline = live.getByRole('button', { name: 'Outline', exact: true });
+  await openOutline.click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  const query = outline.getByRole('textbox', { name: 'Find an element' });
+  const tree = outline.getByRole('tree', { name: 'Diagram elements' });
+  await query.fill('Last step');
+  await query.press('ArrowDown');
+  await tree.press('Enter');
+  await expect(tree).toBeFocused();
+  await expect(outline.getByRole('status')).toHaveText('1 selected · 0 hidden');
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(live.getByText('Framed around 1 element.')).toBeVisible();
+  const focus = await readFrame();
+  expect(focus.markers).toBe(1);
+  expect(focus.viewBox[0]).toBeGreaterThan(full.viewBox[0]);
+  expect(focus.viewBox[2]).toBeLessThan(full.viewBox[2]);
+  await page.screenshot({ path: info.outputPath('outline-frame-desktop.png') });
+  const fit = live.getByRole('button', { name: 'Fit full diagram' });
+  await fit.press('Enter');
+  await expect(openOutline).toBeFocused();
+  expect(await readFrame()).toEqual(full);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openOutline.click();
+  await query.fill('First step');
+  await outline.getByRole('button', { name: 'Select multiple' }).click();
+  await outline.getByRole('checkbox', { name: /First step/ }).check();
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 1 hidden');
+  await outline.getByRole('button', { name: 'Frame selected elements' }).click();
+  await expect(live.getByText('Framed around 2 elements.')).toBeVisible();
+  await expect(fit).toBeFocused();
+  expect((await readFrame()).markers).toBe(2);
+  await page.screenshot({ path: info.outputPath('outline-frame-mobile.png') });
+  expect(await download()).toBe(original);
+  await expect(live.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
 test('discovers parallel relationships and jumps only to the exact selected source span', async ({ page }) => {
   const source = '\uFEFFflowchart LR\r\n  A["Intake"]\r\n  B["Result"]\r\n  A delivery@-->|"Sends"| B\r\n  A audit@-->|"Sends"| B\r\n';
   const live = await openProject(page, 'Outline example', source);

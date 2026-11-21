@@ -42,7 +42,7 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
   return rows;
 }
 
-export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onConnect, onGroup, onBulkText,
+export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onFrame, onConnect, onGroup, onBulkText,
   onDesign, onResetDesign, onSaveComponent, onStory, onDeleteConnections, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
@@ -50,6 +50,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   canRename: boolean;
   onRename: (id: string) => void;
   onSource: (location: OutlineSourceLocation) => void;
+  onFrame: (ids: readonly string[], close: boolean) => string | undefined;
   onConnect?: () => void;
   onGroup?: (hidden: number) => void;
   onBulkText: (hidden: number) => void;
@@ -68,6 +69,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [checkboxSelection, setCheckboxSelection] = useState(false);
   const [refusedCount, setRefusedCount] = useState<number>();
+  const [frameError, setFrameError] = useState<string>();
   const list = useRef<HTMLUListElement>(null);
   const needle = query.trim().toLowerCase();
   const rows = useMemo(() => outlineRows(items, relationships, needle, collapsed), [items, relationships, needle, collapsed]);
@@ -96,6 +98,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   }
 
   function updateSelection(next: ReadonlySet<string>) {
+    setFrameError(undefined);
     if (next.size > selectionLimit) {
       setRefusedCount(next.size);
       return;
@@ -126,6 +129,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
     } else if (event.key === "Enter" || (event.key === " " && event.shiftKey)) {
       event.preventDefault();
       select(item.id, event.shiftKey);
+      if (event.key === "Enter" && !event.shiftKey) setFrameError(onFrame([item.id], false));
     } else if (!relationships && event.key === "ArrowLeft") {
       event.preventDefault();
       if (active.expanded && !needle) setExpanded(item.id, false);
@@ -162,6 +166,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           <button type="button" className="button secondary" aria-pressed={relationships} onClick={() => setTab(true)}>Relationships</button>
         </div>
         <p role="status">{selected.size} selected · {hidden} hidden</p>
+        {frameError && <p role="alert">{frameError}</p>}
         {refusedCount !== undefined && <p role="alert">That action would select {refusedCount} elements. The limit is {selectionLimit}. {selected.size} are selected.</p>}
         <div className="recovery-actions" role="group" aria-label="Outline selection">
           <button type="button" className="button secondary" aria-pressed={checkboxSelection}
@@ -173,6 +178,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           <button type="button" className="button quiet" disabled={!items.length}
             onClick={() => updateSelection(new Set(items.map(item => item.id)))}>Select all diagram elements</button>
           <button type="button" className="button quiet" disabled={!selected.size} onClick={() => updateSelection(new Set())}>Clear selection</button>
+          <button type="button" className="button secondary" disabled={!selected.size}
+            onClick={() => setFrameError(onFrame([...selected], true))}>Frame selected elements</button>
           <button type="button" className="button secondary" disabled={!selected.size} onClick={() => onBulkText(hidden)}>Change selected text color</button>
           {onDesign && <button type="button" className="button secondary" disabled={!selected.size}
             onClick={() => onDesign(hidden)}>Explore designs for selection</button>}
