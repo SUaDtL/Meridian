@@ -40,6 +40,7 @@ const SaveComponentDialog = lazy(() => import("./SaveComponentDialog"));
 const ComponentProjectDialog = lazy(() => import("./ComponentProjectDialog"));
 const AssistExchangeDialog = lazy(() => import("./AssistExchangeDialog"));
 const SavedScenesDialog = lazy(() => import("./V3SavedScenesDialog"));
+const SavedStoryDialog = lazy(() => import("./V3SavedStoryDialog"));
 const DesignResetDialog = lazy(() => import("./DesignResetDialog"));
 const OrphanReviewDialog = lazy(() => import("./OrphanReviewDialog"));
 const V3SourceEditor = lazy(() => import("./V3SourceEditor"));
@@ -113,6 +114,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [comparisonSelection, setComparisonSelection] = useState<{ ids: string[]; hidden: number }>();
   const [comparison, setComparison] = useState<"design" | "layout">();
   const [storyOpen, setStoryOpen] = useState(false);
+  const [savedStoryOpen, setSavedStoryOpen] = useState(false);
   const [savedScenesOpen, setSavedScenesOpen] = useState<"edit" | "create">();
   const [savedSceneScope, setSavedSceneScope] = useState<ManualSceneSelection>();
   const [storyDraft, setStoryDraft] = useState(initialGroupStoryDraft);
@@ -574,6 +576,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to compare layouts.", run: () => setComparison("layout") },
     { id: "suggest-scenes", title: "Suggest scenes", category: "Story", synonyms: ["group story", "storyboard"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to suggest scenes.", run: () => setStoryOpen(true) },
+    { id: "preview-saved-story", title: "Preview saved story", category: "Story", synonyms: ["play storyboard", "play saved scenes"],
+      unavailable: currentFrame?.rendered.targetTable && project?.storyboard.scenes.length ? undefined : "Open a verified diagram with saved scenes.",
+      run: () => setSavedStoryOpen(true) },
     { id: "edit-saved-scenes", title: "Edit saved scenes", category: "Story", synonyms: ["scene properties", "storyboard"],
       unavailable: outlineAvailable && project?.storyboard.scenes.length ? undefined : "Open a verified diagram with saved scenes.",
       run: () => setSavedScenesOpen("edit") },
@@ -715,6 +720,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                 {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
               </section>
               <section data-v3-panel="Story" aria-label="Story tools" className="recovery-actions">
+                {currentFrame?.rendered.targetTable && project.storyboard.scenes.length > 0 &&
+                  <button className="button secondary" disabled={busy} onClick={() => setSavedStoryOpen(true)}>Preview saved story</button>}
                 {outlineAvailable && <button ref={suggestScenesButton} className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
                 {outlineAvailable && <button className="button secondary" disabled={busy}
                   onClick={() => setSavedScenesOpen(project.storyboard.scenes.length ? "edit" : "create")}>
@@ -910,6 +917,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           }
           return status;
         }} />}
+      {savedStoryOpen && currentFrame?.rendered.targetTable && project && <Suspense fallback={<p role="status">Opening saved story…</p>}>
+        <SavedStoryDialog project={project} result={currentFrame.rendered.result} table={currentFrame.rendered.targetTable}
+          onClose={() => setSavedStoryOpen(false)} />
+      </Suspense>}
       {savedScenesOpen && editor.current && <Suspense>
         <SavedScenesDialog editor={editor.current} startNew={savedScenesOpen === "create"} initialScope={savedSceneScope} onClose={() => {
           setSavedScenesOpen(undefined);

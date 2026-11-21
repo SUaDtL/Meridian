@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 import { createScene } from '../../src/lib/storyboard';
@@ -557,4 +558,112 @@ test('creates an explicit branch scene, reorders the paths, and resumes them aft
   await live.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   expect(JSON.parse(await download(page, live, 'Download v3 project')).storyboard).toEqual(original.storyboard);
+});
+
+test('plays a migrated directional storyboard with the same cameras and flow in studio and downloaded HTML', async ({ page, browser }, info) => {
+  const source = [
+    '\uFEFFflowchart LR', '  subgraph G [Service group]', '    A[Intake]', '    B[Review]', '  end',
+    '  C[Archive]', '  A send@--> B', '  B feedback@<--> C', '  A plain@--- C', '',
+  ].join('\r\n');
+  const scenes = [{
+    ...createScene(), title: 'Service handoff', duration: 8, transition: 0,
+    visible: ['node:A', 'node:B', 'edge:id:send'], highlight: ['node:B', 'edge:id:send'],
+    flow: ['edge:id:send'], camera: { mode: 'elements' as const, keys: ['group:G'], padding: 16 },
+  }, {
+    ...createScene(1), title: 'Archive feedback', duration: 8, transition: 0,
+    visible: ['node:A', 'node:B', 'node:C', 'edge:id:feedback', 'edge:id:plain'],
+    highlight: ['node:C', 'edge:id:feedback'], flow: ['edge:id:feedback', 'edge:id:plain'],
+    camera: { mode: 'elements' as const, keys: ['node:C'], padding: 24 },
+  }];
+  const project = { ...createDocument(), title: 'Migrated directional story', source,
+    storyboard: { version: 1 as const, scenes, loop: true } };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+    version: 2, activeId: project.id, documents: [project],
+  })), { key: STORAGE_KEY, project });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Migrated directional story' }).click();
+  const live = page.getByRole('dialog', { name: project.title, exact: true });
+  await expect(live.getByRole('img', { name: /Diagram preview for/ })).toBeVisible();
+  const migrated = JSON.parse(await download(page, live, 'Download v3 project'));
+  expect(migrated.source).toBe(source);
+  expect(migrated.storyboard.loop).toBe(true);
+  const bindings = new Map<string, string>(migrated.identity.elements.map((item: { id: string; binding: { sourceId: string } }) =>
+    [item.binding.sourceId, item.id]));
+  const element = (drawing: Locator, binding: string) => drawing.locator(`[data-element-key="${bindings.get(binding)}"]`);
+  const flow = (drawing: Locator, binding: string) => drawing.locator(`[data-story-flow="${bindings.get(binding)}"]`);
+  expect(migrated.storyboard.scenes[0]).toMatchObject({
+    flow: [bindings.get('send')], highlight: [bindings.get('B'), bindings.get('send')],
+    camera: { mode: 'elements', keys: [bindings.get('G')], padding: 16 },
+  });
+  expect(migrated.storyboard.scenes[1].camera).toEqual({ mode: 'elements', keys: [bindings.get('C')], padding: 24 });
+
+  const [file] = await Promise.all([
+    page.waitForEvent('download'), live.getByRole('button', { name: 'Download HTML presentation' }).click(),
+  ]);
+  const path = info.outputPath('migrated-directional.html');
+  await file.saveAs(path);
+  await live.getByRole('button', { name: 'Preview saved story' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Preview saved story', exact: true });
+  const studio = dialog.locator('[data-meridian-export]');
+  const status = dialog.getByRole('region', { name: 'Story preview' }).getByRole('status');
+  await expect(status).toHaveText('Scene 1 of 2 · Service handoff');
+
+  const offline = await browser.newContext({ offline: true, reducedMotion: 'no-preference' });
+  const external: string[] = [];
+  await offline.route(/^https?:/, request => {
+    external.push(request.request().url());
+    return request.abort();
+  });
+  try {
+    const portablePage = await offline.newPage();
+    await portablePage.goto(pathToFileURL(path).href);
+    const portable = portablePage.locator('main > svg');
+
+    async function checkFirst(drawing: Locator) {
+      await expect(drawing).toHaveAttribute('data-story-scene', scenes[0].id);
+      await expect(element(drawing, 'G')).toHaveAttribute('data-element-kind', 'group');
+      await expect(element(drawing, 'G')).toHaveAttribute('aria-hidden', 'false');
+      await expect(element(drawing, 'A')).toHaveAttribute('data-element-kind', 'node');
+      await expect(element(drawing, 'A')).toHaveCSS('opacity', '0.26');
+      await expect(element(drawing, 'B')).toHaveCSS('opacity', '1');
+      await expect(element(drawing, 'C')).toHaveAttribute('aria-hidden', 'true');
+      await expect(element(drawing, 'send')).toHaveAttribute('data-element-kind', 'edge');
+      await expect(flow(drawing, 'send')).toHaveCount(1);
+      await expect(flow(drawing, 'send')).toBeVisible();
+    }
+
+    await checkFirst(studio);
+    await checkFirst(portable);
+    const firstCamera = await studio.getAttribute('viewBox');
+    expect(firstCamera).toBeTruthy();
+    await expect(portable).toHaveAttribute('viewBox', firstCamera!);
+    await dialog.getByRole('button', { name: 'Play story' }).press('Enter');
+    await portablePage.getByRole('button', { name: 'Play presentation' }).click();
+    for (const drawing of [studio, portable]) {
+      await expect(drawing).toHaveAttribute('data-story-playing', 'true');
+      await expect.poll(async () => Number(await flow(drawing, 'send').getAttribute('stroke-dashoffset'))).toBeLessThan(0);
+    }
+    await dialog.getByRole('button', { name: 'Next scene' }).press('Enter');
+    await portablePage.getByRole('button', { name: 'Next scene' }).click();
+    await expect(status).toHaveText('Scene 2 of 2 · Archive feedback');
+    for (const drawing of [studio, portable]) {
+      await expect(drawing).toHaveAttribute('data-story-scene', scenes[1].id);
+      await expect(element(drawing, 'C')).toHaveCSS('opacity', '1');
+      await expect(element(drawing, 'B')).toHaveCSS('opacity', '0.26');
+      await expect(flow(drawing, 'send')).toHaveCSS('display', 'none');
+      await expect(flow(drawing, 'feedback')).toHaveCount(2);
+      await expect(flow(drawing, 'feedback').first()).toBeVisible();
+      await expect(flow(drawing, 'feedback').last()).toBeVisible();
+      await expect(flow(drawing, 'plain')).toHaveCount(0);
+    }
+    const secondCamera = await studio.getAttribute('viewBox');
+    expect(secondCamera).toBeTruthy();
+    expect(secondCamera).not.toBe(firstCamera);
+    await expect(portable).toHaveAttribute('viewBox', secondCamera!);
+    expect(external).toEqual([]);
+  } finally { await offline.close(); }
 });
