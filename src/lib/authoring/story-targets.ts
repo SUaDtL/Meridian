@@ -19,3 +19,26 @@ export function addStoryAncestors(visible: Set<string>, byId: ReadonlyMap<string
     }
   }
 }
+
+export function resolveManualStoryScope(table: RenderTargetTable, selected: readonly string[]) {
+  const visible = new Set(selected);
+  if (!visible.size || visible.size !== selected.length || visible.size > storyTargetLimit) {
+    throw new Error('Choose a bounded selection of distinct nodes and connections.');
+  }
+  const byId = new Map(table.targets.map(target => [target.id, target]));
+  for (const id of selected) {
+    const target = byId.get(id);
+    if (!target || target.elementKind === 'group') throw new Error('The manual scene needs current nodes or connections.');
+    if (target.elementKind === 'edge') {
+      for (const endpoint of [target.sourceId, target.targetId]) {
+        if (!endpoint || byId.get(endpoint)?.elementKind !== 'node') throw new Error('The scene needs both verified node endpoints of each connection.');
+        visible.add(endpoint);
+      }
+    }
+  }
+  addStoryAncestors(visible, byId);
+  if (visible.size > storyTargetLimit) throw new Error('The scene exceeds 1,500 visible elements after including endpoints and groups.');
+  const ordered = table.targets.filter(item => visible.has(item.id));
+  return { visible: ordered.map(item => item.id), cameraKeys: ordered.filter(item => item.elementKind !== 'group').map(item => item.id),
+    coverage: countStoryCoverage(table, visible) };
+}

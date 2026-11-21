@@ -7,6 +7,7 @@ import V3ProjectOutline from "./V3ProjectOutline";
 import ReadabilityDialog from "./ReadabilityDialog";
 import V3ComparisonDialog from "./V3ComparisonDialog";
 import V3GroupStoryDialog, { initialGroupStoryDraft } from "./V3GroupStoryDialog";
+import type { ManualSceneSelection } from "./V3SavedScenesDialog";
 import V3StructureEditor from "./V3StructureEditor";
 import V3SourceEditor, { type SourceDraft } from "./V3SourceEditor";
 import DetachComponentDialog from "./DetachComponentDialog";
@@ -71,10 +72,12 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [comparison, setComparison] = useState<"design" | "layout">();
   const [storyOpen, setStoryOpen] = useState(false);
   const [savedScenesOpen, setSavedScenesOpen] = useState<"edit" | "create">();
+  const [savedSceneScope, setSavedSceneScope] = useState<ManualSceneSelection>();
   const [storyDraft, setStoryDraft] = useState(initialGroupStoryDraft);
   const [canvasProfile, setCanvasProfile] = useState<ViewingProfile>();
   const previewImage = useRef<HTMLImageElement>(null);
   const suggestScenesButton = useRef<HTMLButtonElement>(null);
+  const outlineButton = useRef<HTMLButtonElement>(null);
   const sourceDetails = useRef<HTMLDetailsElement>(null);
   const sourceMark = useRef<HTMLElement>(null);
   const [outcome, setOutcome] = useState<ProposalOutcome>();
@@ -405,7 +408,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
             )}
             <div className="recovery-actions">
               <button className="button secondary" disabled={busy} aria-keyshortcuts="Control+K Meta+K" onClick={() => setCommandsOpen(true)}>Commands</button>
-              {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setOutlineOpen(true)}>Outline</button>}
+              {outlineAvailable && <button ref={outlineButton} className="button secondary" disabled={busy} onClick={() => setOutlineOpen(true)}>Outline</button>}
               {!!targetTable?.targets.length && <button className="button secondary" disabled={busy} onClick={openReadability}>Check readability</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("design")}>Explore designs</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
@@ -479,6 +482,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setComparison("design");
         } : undefined} onSaveComponent={flatFlowchart ? setComponentHidden : undefined}
         onResetDesign={canResetDesign ? hidden => setDesignReset({ selection: new Set(outlineSelection), hidden }) : undefined}
+        onStory={!busy && project && project.storyboard.scenes.length < 50 ? hidden => {
+          setSavedSceneScope({ ids: [...outlineSelection], hidden });
+          setOutlineOpen(false);
+          setSavedScenesOpen("create");
+        } : undefined}
         onDeleteConnections={flatFlowchart && !editingUnavailable ? hidden => {
           setDeleteConnections({ ids: [...outlineSelection], hidden });
           setEditFlowchart("removeEdges");
@@ -548,9 +556,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return status;
         }} />}
       {savedScenesOpen && editor.current && <Suspense>
-        <SavedScenesDialog editor={editor.current} startNew={savedScenesOpen === "create"} onClose={() => {
+        <SavedScenesDialog editor={editor.current} startNew={savedScenesOpen === "create"} initialScope={savedSceneScope} onClose={() => {
           setSavedScenesOpen(undefined);
-          if (!editor.current?.snapshot().storyboard.scenes.length) requestAnimationFrame(() => suggestScenesButton.current?.focus());
+          setSavedSceneScope(undefined);
+          if (savedSceneScope) requestAnimationFrame(() => outlineButton.current?.focus());
+          else if (!editor.current?.snapshot().storyboard.scenes.length) requestAnimationFrame(() => suggestScenesButton.current?.focus());
         }} onOrderChange={(...args) => {
           const current = editor.current!;
           const status = current.editStorySceneOrder(...args);

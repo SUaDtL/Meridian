@@ -43,8 +43,7 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
 }
 
 export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onConnect, onGroup, onBulkText,
-  onDesign, onResetDesign, onSaveComponent,
-  onDeleteConnections, onClose }: {
+  onDesign, onResetDesign, onSaveComponent, onStory, onDeleteConnections, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
   onSelection: Dispatch<SetStateAction<ReadonlySet<string>>>;
@@ -57,6 +56,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   onDesign?: (hidden: number) => void;
   onResetDesign?: (hidden: number) => void;
   onSaveComponent?: (hidden: number) => void;
+  onStory?: (hidden: number) => void;
   onDeleteConnections?: (hidden: number) => void;
   onClose: () => void;
 }) {
@@ -78,6 +78,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   const canSaveComponent = selectedNodes && selected.size <= 100;
   const canDeleteConnections = selected.size > 0 && selected.size <= bulkConnectionLimit
     && items.filter(item => item.kind === "edge" && item.source && selected.has(item.id)).length === selected.size;
+  const canCreateScene = selected.size > 0 && items.filter(item => item.kind !== "group" && selected.has(item.id)).length === selected.size;
 
   useEffect(() => {
     if (active && document.activeElement === list.current) {
@@ -175,6 +176,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           {onDesign && <button type="button" className="button secondary" disabled={!selected.size}
             onClick={() => onDesign(hidden)}>Explore designs for selection</button>}
           {onResetDesign && <button type="button" className="button secondary" onClick={() => onResetDesign(hidden)}>Reset selected styles</button>}
+          {onStory && canCreateScene && <button type="button" className="button secondary" onClick={() => onStory(hidden)}>Create scene from selection</button>}
           {onSaveComponent && <button type="button" className="button secondary" disabled={!canSaveComponent}
             title={canSaveComponent ? undefined : "Select one to 100 nodes"}
             onClick={() => onSaveComponent(hidden)}>Save as component</button>}

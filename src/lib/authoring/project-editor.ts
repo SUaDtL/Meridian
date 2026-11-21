@@ -23,6 +23,7 @@ import { createHeadingProposalLane, type ReadyProposal } from './proposals';
 import type { ViewingProfile } from './readability';
 import type { ElementRemovalImpact } from './retire-elements';
 import { SourceDiagnosticError } from './source-diagnostics';
+import { resolveManualStoryScope } from './story-targets';
 import { validateMermaidProject } from './validate-mermaid-project';
 
 const historyByteLimit = 8 * 1024 * 1024;
@@ -437,7 +438,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       ? { next: change.next, suggestions: change.suggestions, rendered: change.rendered } : undefined;
   }
 
-  async function prepareStoryScene(sceneId: string | null, details: StorySceneDetails, base: MermaidProjectV3, signal?: AbortSignal) {
+  async function prepareStoryScene(sceneId: string | null, details: StorySceneDetails, base: MermaidProjectV3,
+    signal?: AbortSignal, selected?: readonly string[]) {
     if (closed || base !== current.document) throw new Error('The project changed. Open the current story again.');
     if (!Number.isFinite(details.duration) || details.duration < 0.5 || details.duration > 120
       || !Number.isFinite(details.transition) || details.transition < 0 || details.transition > Math.min(10, details.duration)) {
@@ -455,15 +457,22 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       easing: details.easing, reveal: details.reveal, camera: { ...scene.camera, padding: details.padding },
     };
     if (sceneId !== null && canonicalJson(scene) === canonicalJson(edited)) throw new Error('Change a scene property before previewing.');
+    const selection = sceneId === null && selected ? [...selected] : undefined;
+    const rendered = await renderMermaidProject(base, signal);
+    signal?.throwIfAborted();
+    if (closed || base !== current.document || !rendered.targetTable) throw new Error('The scene could not be verified against the current diagram.');
+    const scope = selection && resolveManualStoryScope(rendered.targetTable, selection);
+    if (scope) {
+      edited.visible = scope.visible;
+      edited.camera = { ...edited.camera, mode: 'elements', keys: scope.cameraKeys };
+    }
     const next = freezeSnapshot(validateMermaidProject({
       ...base, revision: base.revision + 1, updatedAt: new Date().toISOString(),
       storyboard: { ...base.storyboard, scenes: sceneId === null ? [...scenes, edited] : scenes.map(item => item === scene ? edited : item) },
     }));
-    const rendered = await renderMermaidProject(base, signal);
-    signal?.throwIfAborted();
-    if (closed || base !== current.document || !rendered.targetTable) throw new Error('The scene could not be verified against the current diagram.');
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
-    stories.set(proposal, { base, next, suggestions: [], rendered, destination: 'edit', savingCopy: false });
+    stories.set(proposal, { base, next, suggestions: scope ? [{ scene: edited, coverage: scope.coverage }] : [],
+      rendered, destination: 'edit', savingCopy: false });
     return proposal;
   }
 
