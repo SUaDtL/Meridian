@@ -90,7 +90,7 @@ test('previews a typed component, stores only instance bindings, and preserves t
   expect(restored).toEqual({ ...renamed, revision: detached.revision + 1, updatedAt: restored.updatedAt });
 });
 
-test('imports conflicting library definitions as copies and exports them after reload', async ({ page }) => {
+test('imports library conflicts as copies and restores an explicitly removed definition', async ({ page }) => {
   async function openShelf() {
     await page.getByRole('button', { name: 'Build with guidance' }).click();
     await page.getByRole('button', { name: 'Browse components' }).click();
@@ -108,16 +108,41 @@ test('imports conflicting library definitions as copies and exports them after r
   await expect(shelf.getByRole('status')).toHaveText('2 components saved locally. One conflict was saved as a separate copy.');
   await page.reload();
   const restored = await openShelf();
-  await expect(restored.getByRole('button', { name: /Team approval/ })).toBeVisible();
-  await expect(restored.getByRole('button', { name: /Independent approval/ })).toBeVisible();
-  const [backup] = await Promise.all([page.waitForEvent('download'), restored.getByRole('button', { name: 'Download component library' }).click()]);
-  const path = await backup.path();
-  if (!path) throw new Error('Missing library backup.');
-  const result = JSON.parse(await readFile(path, 'utf8'));
+  const originalCard = restored.getByRole('button', { name: /^Team approval/ });
+  await expect(originalCard).toBeVisible();
+  await expect(restored.getByRole('button', { name: /^Independent approval/ })).toBeVisible();
+  async function readDownload(name: string) {
+    const [backup] = await Promise.all([page.waitForEvent('download'), restored.getByRole('button', { name, exact: true }).click()]);
+    const path = await backup.path();
+    if (!path) throw new Error('Missing library backup.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  }
+  const result = await readDownload('Download component library');
   expect(result.schema).toBe('meridian-library/v1');
   expect(result.definitions).toHaveLength(2);
   expect(result.definitions.find((entry: { name: string }) => entry.name === original.name)).toEqual(original);
   const copy = result.definitions.find((entry: { name: string }) => entry.name === conflict.name);
   expect(copy.id).not.toBe(id);
   expect(copy).toEqual({ ...conflict, id: copy.id });
+
+  const remove = restored.getByRole('button', { name: /Remove Team approval version/ });
+  const review = restored.getByRole('region', { name: 'Review library removal' });
+  await remove.click();
+  await expect(review.getByRole('heading')).toBeFocused();
+  await review.getByRole('button', { name: 'Cancel removal' }).click();
+  await expect(remove).toBeFocused();
+  expect(await readDownload('Download component library')).toEqual(result);
+  await remove.click();
+  await review.getByRole('button', { name: 'Remove definition' }).click();
+  const undo = restored.getByRole('button', { name: 'Undo library removal' });
+  await expect(undo).toBeFocused();
+  await expect(originalCard).toHaveCount(0);
+  expect((await readDownload('Download component library')).definitions).toEqual([copy]);
+  expect(await readDownload('Download removed definition')).toEqual(original);
+  await undo.click();
+  await expect(originalCard).toBeFocused();
+  expect(await readDownload('Download component library')).toEqual(result);
+  await page.reload();
+  await openShelf();
+  expect(await readDownload('Download component library')).toEqual(result);
 });
