@@ -71,6 +71,54 @@ async function setup(provider: Provider, filename = ':memory:') {
 }
 
 describe.skipIf(!sqlite)('local companion generation with a provider stub', () => {
+  it('reports only owned status and keeps exact cost after the proposal expires', async () => {
+    let release!: (outcome: typeof validOutcome) => void;
+    const completed = new Promise<typeof validOutcome>(resolve => { release = resolve; });
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const provider = vi.fn<Provider>(async () => { started(); return completed; });
+    const env = await setup(provider);
+    try {
+      const job = await env.issue();
+      const describe = (owner = subject) => env.service.readRequestStatus(owner, job.requestId);
+      const base = { requestId: job.requestId, requestHash: job.requestHash,
+        statusExpiresAt: new Date(initialTime + 24 * 60 * 60 * 1_000).toISOString() };
+      const cost = { currency: 'USD', unit: 'microdollar', pricePolicyVersion: policy.version };
+      const pendingCost = { ...cost, reservedMicrousd: '38', settledMicrousd: null, costStatus: 'reserved' };
+      const settledCost = { ...cost, reservedMicrousd: '38', settledMicrousd: '9', costStatus: 'settled_known' };
+      expect(await describe()).toEqual({ status: 200, body: { ...base, state: 'issued', resultAvailable: false,
+        serverTime: new Date(initialTime).toISOString(), cost: { ...cost, reservedMicrousd: '0', settledMicrousd: '0', costStatus: 'no_charge' } } });
+      expect(await describe(wrongSubject)).toEqual(await env.service.readRequestStatus(subject, requestAt(2).requestId));
+      expect(await describe(wrongSubject)).toMatchObject({ status: 404, body: { code: 'REQUEST_NOT_FOUND' } });
+      const unused = await env.issue(requestAt(2));
+      expect(provider).not.toHaveBeenCalled();
+      const generating = job.generate();
+      await ready;
+      expect(await describe()).toMatchObject({ status: 200, body: {
+        ...base, state: 'running', resultAvailable: false, cost: pendingCost,
+      } });
+      env.advance(500);
+      release(validOutcome);
+      await generating;
+      const retained = await describe();
+      expect(retained).toMatchObject({ status: 200, body: {
+        ...base, state: 'succeeded', resultAvailable: true, cost: settledCost,
+        resultExpiresAt: new Date(initialTime + 500 + 15 * 60_000).toISOString(),
+        proposal: { requestId: job.requestId, requestHash: job.requestHash, operations: JSON.parse(operations) },
+      } });
+      env.advance(500 + 15 * 60_000);
+      expect(await env.service.readRequestStatus(subject, unused.requestId)).toMatchObject({ status: 200,
+        body: { state: 'expired', resultAvailable: false, cost: { reservedMicrousd: '0', settledMicrousd: '0', costStatus: 'no_charge' } } });
+      expect(await describe()).toEqual({ status: 410, body: { code: 'RESULT_EXPIRED',
+        message: 'The proposal download expired.', requestId: job.requestId, retryable: false,
+        serverTime: new Date(initialTime + 500 + 15 * 60_000).toISOString(), state: 'succeeded', cost: settledCost,
+      } });
+      env.advance(24 * 60 * 60 * 1_000);
+      expect(await describe()).toMatchObject({ status: 404, body: { code: 'REQUEST_NOT_FOUND' } });
+      expect(provider).toHaveBeenCalledTimes(1);
+    } finally { env.ledger.close(); }
+  });
+
   it('reserves before the only provider call and returns one encrypted, subject-bound result twice', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'meridian-local-generation-'));
     const filename = join(folder, 'ledger.sqlite');
@@ -176,6 +224,9 @@ describe.skipIf(!sqlite)('local companion generation with a provider stub', () =
       expect(await pending).toEqual(uncertain);
       expect(provider.mock.calls[0][2].aborted).toBe(true);
       expect(await env.service.status(subject, job.requestId)).toEqual(uncertain);
+      expect(await env.service.readRequestStatus(subject, job.requestId)).toMatchObject({ status: 200, body: {
+        state: 'uncertain', resultAvailable: false, cost: { reservedMicrousd: '38', settledMicrousd: null, costStatus: 'reserved_unknown' },
+      } });
       expect(await job.generate()).toEqual(uncertain);
       expect(provider).toHaveBeenCalledTimes(1);
     } finally { env.ledger.close(); vi.useRealTimers(); }

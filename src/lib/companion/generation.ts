@@ -70,6 +70,42 @@ export class CompanionGeneration {
     } catch { return { code: 'RESULT_UNAVAILABLE' as const, amountMicrousd }; }
   }
 
+  /** Read the authenticated owner's local status and cost without invoking the provider. */
+  async readRequestStatus(subject: string, requestId: string) {
+    const now = this.now();
+    const serverTime = new Date(now).toISOString();
+    const record = this.ledger.ownedGeneration(subject, requestId, now);
+    if (!record) return {
+      status: 404 as const,
+      body: { code: 'REQUEST_NOT_FOUND', message: 'This request is unavailable.', retryable: false, serverTime },
+    };
+    const state = record.state === 'issued' && record.ticketExpiresAtMs <= now ? 'expired' : record.state;
+    const costStatus = record.state === 'issued' ? 'no_charge'
+      : record.state === 'running' ? 'reserved' : record.state === 'uncertain' ? 'reserved_unknown' : 'settled_known';
+    const cost = {
+      currency: 'USD' as const, unit: 'microdollar' as const, pricePolicyVersion: record.policyVersion,
+      reservedMicrousd: record.state === 'issued' ? '0' : record.maximumCharge,
+      settledMicrousd: record.state === 'issued' ? '0' : record.state === 'running' || record.state === 'uncertain'
+        ? null : record.settledOrReserved,
+      costStatus,
+    };
+    const body = { requestId, requestHash: record.requestHash, state, serverTime,
+      statusExpiresAt: new Date(record.statusExpiresAtMs).toISOString(), resultAvailable: false, cost };
+    if (record.state !== 'succeeded') return { status: 200 as const, body };
+    if (!record.result) return {
+      status: 410 as const,
+      body: { code: 'RESULT_EXPIRED', message: 'The proposal download expired.', requestId, retryable: false, serverTime, state, cost },
+    };
+    try {
+      const proposal = JSON.parse(await unseal(this.resultKey, record.result.bytes, subject, requestId)) as unknown;
+      return { status: 200 as const, body: { ...body, resultAvailable: true,
+        resultExpiresAt: new Date(record.result.expiresAtMs).toISOString(), proposal } };
+    } catch {
+      return { status: 503 as const,
+        body: { code: 'LEDGER_UNAVAILABLE', message: 'The saved proposal could not be read.', retryable: false, serverTime } };
+    }
+  }
+
   async generate(subject: string, ticket: string, idempotencyKey: string, bytes: Uint8Array) {
     const verified = await verifyCompanionTicket(ticket, subject, this.verificationKeys, this.now());
     if (verified.code !== 'VERIFIED') return verified;
