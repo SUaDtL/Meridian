@@ -1124,6 +1124,10 @@ export default function Studio({
             onRender={renderNow}
             onEditSource={showSource}
             onDownload={onDownload}
+            presentation={{
+              sceneCount: doc.storyboard?.scenes.length ?? 0,
+              download: async svg => (await import("./lib/export")).exportPresentation(svg, doc),
+            }}
             notify={notify}
             onClose={() => setExportOpen(false)}
           />

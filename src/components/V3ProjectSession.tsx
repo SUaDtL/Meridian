@@ -23,7 +23,7 @@ import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
 import { rolePaintFields, type FrameGeometry, type ReadabilityTarget, type RolePaintField, type ViewingProfile } from "../lib/authoring/readability";
 import { buildReadabilityHighlight } from "../lib/authoring/readability-highlight";
-import { buildExportFrame, buildMermaidProjectPresentation } from "../lib/export";
+import { buildExportFrame, buildMermaidProjectPresentation, type ExportFrameOptions } from "../lib/export";
 import type { ProjectSaveState } from "../lib/persistence/project-save-queue";
 import { openWorkspaceDatabase, saveWorkspaceProjectCopy } from "../lib/persistence/workspace-db";
 import { downloadText, safeFilename, serializeProject } from "../lib/storage";
@@ -36,6 +36,7 @@ const SavedScenesDialog = lazy(() => import("./V3SavedScenesDialog"));
 const DesignResetDialog = lazy(() => import("./DesignResetDialog"));
 const OrphanReviewDialog = lazy(() => import("./OrphanReviewDialog"));
 const V3SourceEditor = lazy(() => import("./V3SourceEditor"));
+const ExportDialog = lazy(() => import("./ExportDialog"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
@@ -61,6 +62,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [detachOpen, setDetachOpen] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<SourceDraft>();
   const [commandsOpen, setCommandsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [componentHidden, setComponentHidden] = useState<number>();
   const [bulkTextHidden, setBulkTextHidden] = useState<number>();
   const [designReset, setDesignReset] = useState<{ selection: ReadonlySet<string>; hidden: number; field?: RolePaintField }>();
@@ -411,14 +413,19 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   function downloadProject() {
     if (project) downloadText(serializeProject(project), `${safeFilename(title)}.meridian.json`);
   }
+  async function savePresentation(options?: ExportFrameOptions) {
+    if (!project || !currentFrame?.rendered.targetTable) {
+      throw new Error("Render the current project before exporting its presentation.");
+    }
+    const html = await buildMermaidProjectPresentation(currentFrame.rendered, project, options);
+    downloadText(html, `${safeFilename(title)}.html`, "text/html;charset=utf-8");
+  }
   function downloadPresentation() {
-    if (!project || !currentFrame?.rendered.targetTable) return;
-    void run(async () => {
-      const html = await buildMermaidProjectPresentation(currentFrame.rendered, project);
-      downloadText(html, `${safeFilename(title)}.html`, "text/html;charset=utf-8");
-    });
+    void run(() => savePresentation());
   }
   const commands: WorkspaceCommand[] = [
+    { id: "export-diagram", title: "Export diagram", category: "Export", synonyms: ["PNG", "SVG", "Mermaid"],
+      run: () => setExportOpen(true) },
     { id: "external-assistant", title: "External assistant file exchange", category: "Advanced", synonyms: ["request file", "import AI proposal"],
       unavailable: busy ? "Wait for the current action to finish." : flatFlowchart && targetTable ? undefined : "Open a supported flat flowchart.",
       run: () => setAssistOpen(true) },
@@ -555,6 +562,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               <button className="button secondary" disabled={busy} onClick={downloadProject}>
                 {needsRecovery ? "Download my changes" : "Download v3 project"}
               </button>
+              <button className="button secondary" disabled={busy} onClick={() => setExportOpen(true)}>Export diagram</button>
               {currentFrame?.rendered.targetTable && (
                 <button className="button secondary" disabled={busy} onClick={downloadPresentation}>Download HTML presentation</button>
               )}
@@ -591,6 +599,18 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           <button className="button quiet" disabled={busy} onClick={close}>Back to v3 projects</button>
         </div>
       </Modal>
+      {exportOpen && project && (
+        <Suspense fallback={<p role="status">Opening export…</p>}>
+          <ExportDialog document={project} result={currentFrame?.rendered.result ?? null} stale={!currentFrame}
+            rendering={!currentFrame && !!project.source.trim() && !renderError} renderError={renderError}
+            onEditSource={showSource} onDownload={downloadProject} onClose={() => setExportOpen(false)}
+            presentation={{
+              sceneCount: project.storyboard.scenes.length,
+              unavailable: currentFrame?.rendered.targetTable ? undefined : "A verified diagram is needed to export the presentation.",
+              download: (_svg, options) => savePresentation(options),
+            }} />
+        </Suspense>
+      )}
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} restoredView={restoredOutline} onSelection={setOutlineSelection}
         canRename={!labelEditingUnavailable} onClose={() => setOutlineOpen(false)}
