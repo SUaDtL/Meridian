@@ -21,7 +21,7 @@ async function downloadProject(page: Page, live: Locator) {
   return JSON.parse(await readFile(path, 'utf8'));
 }
 
-test('checks the accepted drawing in a fixed viewing area without changing its source or revision', async ({ page }) => {
+test('checks the accepted drawing and shows the exact finding targets without editing', async ({ page }, info) => {
   const source = 'flowchart LR\n  A["Service"]\n  B["Service"]\n  C["Warehouse"]\n  A e1@--> B\n';
   const live = await openProject(page, { ...createDocument(), title: 'Readability example', source });
   await live.getByRole('button', { name: 'Check readability', exact: true }).click();
@@ -37,6 +37,19 @@ test('checks the accepted drawing in a fixed viewing area without changing its s
   await expect(report.getByText(/Service measures .* CSS pixels/).first()).toBeVisible();
   await expect(report.getByText(/2 distinct elements share the name Service/)).toBeVisible();
   await expect(report.getByText('The diagram contains 2 regions with no connection between them.')).toBeVisible();
+  const show = report.getByRole('listitem').filter({ hasText: '2 distinct elements share the name Service' }).getByRole('button', { name: 'Show in diagram' });
+  await show.click();
+  const highlighted = page.getByRole('dialog', { name: 'Finding on the diagram' });
+  await expect(highlighted.getByRole('heading', { name: 'Duplicate names' })).toBeFocused();
+  const image = highlighted.getByRole('img', { name: 'Diagram with highlighted elements' });
+  await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0);
+  await expect(highlighted.getByRole('listitem')).toHaveText(['Service (A)', 'Service (B)']);
+  await page.screenshot({ path: info.outputPath('readability-targets-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('readability-targets-mobile.png') });
+  await highlighted.getByRole('button', { name: 'Return to checks' }).click();
+  await expect(show).toBeFocused();
+  await expect(report.getByText(/2 distinct elements share the name Service/)).toBeVisible();
   await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('document');
   await check.getByRole('spinbutton', { name: 'Allocated width in CSS pixels' }).fill('125');
   await expect(check.getByText('125 CSS pixels allocated · Fits width · Project revision 0')).toBeVisible();

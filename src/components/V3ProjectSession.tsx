@@ -20,6 +20,7 @@ import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
 import { rolePaintFields, type FrameGeometry, type ReadabilityTarget, type RolePaintField, type ViewingProfile } from "../lib/authoring/readability";
+import { buildReadabilityHighlight } from "../lib/authoring/readability-highlight";
 import { buildExportFrame, buildMermaidProjectPresentation } from "../lib/export";
 import type { ProjectSaveState } from "../lib/persistence/project-save-queue";
 import { openWorkspaceDatabase, saveWorkspaceProjectCopy } from "../lib/persistence/workspace-db";
@@ -487,6 +488,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       </Suspense>}
       {readabilityTargets && currentFrame && targetTable && editor.current && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
         token={targetTable.baseToken} editor={editor.current} canvas={canvasProfile}
+        highlightTargets={ids => buildReadabilityHighlight(currentFrame.rendered, currentFrame.document, ids)}
         dismissed={dismissedReadability} onDismissed={setDismissedReadability}
         onCompareLayouts={() => { setReadabilityOpen(false); setComparison("layout"); }}
         onRename={!editingUnavailable ? id => { setReadabilityOpen(false); renameFromOutline(id); } : undefined}

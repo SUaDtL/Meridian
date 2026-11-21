@@ -17,7 +17,7 @@ type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type ContrastPreview = NonNullable<ReturnType<Editor["readContrastPreview"]>>;
 
 export default function ReadabilityDialog({ frame, targets, token, editor, canvas, dismissed, onDismissed, onRename, onResetRolePaint,
-  onCompareLayouts, onApply, onClose }: {
+  onCompareLayouts, highlightTargets, onApply, onClose }: {
   frame: FrameGeometry;
   targets: ReadabilityTarget[];
   token: BaseToken;
@@ -28,6 +28,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   onRename?: (elementId: string) => void;
   onResetRolePaint?: (elementId: string, field: RolePaintField) => void;
   onCompareLayouts?: () => void;
+  highlightTargets: (ids: readonly string[]) => string;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyContrast"]>;
   onClose: () => void;
 }) {
@@ -42,6 +43,8 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   const [error, setError] = useState("");
   const [fix, setFix] = useState<{ proposal: ReadyProposal; preview: ContrastPreview; url: string }>();
   const [showDismissed, setShowDismissed] = useState(false);
+  const [highlight, setHighlight] = useState<{ url: string; ids: readonly string[]; label: string }>();
+  const [highlightError, setHighlightError] = useState(false);
   const summary = useRef<HTMLParagraphElement>(null);
   const checkButton = useRef<HTMLButtonElement>(null);
   const [imageReady, setImageReady] = useState(false);
@@ -53,6 +56,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
 
   useEffect(() => () => active.current?.abort(), []);
   useEffect(() => () => { if (fix) URL.revokeObjectURL(fix.url); }, [fix]);
+  useEffect(() => () => { if (highlight) URL.revokeObjectURL(highlight.url); }, [highlight]);
 
   function reset() { setResult(undefined); setError(""); setRetry(undefined); setFix(undefined); setImageReady(false); setCancelled(false); }
 
@@ -137,6 +141,17 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     }
   }
 
+  function showTargets(ids: readonly string[], label: string) {
+    setError("");
+    setHighlightError(false);
+    try {
+      const svg = highlightTargets(ids);
+      setHighlight({ ids, label, url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The reviewed targets could not be shown.");
+    }
+  }
+
   function dismissalEvidence(finding: ReadabilityFinding) {
     if (finding.rule === "QC-05") {
       return [finding.rule, 1, [...finding.targets].sort(), normalizedName(byId.get(finding.targets[0])?.label ?? "")];
@@ -195,7 +210,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   }
 
   return (
-    <Modal title="Check readability" wide onClose={onClose}>
+    <><Modal title="Check readability" wide onClose={onClose}>
       <div className="heading-form">
         <label>Viewing profile<select value={mode} disabled={busy} onChange={event => { setMode(event.target.value as typeof mode); reset(); }}>
           {canvas && <option value="canvas">Canvas at fit</option>}
@@ -242,6 +257,8 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
           onChange={event => setShowDismissed(event.target.checked)} /> Show ignored findings</label>}
         <ul>{findings.filter(item => showDismissed || !dismissed.has(item.key)).map(({ finding, key }) => <li key={key}>
           <strong>{checkNames[finding.rule]}</strong><p>{findingText(finding)}</p>
+          {finding.rule !== "QC-06" && <button type="button" className="button quiet" disabled={busy}
+            onClick={() => showTargets("target" in finding ? [finding.target] : finding.targets, checkNames[finding.rule])}>Show in diagram</button>}
           {finding.rule === "QC-01" && !dismissed.has(key) && <button type="button" className="button secondary" disabled={busy}
             onClick={() => void previewFix(finding.target)}>Preview text contrast fix for {byId.get(finding.target)?.label || "unnamed label"}</button>}
           {finding.rule === "QC-05" && <details><summary>Review elements with this name</summary>
@@ -254,8 +271,9 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
             })}</ul>
           </details>}
           {finding.rule === "QC-06" && <details><summary>Review regions</summary>
-            <p>Regions follow declared connections.</p><ol>{finding.regions.map(region => <li key={region[0]}>
-              {region.map(id => byId.get(id)?.label || "Unnamed element").join(", ")}
+            <p>Regions follow declared connections.</p><ol>{finding.regions.map((region, index) => <li key={region[0]}>
+              <span>{region.map(id => byId.get(id)?.label || "Unnamed element").join(", ")}</span>
+              <button type="button" className="button quiet" disabled={busy} onClick={() => showTargets(region, `Region ${index + 1}`)}>Show region {index + 1}</button>
             </li>)}</ol>
           </details>}
           {finding.rule === "QC-07" && onCompareLayouts && !dismissed.has(key) && <button type="button" className="button secondary"
@@ -279,5 +297,22 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
         </div>
       </section>}
     </Modal>
+    {highlight && <Modal title="Finding on the diagram" wide onClose={() => setHighlight(undefined)} initialFocus="[data-finding-title]">
+      <h3 data-finding-title tabIndex={-1}>{highlight.label}</h3>
+      <div className="migration-preview">
+        <img src={highlight.url} alt="Diagram with highlighted elements" onError={() => setHighlightError(true)} />
+      </div>
+      {highlightError && <p role="alert">The diagram preview could not be displayed.</p>}
+      <details open={highlight.ids.length <= 6}>
+        <summary>{highlight.ids.length} highlighted {highlight.ids.length === 1 ? "element" : "elements"}</summary>
+        <ul>{highlight.ids.map(id => {
+          const target = byId.get(id);
+          return <li key={id}>{target?.label || "Unnamed element"}{target?.sourceId && ` (${target.sourceId})`}</li>;
+        })}</ul>
+      </details>
+      <div className="dialog-actions">
+        <button type="button" className="button primary" onClick={() => setHighlight(undefined)}>Return to checks</button>
+      </div>
+    </Modal>}</>
   );
 }
