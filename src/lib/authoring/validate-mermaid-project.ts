@@ -189,12 +189,19 @@ function verifyReferences(document: MermaidProjectV3) {
 }
 
 /** Validate the authoritative v3 Mermaid shape and its cross-record relationships. */
+export class PortableProjectLimitError extends Error {
+  constructor() {
+    super('This Meridian project exceeds its portable file limits.');
+    this.name = 'PortableProjectLimitError';
+  }
+}
+
 export function validateMermaidProject(value: unknown): MermaidProjectV3 {
   if (!agrees(value, mermaidSchema)) throw new Error('This is not a valid Meridian v3 Mermaid project.');
   const document = value as MermaidProjectV3;
   const serialized = serializeProject(document);
   if (document.title.length > 120 || document.subtitle.length > 240 || !fitsProjectFile(serialized)) {
-    throw new Error('This Meridian project exceeds its portable file limits.');
+    throw new PortableProjectLimitError();
   }
   verifyReferences(document);
   decodeJson(serialized);
