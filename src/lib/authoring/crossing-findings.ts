@@ -2,7 +2,9 @@ import { routeSegmentLimit, type RoutePoint } from './route-geometry';
 
 type Segment = { edge: string; a: RoutePoint; b: RoutePoint; minX: number; maxX: number; minY: number; maxY: number };
 export type CrossingFinding = { rule: 'QC-07'; targets: [string, string]; count: number; first: RoutePoint };
-export type CrossingEvidence = { checked: number; skipped: number; findingsOmitted: boolean };
+export type CrossingEvidence = { checked: number; skipped: number; count: number; findingsOmitted: boolean };
+export type CrossingSummary = { count: number; measured: number; unknown: number; checked: number; skipped: number };
+export type LayoutCrossingComparison = { current: CrossingSummary; proposed: CrossingSummary };
 
 const pairLimit = 100_000;
 const findingLimit = 200;
@@ -54,6 +56,7 @@ export function analyzeCrossings(targets: readonly { id: string; kind: string; m
   const candidates = ends.reduce((sum, end, index) => sum + end - index - 1, 0);
   const found = new Map<string, CrossingFinding>();
   let checked = 0;
+  let count = 0;
   let findingsOmitted = false;
   for (let index = 0; index < segments.length && checked < pairLimit; index++) {
     const left = segments[index];
@@ -63,6 +66,7 @@ export function analyzeCrossings(targets: readonly { id: string; kind: string; m
       if (left.edge === right.edge || left.maxY < right.minY || right.maxY < left.minY) continue;
       const point = crossing(left, right);
       if (!point) continue;
+      count++;
       const targets: [string, string] = left.edge < right.edge ? [left.edge, right.edge] : [right.edge, left.edge];
       const key = JSON.stringify(targets);
       const previous = found.get(key);
@@ -71,6 +75,6 @@ export function analyzeCrossings(targets: readonly { id: string; kind: string; m
       else findingsOmitted = true;
     }
   }
-  const evidence: CrossingEvidence = { checked, skipped: candidates - checked, findingsOmitted };
+  const evidence: CrossingEvidence = { checked, skipped: candidates - checked, count, findingsOmitted };
   return { coverage, evidence, findings: [...found.values()] };
 }

@@ -39,6 +39,9 @@ test('compares measured layouts and undoes an exact direction patch with the cho
   await expect(measured).toContainText('Viewed labels at 1280 × 720 CSS pixels');
   await expect(measured.getByText(/Current · .* measured/)).toBeVisible();
   await expect(measured.getByText(/Proposed · .* measured/)).toBeVisible();
+  const crossings = layouts.getByRole('region', { name: 'Connection crossings' });
+  await expect(crossings.getByText(/Current · 0 crossing candidates in checked routes · 1 measured · 0 unknown/)).toBeVisible();
+  await expect(crossings.getByText(/Proposed · 0 crossing candidates in checked routes · 1 measured · 0 unknown/)).toBeVisible();
   await apply.click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const applied = await downloadProject(page, live);

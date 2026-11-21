@@ -96,7 +96,11 @@ test('reports measured route candidates and opens the normal layout review', asy
   await expect(report.getByText('Crossing candidates · 4 measured · 0 unknown · 4 not applicable')).toBeVisible();
   await expect(report.getByText(/cross approximately once within the measured routes/).first()).toBeVisible();
   await report.getByRole('button', { name: 'Compare layouts' }).first().click();
-  await expect(page.getByRole('dialog', { name: 'Compare layouts' })).toBeVisible();
+  const layouts = page.getByRole('dialog', { name: 'Compare layouts' });
+  await layouts.getByRole('button', { name: 'Preview Balanced' }).click();
+  const comparison = layouts.getByRole('region', { name: 'Connection crossings' });
+  await expect(comparison.getByText(/Current · 1 crossing candidate in checked routes · 4 measured · 0 unknown/)).toBeVisible();
+  await expect(comparison.getByText(/Proposed · 0 crossing candidates in checked routes · 3 measured · 1 unknown/)).toBeVisible();
 });
 
 test('reports an ELK bridge arc as unknown route geometry', async ({ page }) => {
