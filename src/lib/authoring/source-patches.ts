@@ -295,9 +295,10 @@ function groupRemovalPlan(source: string) {
     if (!/^[ \t]*$/.test(source.slice(from, record.start)) || source.slice(record.end, to).trim()) throw unsupported();
     return { from, to, expectedText: source.slice(from, to), replacement: '' };
   });
-  const flat = readSubset(applySourcePatches(source, patches));
+  const flatSource = applySourcePatches(source, patches);
+  const flat = readSubset(flatSource);
   if (flat.nodes.has(opening.sourceId) || flat.edgeIds.has(opening.sourceId)) throw unsupported();
-  return { sourceId: opening.sourceId, patches, memberIds: memberIds as string[] };
+  return { sourceId: opening.sourceId, patches, memberIds: memberIds as string[], flatSource };
 }
 
 export function supportedUngroupSourceId(source: string) {
@@ -310,6 +311,44 @@ export function planGroupRemoval(source: string, sourceId: string) {
   const plan = groupRemovalPlan(source);
   if (plan.sourceId !== sourceId) throw unsupported();
   return plan;
+}
+
+function standaloneDeclaration(source: string, declaration: RecordSpan) {
+  const from = source.lastIndexOf('\n', declaration.start - 1) + 1;
+  const separator = source.indexOf('\n', declaration.end);
+  const to = separator === -1 ? source.length : separator + 1;
+  if (!/^[ \t]*$/.test(source.slice(from, declaration.start))
+    || !/^(?:;[ \t]*)?(?:%%[^\r\n]*)?$/.test(source.slice(declaration.end, to).trim())) return;
+  return { from, to, separator };
+}
+
+export function supportedGroupMoves(source: string, groupId: string) {
+  try {
+    const group = groupRemovalPlan(source);
+    if (group.sourceId !== groupId) return [];
+    const members = new Set(group.memberIds);
+    return scanRecords(source).flatMap(record => {
+      const id = node.exec(record.text)?.[1];
+      return id && !members.has(id) && standaloneDeclaration(source, record) ? [id] : [];
+    });
+  } catch { return []; }
+}
+
+/** Move one standalone declaration into a verified top-level group's body. */
+export function planMoveToGroup(source: string, sourceId: string, groupId: string) {
+  const group = groupRemovalPlan(source);
+  if (group.sourceId !== groupId || group.memberIds.includes(sourceId)) throw new Error('Choose an outside node and the current top-level group.');
+  const declaration = scanRecords(source).find(record => node.exec(record.text)?.[1] === sourceId);
+  const span = declaration && standaloneDeclaration(source, declaration);
+  if (!span) throw new Error('Choose a node declaration on its own source line.');
+  const { from, to, separator } = span;
+  const text = source.slice(from, to);
+  const insertion = group.patches[1].from;
+  const newline = source.match(/\r?\n/)?.[0] ?? '\n';
+  return { sourceId, memberIds: group.memberIds, flatSource: group.flatSource, patches: [
+    { from, to, expectedText: text, replacement: '' },
+    { from: insertion, to: insertion, expectedText: '', replacement: separator === -1 ? text + newline : text },
+  ] };
 }
 
 /** Plan an exact label replacement for the explicit-declaration spike. The caller still needs the Mermaid oracle. */

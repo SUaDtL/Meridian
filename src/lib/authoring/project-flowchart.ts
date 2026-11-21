@@ -22,6 +22,7 @@ export type NativeFlowchartEdit =
   | { op: 'addEdge'; sourceId: string; targetId: string; label?: string; direction?: ConnectionDirection }
   | { op: 'addGroup'; memberIds: readonly string[]; label: string }
   | { op: 'removeGroup'; targetId: string }
+  | { op: 'moveToGroup'; targetId: string; groupId: string }
   | { op: 'removeNode'; targetId: string; incidentEdgeIds: readonly string[] }
   | { op: 'removeEdges'; targetIds: readonly string[] }
   | { op: 'removeEdge'; targetId: string };
@@ -102,6 +103,12 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
       removal = [{ id: group.id, legacyKey: `group:${group.binding.sourceId}` }];
       break;
     }
+    case 'moveToGroup': {
+      const group = previousById.get(edit.groupId);
+      if (!group || group.status !== 'resolved' || group.elementKind !== 'group') throw new Error('Choose a current diagram group.');
+      intent = { op: 'moveToGroup', sourceId: nodeSourceId(edit.targetId), groupId: group.binding.sourceId };
+      break;
+    }
     case 'removeEdge': {
       const sourceId = edgeSourceId(edit.targetId);
       intent = { op: 'removeEdge', sourceId };
@@ -150,7 +157,7 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
   const target = added.find(item => item.binding.sourceId === proof.sourceId
     && item.elementKind === (edit.op === 'addEdge' ? 'edge' : edit.op === 'addGroup' ? 'group' : 'node'));
   const noNewIdentity = edit.op === 'setNodeLabel' || edit.op === 'setEdgeLabel' || edit.op === 'removeEdge'
-    || edit.op === 'removeEdges' || edit.op === 'removeNode' || edit.op === 'removeGroup';
+    || edit.op === 'removeEdges' || edit.op === 'removeNode' || edit.op === 'removeGroup' || edit.op === 'moveToGroup';
   const validAdded = noNewIdentity ? !added.length
     : edit.op === 'addNext' ? added.length === 2 && !!target && added.some(item => item.elementKind === 'edge' && item.binding.sourceId === proof.addedEdgeId)
     : added.length === 1 && !!target;

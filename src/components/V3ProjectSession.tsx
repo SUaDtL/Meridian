@@ -15,7 +15,7 @@ import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-pr
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
-import { flowchartSubsetTopology, supportedUngroupSourceId } from "../lib/authoring/source-patches";
+import { flowchartSubsetTopology, supportedGroupMoves, supportedUngroupSourceId } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
@@ -247,6 +247,13 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     const target = targetTable?.targets.find(item => item.id === identity?.id && item.elementKind === "group");
     return target ? { id: target.id, label: target.label || "Diagram group" } : undefined;
   }, [identities, targetTable, ungroupSourceId]);
+  const movableNodes = useMemo(() => {
+    if (!source || !ungroupSourceId || !targetTable) return [];
+    const candidates = new Set(supportedGroupMoves(source, ungroupSourceId));
+    const outside = new Set(targetTable.targets.filter(item => item.elementKind === "node" && item.parentId === null).map(item => item.id));
+    const movable = new Set(identities?.filter(record => candidates.has(record.binding.sourceId)).map(record => record.id));
+    return nodes.filter(item => outside.has(item.id) && movable.has(item.id));
+  }, [source, ungroupSourceId, targetTable, identities, nodes]);
   const needsRecovery = save?.phase === "conflict" || save?.phase === "error";
   const editingUnavailable = busy ? "Wait for the current action to finish."
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
@@ -355,6 +362,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "ungroup", title: "Ungroup", category: "Diagram", synonyms: ["remove container", "keep group members"],
       unavailable: busy ? "Wait for the current action to finish." : removableGroup ? undefined : "Open a rendered flowchart with one supported top-level group.",
       run: () => setEditFlowchart("removeGroup") },
+    { id: "move-into-group", title: "Move node into group", category: "Diagram",
+      unavailable: busy ? "Wait for the current action to finish." : removableGroup && movableNodes.length ? undefined
+        : "Open a supported top-level group with a standalone node outside it.",
+      run: () => setEditFlowchart("moveToGroup") },
     { id: "rename-connection", title: "Edit connection label", category: "Diagram", synonyms: ["rename edge", "label relationship"],
       unavailable: editingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined),
       run: () => setEditFlowchart("setEdgeLabel") },
@@ -389,7 +400,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               : "Saving changes…"}</p>
             {needsRecovery && <p role="alert">{save?.message}</p>}
             {targetTable && !flatFlowchart && (
-              <p className="muted-note">{removableGroup ? "Ungroup is available for this diagram. Other visual edits need a flat flowchart."
+              <p className="muted-note">{removableGroup ? "Use the group actions below to edit this diagram."
                 : "Visual edits support flat flowcharts with explicit node declarations."}</p>
             )}
             <div className="recovery-actions">
@@ -410,6 +421,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                 <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
               )}
               {removableGroup && <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("removeGroup")}>Ungroup</button>}
+              {removableGroup && !!movableNodes.length && <button className="button secondary" disabled={busy}
+                onClick={() => setEditFlowchart("moveToGroup")}>Move node into group</button>}
               <button className="button quiet" disabled={busy || !editor.current?.canUndo()} onClick={() => changeHistory("undo")}>Undo</button>
               <button className="button quiet" disabled={busy || !editor.current?.canRedo()} onClick={() => changeHistory("redo")}>Redo</button>
               <button className="button secondary" disabled={busy} onClick={downloadProject}>
@@ -585,7 +598,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return result.status;
         }} />}
       {editFlowchart && editor.current && (
-        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} initialOperation={editFlowchart} initialTarget={editTarget}
+        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} movableNodes={movableNodes}
+          initialOperation={editFlowchart} initialTarget={editTarget}
           deleteConnections={deleteConnections} groupMembers={groupMembers}
           onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); setGroupMembers(undefined); }}
           onApply={proposal => {
