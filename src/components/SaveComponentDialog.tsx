@@ -90,11 +90,20 @@ export default function SaveComponentDialog({ editor, frame, selection, hidden, 
     return next;
   }
 
+  const names = new Map([...(contents?.nodes ?? []), ...(contents?.groups ?? [])].map(item => [item.id, item.label]));
   return <Modal title="Save selection as component" wide busy={busy === "Saving to the library"} onClose={onClose}>
     {!contents && !error && <p role="status">Checking the selected source…</p>}
     {contents && !review && <div className="heading-form">
-      <p>{contents.nodes.length} selected nodes · {hidden} hidden in the outline</p>
+      {contents.groups.length ? <p>{selection.size} selected · {hidden} hidden in the outline · {contents.nodes.length} {contents.nodes.length === 1 ? "node" : "nodes"}
+        {" and "}{contents.groups.length} {contents.groups.length === 1 ? "group" : "groups"} included</p>
+        : <p>{contents.nodes.length} selected nodes · {hidden} hidden in the outline</p>}
       <p>Copies labels, source shapes, semantic roles and reviewed connections into the component library.</p>
+      {!!contents.groups.length && <details open>
+        <summary>Group membership</summary>
+        <ul>{contents.groups.map(group => <li key={group.id}>{group.label}
+          <ul>{group.members.map(id => <li key={id}>{names.get(id)}</li>)}</ul>
+        </li>)}</ul>
+      </details>}
       <label>Component name<input value={name} maxLength={120} disabled={!!busy} onChange={event => setName(event.target.value)} /></label>
       <fieldset className="heading-form guided-process-fieldset" disabled={!!busy}>
         <legend>Node labels and parameters</legend>
@@ -106,7 +115,7 @@ export default function SaveComponentDialog({ editor, frame, selection, hidden, 
       </fieldset>
       <fieldset className="heading-form guided-process-fieldset" disabled={!!busy}>
         <legend>Internal connections</legend>
-        {!contents.edges.length && <p>No declared connections join the selected nodes.</p>}
+        {!contents.edges.length && <p>No declared connections join the included elements.</p>}
         {contents.edges.slice(0, edgeLimit).map(item => <label key={item.id} className="check-label">
           <input type="checkbox" checked={edges.has(item.id)} disabled={!edges.has(item.id) && edges.size === 200}
             onChange={event => setEdges(toggle(edges, item.id, event.target.checked))} /> Include {item.summary}
@@ -134,7 +143,9 @@ export default function SaveComponentDialog({ editor, frame, selection, hidden, 
     </div>}
     {review && <section className="migration-preview" aria-label="Proposed component">
       <h3>{review.definition.name}</h3>
-      <p>{review.definition.fragment.nodes.length} nodes · {review.definition.fragment.edges.length} connections · {review.definition.parameters.length} parameters · {review.definition.ports.length} ports</p>
+      <p>{review.definition.fragment.nodes.length} nodes
+        {!!review.definition.fragment.groups.length && ` · ${review.definition.fragment.groups.length} groups`}
+        {" · "}{review.definition.fragment.edges.length} connections · {review.definition.parameters.length} parameters · {review.definition.ports.length} ports</p>
       <img src={review.url} alt="Proposed reusable component" onLoad={() => setPainted(true)}
         onError={() => setError("The proposed component could not be displayed.")} />
       <div className="dialog-actions">

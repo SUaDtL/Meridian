@@ -197,7 +197,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     return [...counts];
   }, [project?.roles]);
   const ungroupSourceId = useMemo(() => source && !flatFlowchart ? supportedUngroupSourceId(source) : undefined, [source, flatFlowchart]);
-  const componentInsertionSupported = useMemo(() => flatFlowchart || (!!source && supportsComponentInsertion(source)), [source, flatFlowchart]);
+  const componentSourceSupported = useMemo(() => flatFlowchart || (!!source && supportsComponentInsertion(source)), [source, flatFlowchart]);
   const outlineAvailable = !!targetTable?.targets.length;
   const outline = useMemo(() => outlineOpen && project && targetTable ? projectOutline(project, targetTable) : undefined,
     [outlineOpen, project, targetTable]);
@@ -342,7 +342,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "edit-source", title: "Edit Mermaid source", category: "Project", synonyms: ["update source", "code"],
       unavailable: busy ? "Wait for the current action to finish." : targetTable ? undefined : "Open a verified flowchart before editing its source.", run: () => setEditSource(true) },
     { id: "insert-component", title: "Insert component", category: "Diagram", synonyms: ["add reusable pattern", "component library"],
-      unavailable: busy ? "Wait for the current action to finish." : targetTable && componentInsertionSupported ? undefined
+      unavailable: busy ? "Wait for the current action to finish." : targetTable && componentSourceSupported ? undefined
         : "Open a rendered flowchart with supported declarations and group membership.",
       run: () => setInsertOpen(true) },
     { id: "detach-component", title: "Detach component", category: "Diagram", synonyms: ["component instance"],
@@ -499,7 +499,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setComparisonSelection({ ids: [...outlineSelection], hidden });
           setOutlineOpen(false);
           setComparison("design");
-        } : undefined} onSaveComponent={flatFlowchart ? setComponentHidden : undefined}
+        } : undefined} onSaveComponent={componentSourceSupported ? setComponentHidden : undefined}
         onResetDesign={canResetDesign ? hidden => setDesignReset({ selection: new Set(outlineSelection), hidden }) : undefined}
         onStory={!busy && project && project.storyboard.scenes.length < 50 ? hidden => {
           setSavedSceneScope({ ids: [...outlineSelection], hidden });

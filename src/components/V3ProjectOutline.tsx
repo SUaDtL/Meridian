@@ -75,7 +75,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   const active = visible.find(row => row.item.id === activeId) ?? visible[0];
   const hidden = selected.size - visible.filter(row => selected.has(row.item.id)).length;
   const selectedNodes = selected.size > 0 && items.filter(item => item.kind === "node" && selected.has(item.id)).length === selected.size;
-  const canSaveComponent = selectedNodes && selected.size <= 100;
+  const canSaveComponent = selected.size > 0 && selected.size <= 100
+    && items.filter(item => item.kind !== "edge" && selected.has(item.id)).length === selected.size;
   const canDeleteConnections = selected.size > 0 && selected.size <= bulkConnectionLimit
     && items.filter(item => item.kind === "edge" && item.source && selected.has(item.id)).length === selected.size;
   const canCreateScene = selected.size > 0 && items.filter(item => item.kind !== "group" && selected.has(item.id)).length === selected.size;
@@ -178,7 +179,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           {onResetDesign && <button type="button" className="button secondary" onClick={() => onResetDesign(hidden)}>Reset selected styles</button>}
           {onStory && canCreateScene && <button type="button" className="button secondary" onClick={() => onStory(hidden)}>Create scene from selection</button>}
           {onSaveComponent && <button type="button" className="button secondary" disabled={!canSaveComponent}
-            title={canSaveComponent ? undefined : "Select one to 100 nodes"}
+            title={canSaveComponent ? undefined : "Select one to 100 nodes or groups"}
             onClick={() => onSaveComponent(hidden)}>Save as component</button>}
           {onDeleteConnections && relationships && <button type="button" className="button secondary" disabled={!canDeleteConnections}
             onClick={() => onDeleteConnections(hidden)}>Delete selected connections</button>}
