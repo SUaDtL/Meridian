@@ -5,7 +5,7 @@ import type { RenderTargetTable } from './project-render';
 export interface OutlineSourceLocation { from: number; to: number; line: number }
 
 function provenSourceLocations(source: string) {
-  try { return flowchartSourceLocations(source); } catch { return undefined; }
+  try { return flowchartSourceLocations(source, true); } catch { return undefined; }
 }
 
 function lineOfOffset(lineStarts: number[], offset: number) {
@@ -43,8 +43,9 @@ export function projectOutline(project: MermaidProjectV3, table: RenderTargetTab
   return table.targets.map(target => {
     const binding = bindings.get(target.id);
     const publicId = binding?.type === 'source-id' || binding?.type === 'edge-id' ? binding.sourceId : null;
-    const span = binding?.type === 'edge-id' ? sourceLocations?.edges.get(binding.sourceId)
-      : binding?.type === 'source-id' && target.elementKind === 'node' ? sourceLocations?.nodes.get(binding.sourceId) : undefined;
+    const span = binding?.type === 'edge-id' && target.elementKind === 'edge' ? sourceLocations?.edges.get(binding.sourceId)
+      : binding?.type === 'source-id' && target.elementKind !== 'edge'
+        ? (target.elementKind === 'group' ? sourceLocations?.groups : sourceLocations?.nodes)?.get(binding.sourceId) : undefined;
     const source = span ? { ...span, line: lineOfOffset(lineStarts, span.from) } : null;
     const sourceName = target.sourceId ? targets.get(target.sourceId)?.label : undefined;
     const targetName = target.targetId ? targets.get(target.targetId)?.label : undefined;
