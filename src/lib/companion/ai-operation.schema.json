@@ -1,0 +1,247 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "addNode"
+        },
+        "ref": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/NewRef"
+        },
+        "label": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Label"
+        },
+        "shape": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Shape"
+        },
+        "parentGroupId": {
+          "anyOf": [
+            {
+              "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ElementRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "ref",
+        "label",
+        "shape",
+        "parentGroupId"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "setNodeLabel"
+        },
+        "targetId": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+        },
+        "label": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Label"
+        }
+      },
+      "required": [
+        "op",
+        "targetId",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "addEdge"
+        },
+        "ref": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/NewRef"
+        },
+        "sourceId": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ElementRef"
+        },
+        "targetId": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ElementRef"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "direction": {
+          "enum": [
+            "forward",
+            "both",
+            "none"
+          ]
+        },
+        "lineStyle": {
+          "enum": [
+            "solid",
+            "dashed",
+            "dotted"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "ref",
+        "sourceId",
+        "targetId",
+        "label",
+        "direction",
+        "lineStyle"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "setEdgeLabel"
+        },
+        "targetId": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "op",
+        "targetId",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "removeNode"
+        },
+        "targetId": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+        },
+        "incidentEdgeIds": {
+          "type": "array",
+          "items": {
+            "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+          },
+          "maxItems": 500,
+          "minItems": 0
+        },
+        "annotationPolicy": {
+          "const": "preserve-orphans"
+        }
+      },
+      "required": [
+        "op",
+        "targetId",
+        "incidentEdgeIds",
+        "annotationPolicy"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "removeEdge"
+        },
+        "targetId": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+        },
+        "annotationPolicy": {
+          "const": "preserve-orphans"
+        }
+      },
+      "required": [
+        "op",
+        "targetId",
+        "annotationPolicy"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "createGroup"
+        },
+        "ref": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/NewRef"
+        },
+        "label": {
+          "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Label"
+        },
+        "memberIds": {
+          "type": "array",
+          "items": {
+            "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ElementRef"
+          },
+          "maxItems": 200,
+          "minItems": 1
+        },
+        "parentGroupId": {
+          "anyOf": [
+            {
+              "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ElementRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "ref",
+        "label",
+        "memberIds",
+        "parentGroupId"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "moveToGroup"
+        },
+        "targetIds": {
+          "type": "array",
+          "items": {
+            "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/UUID"
+          },
+          "maxItems": 200,
+          "minItems": 1
+        },
+        "parentGroupId": {
+          "anyOf": [
+            {
+              "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/ElementRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "targetIds",
+        "parentGroupId"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$comment": "AIOperation union from the Meridian Design Package proposal contract v1."
+}
