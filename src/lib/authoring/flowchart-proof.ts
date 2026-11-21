@@ -2,7 +2,7 @@ import type { RenderResult, StudioDocument } from '../../types';
 import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram } from '../render';
 import { canonicalJson } from './base-token';
-import { flowchartEngineConnections, flowchartEngineShapes, type ConnectionDirection, type Shape } from './flowchart-source';
+import { authoringLimits, flowchartEngineConnections, flowchartEngineShapes, type ConnectionDirection, type Shape } from './flowchart-source';
 import { applySourcePatches, flowchartSubsetTopology, groupedFlowchartTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planEdgeSelectionRemoval, planFlowchartFragment, planGroupContentsRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, type FlowchartFragment, type SourcePatch } from './source-patches';
 
 export type SourceIntent =
@@ -235,6 +235,15 @@ export async function proveFlowchartEdit(
   const initial = await render(document.source);
   const before = readModel(flowchartModelFor(initial), groupedEdit);
   verifySourceTopology(before, sourceTopology, groupedSource?.groups);
+  if (intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel') {
+    const labels = intent.op === 'setNodeLabel' ? before.nodes : before.edges;
+    const currentLabel = labels.find(item => item.id === plan.sourceId);
+    const text = currentLabel?.label ?? '';
+    if (currentLabel?.labelType === 'markdown' || /[\r\n\u2028\u2029]|<\/?[A-Za-z][^>]*>/u.test(text)
+      || Array.from(text).length > authoringLimits.labelCodePoints) {
+      throw new Error('Use the Mermaid source editor to edit this long or formatted label.');
+    }
+  }
   const output = source === document.source ? initial : await render(source);
   const actual = readModel(flowchartModelFor(output), groupedEdit || intent.op === 'addGroup' || intent.op === 'moveToGroup');
   let expected: SemanticGraph;
