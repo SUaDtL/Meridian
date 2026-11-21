@@ -352,7 +352,12 @@ async function performRender({ settings, nodeAccents, design: inputDesign, prepa
       const key = group.getAttribute('data-id') || (rendered.diagramType.startsWith('flowchart') ? flowchartSourceKey(group.id, id) : undefined);
       if (!key) continue;
       if (!group.id) group.id = `${id}-participant-${groupIndex}`;
-      const label = (group.querySelector('.nodeLabel, .label, text')?.textContent ?? key).replace(/\s+/g, ' ').trim();
+      const labelElement = group.querySelector('.nodeLabel, .label, text');
+      // Mermaid breaks wrapped SVG labels into separate rows. Preserve the word
+      // boundary even when the next row's first span has no leading space.
+      const rows = labelElement?.querySelectorAll('text > tspan.text-outer-tspan');
+      const text = rows?.length ? Array.from(rows, row => row.textContent ?? '').join(' ') : labelElement?.textContent;
+      const label = (text ?? key).replace(/\s+/g, ' ').trim();
       group.setAttribute('data-node-key', key);
       group.setAttribute('tabindex', '0');
       group.setAttribute('role', 'button');

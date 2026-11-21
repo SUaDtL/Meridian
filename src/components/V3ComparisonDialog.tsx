@@ -47,11 +47,13 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   const layout = mode === "layout";
   const [scopeKind, setScopeKind] = useState<DesignScope["kind"]>(selection?.ids.length ? "selection" : "diagram");
   const [preserveOverrides, setPreserveOverrides] = useState(true);
+  const [enlargeLabels, setEnlargeLabels] = useState(false);
   const [applyRoleShapes, setApplyRoleShapes] = useState(() => editor.snapshot().design.applyRoleShapes);
   const [role, setRole] = useState<SemanticRole | "">(selectedRoleCounts[0]?.[0] ?? "");
   const [choice, setChoice] = useState<Choice>(layout ? "balanced" : "clear");
   const [direction, setDirection] = useState<LayoutIntent["direction"]>("keep");
   const offerRoleShapes = allowScopedDesign && choice === "presentation" && selectedRoleCounts.some(([id]) => id === "decision");
+  const offerTypography = allowScopedDesign && scopeKind !== "diagram" && choice === "presentation";
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -87,8 +89,9 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
 
   async function prepare() {
     if (active.current || (!layout && scopeKind === "role" && !role)) return;
-    const scope: DesignScope = scopeKind === "selection" ? { kind: scopeKind, ids: selection?.ids ?? [], preserveOverrides }
-      : scopeKind === "role" && role ? { kind: scopeKind, role, preserveOverrides } : { kind: "diagram", applyRoleShapes: offerRoleShapes && applyRoleShapes };
+    const scope: DesignScope = scopeKind === "selection" ? { kind: scopeKind, ids: selection?.ids ?? [], preserveOverrides, enlargeLabels: offerTypography && enlargeLabels }
+      : scopeKind === "role" && role ? { kind: scopeKind, role, preserveOverrides, enlargeLabels: offerTypography && enlargeLabels }
+        : { kind: "diagram", applyRoleShapes: offerRoleShapes && applyRoleShapes };
     const work = new AbortController();
     active.current = work;
     setBusy(true);
@@ -209,10 +212,18 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
             resetPreview();
           }} /> Preserve my element overrides
         </label>}
+        {offerTypography && <>
+          <label className="check-label"><input type="checkbox" checked={enlargeLabels} disabled={busy} onChange={event => {
+            setEnlargeLabels(event.target.checked);
+            resetPreview();
+          }} /> Enlarge eligible node labels</label>
+          {enlargeLabels && <p>Larger labels may move other nodes during automatic layout. Existing user font sizes are preserved.</p>}
+        </>}
         {!allowScopedDesign && <p>Scoped recipes are available on flowcharts with explicit node declarations.</p>}
       </div>}
       <p>{layout || scopeKind === "diagram" ? "Diagram scope · Element overrides are preserved."
-        : preserveOverrides ? "This scope uses node paint." : "The preview lists the node paint overrides this recipe will clear."}</p>
+        : preserveOverrides ? offerTypography && enlargeLabels ? "This scope uses node paint and eligible label sizes." : "This scope uses node paint."
+          : "The preview lists the node paint overrides this recipe will clear."}</p>
       <div className="recipe-options" role="group" aria-label={layout ? "Layout alternatives" : "Design recipes"}>
         {options.map(option => {
           return <button className="button secondary" key={option.id} aria-pressed={choice === option.id} disabled={busy}
@@ -248,6 +259,15 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
         <p>Applies to {preview.scope.eligible} of {preview.scope.total} elements. {preview.scope.protectedFields} protected paint {preview.scope.protectedFields === 1 ? "field" : "fields"}.</p>
         {preview.scope.clearedFields > 0 && <p>Clears {preview.scope.clearedFields} user paint {preview.scope.clearedFields === 1 ? "override" : "overrides"} from {preview.scope.clearedTargets} {preview.scope.clearedTargets === 1 ? "element" : "elements"}.</p>}
         <p>Diagram-wide settings outside this scope include {preview.scope.omitted.join(", ").toLowerCase()}.</p>
+        {preview.scope.typography && <>
+          <p>Automatic layout moved {preview.scope.typography.moved.length} {preview.scope.typography.moved.length === 1 ? "node" : "nodes"} outside this scope. Their styling is unchanged.</p>
+          {preview.scope.typography.moved.length > 0 && <details><summary>Review moved nodes</summary>
+            <ul>{preview.scope.typography.moved.map(name => <li key={name}>{name}</li>)}</ul>
+          </details>}
+          {preview.scope.typography.protected.length > 0 && <details><summary>Review preserved font sizes</summary>
+            <ul>{preview.scope.typography.protected.map(name => <li key={name}>{name}</li>)}</ul>
+          </details>}
+        </>}
         {preview.scope.exclusions.length > 0 && <details><summary>Review excluded elements</summary>
           <ul>{preview.scope.exclusions.map((label, index) => <li key={index}>{label}</li>)}</ul>
         </details>}
