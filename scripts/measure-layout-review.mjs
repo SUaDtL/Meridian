@@ -11,6 +11,9 @@ if (build.repository !== 'SUaDtL/Meridian' || build.format !== 'split-v1'
   || build.workingTreeDirty !== false || !/^[0-9a-f]{40}$/.test(build.commit)) {
   throw new Error('Measure a clean Meridian production artifact.');
 }
+const measureMemory = process.argv.includes('--memory');
+const measureInput = process.argv.includes('--input');
+if (measureInput && measureMemory) throw new Error('Run input and memory measurement separately.');
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
 
 function readLimit(path) {
@@ -24,7 +27,6 @@ const standardSettings = {
 };
 const alternatives = ['Compact', 'Balanced', 'Presentation'];
 const variants = 11;
-const measureMemory = process.argv.includes("--memory");
 function prepareFixture(index) {
   const label = String.fromCharCode(65 + index);
   const nodes = Array.from({ length: 50 }, (_, number) => `  N${number}["Service ${label}${number}"]`);
@@ -49,6 +51,73 @@ async function browserMemory(session) {
     throw new Error('Chromium did not report JS heap bytes.');
   }
   return { documents, nodes, jsEventListeners, jsHeapBytes: heap.value };
+}
+
+async function inputToPaint(page, target, eventType, expectedText, trigger) {
+  await target.evaluate((element, { eventType, expectedText }) => {
+    window.layoutInputMeasurement = new Promise(resolve => {
+      const timedOut = setTimeout(() => {
+        element.removeEventListener(eventType, start, true);
+        cancelAnimationFrame(frame);
+        resolve(null);
+      }, 5000);
+      let frame;
+      function start(event) {
+        if (!event.isTrusted || (eventType === 'keydown' && event.key !== ' ')) return;
+        element.removeEventListener(eventType, start, true);
+        const startTime = event.timeStamp;
+        function check() {
+          const painted = expectedText === null ? element.getAttribute('aria-selected') === 'true'
+            : element.querySelector('.cm-line')?.textContent === expectedText;
+          if (!painted) {
+            frame = requestAnimationFrame(check);
+            return;
+          }
+          frame = requestAnimationFrame(timestamp => {
+            clearTimeout(timedOut);
+            resolve(timestamp - startTime);
+          });
+        }
+        frame = requestAnimationFrame(check);
+      }
+      element.addEventListener(eventType, start, true);
+    });
+  }, { eventType, expectedText });
+  await trigger();
+  const milliseconds = await page.evaluate(() => window.layoutInputMeasurement);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) throw new Error(`Missing trusted ${eventType} feedback.`);
+  return milliseconds;
+}
+
+async function workspaceInput(page, live, mobile) {
+  const navigation = live.getByRole('navigation', { name: 'Workspace panels' });
+  if (mobile && await navigation.isVisible()) await navigation.getByRole('button', { name: 'Build', exact: true }).tap();
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  const selection = [];
+  for (let index = 0; index < 3; index++) {
+    const target = outline.getByRole('treeitem').nth(index);
+    await target.scrollIntoViewIfNeeded();
+    if (await target.getAttribute('aria-selected') !== 'false') throw new Error('Choose an unselected fixture node.');
+    selection.push(await inputToPaint(page, target, 'pointerdown', null, () => mobile ? target.tap() : target.click()));
+  }
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
+
+  await live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  const source = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const editor = source.locator('.cm-content');
+  await editor.press('Control+Home');
+  await editor.press('End');
+  const typing = [];
+  for (let index = 0; index < 3; index++) {
+    typing.push(await inputToPaint(page, editor, 'keydown', 'flowchart LR ', () => editor.press('Space')));
+    await editor.press('Backspace');
+    const header = await editor.locator('.cm-line').first().textContent();
+    if (header !== 'flowchart LR') throw new Error('The draft input fixture did not restore its header.');
+  }
+  await source.getByRole('button', { name: 'Close dialog' }).click();
+  await source.waitFor({ state: 'hidden' });
+  return { selection, typing };
 }
 
 async function measure(mobile) {
@@ -85,6 +154,13 @@ async function measure(mobile) {
       await page.getByRole('button', { name: `Open v3 project ${project.title}` }).click({ timeout: 30000 });
       const live = page.getByRole('dialog', { name: project.title });
       await live.getByRole('img', { name: `Diagram preview for ${project.title}` }).waitFor();
+      if (measureInput) {
+        const sample = await workspaceInput(page, live, mobile);
+        if (index > 0) batches.push(sample);
+        await live.getByRole('button', { name: 'Back to v3 projects' }).click();
+        process.stderr.write(`${mobile ? 'mobile' : 'desktop'} input fixture ${index + 1}/${documents.length}\n`);
+        continue;
+      }
       await live.getByRole('button', { name: 'Compare layouts', exact: true }).click();
       const dialog = page.getByRole('dialog', { name: 'Compare layouts' });
       const choices = dialog.getByRole('group', { name: 'Layout alternatives' });
@@ -161,7 +237,9 @@ try {
     browser: browser.version(), os: os.release(), cpu: os.cpus()[0].model,
     cpuCgroup: readLimit('/sys/fs/cgroup/cpu.max'), memoryCgroup: readLimit('/sys/fs/cgroup/memory.max'),
     fixture: { nodes: 50, edges: 75, warmedModuleFixtures: 1, measuredFixturesPerProfile: 10 },
-    method: measureMemory
+    method: measureInput
+      ? 'Trusted outline pointerdown or CodeMirror keydown to the animation frame following matching visible state. Three samples per action per fixture, immediately after foreground rendering has settled. Mobile typing uses Chromium keyboard input.'
+      : measureMemory
       ? 'Observed temporary rendering hosts with a DOM observer. Read Chromium DOM and live JavaScript heap counters after forced garbage collection before opening the first project, during the settled comparison, and after closing each project. Timings include observer instrumentation.'
       : 'Real click or tap to two animation frames after a visible decoded candidate becomes eligible to apply. Long Tasks API and requestAnimationFrame gaps observed independently. Candidate inputs differ per fixture. Three sequential options per fixture.',
     results,

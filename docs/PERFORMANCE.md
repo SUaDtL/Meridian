@@ -180,3 +180,40 @@ workspace cannot launch Chromium: it fails before page creation with
 the browser measurements above came from GitHub CI. CI installs the browser
 pinned by Playwright and deploys the exact verified `site/` artifact without
 rebuilding it after the complete workflow passes.
+
+
+### Ordinary input on a medium v3 project
+
+The production input lab ran on Chromium 159.0.8154.6 with an AMD EPYC 9V74
+host, a four-core cgroup quota and 16 GiB of memory. It used the clean build at
+`c04f6a93a058592659244370ba6ea1fcb74749d5`. This revision changes the
+measurement script and uses the same app source as its parent
+`02bc15949cf8ced80252e3e110c65b6f06e53a11`.
+
+Each profile opened a warm-up project and ten measured projects with 50 nodes
+and 75 connections. It collected three trusted Outline selections and three
+CodeMirror keystrokes per measured project. Each measurement spans the
+`pointerdown` or `keydown` timestamp to the animation frame following the DOM
+change. The returned draft keystrokes leave the accepted source untouched.
+Mobile selection uses touch emulation. Mobile typing uses Chromium keyboard
+injection at a 390 × 844 viewport and 4× CPU throttling. Desktop is
+1280 × 900 at 1×. The first run overlapped a local browser suite. The repeated
+run had no concurrent local browser tests.
+
+| Run | Profile | Outline selection p95 / max | Typing p95 / max |
+| --- | --- | --- | --- |
+| Concurrent browser suite | Desktop | 160.1 / 190.1 ms | 153.8 / 247.8 ms |
+| Concurrent browser suite | Throttled mobile | 58.2 / 63.7 ms | 38.5 / 48.9 ms |
+| Isolated repeat | Desktop | 80.8 / 180.6 ms | 200.1 / 225.5 ms |
+| Isolated repeat | Throttled mobile | 69.1 / 79.1 ms | 49.2 / 57.7 ms |
+
+Desktop typing exceeded the 100 ms p95 target on both runs. Desktop selection
+exceeded the target on the concurrent run and met it in the isolated repeat.
+Both actions met the target in the throttled browser profile. Physical phone
+input, IME composition, other fixture sizes and input while an explicit layout
+candidate is rendering remain open. The existing layout timing report keeps
+automatic preview unavailable.
+
+Build Pages from a clean commit, serve its `site` directory, and run
+`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173/ node scripts/measure-layout-review.mjs --input`.
+The JSON records the exact artifact, host limits and individual samples.
