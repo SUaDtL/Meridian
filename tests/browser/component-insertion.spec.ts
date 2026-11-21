@@ -148,6 +148,6 @@ test('resumes component parameters and distinguishes unanswered, unconnected, an
   expect(inserted.source).toContain('m_n1["Reviewed worker"]');
   expect(inserted.source).toContain('m_n1 m_e2@--> In');
   await openInsertion();
-  await expect(component.getByRole('button', { name: /Configurable worker/ })).toBeVisible();
+  await expect(component.getByRole('button', { name: /^Configurable worker/ })).toBeVisible();
   await expect(resume).toHaveCount(0);
 });
