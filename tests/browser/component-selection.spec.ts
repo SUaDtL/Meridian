@@ -64,5 +64,5 @@ test('saves exactly the reviewed nodes, one internal edge, and one port without 
   await page.getByRole('button', { name: 'Browse components' }).click();
   const shelf = page.getByRole('dialog', { name: 'Components' });
   await shelf.getByLabel('Search components').fill('Reusable queue worker');
-  await expect(shelf.getByRole('button', { name: /Reusable queue worker/ })).toBeVisible();
+  await expect(shelf.getByRole('button', { name: /^Reusable queue worker/ })).toBeVisible();
 });
