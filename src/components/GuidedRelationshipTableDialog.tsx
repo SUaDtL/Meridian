@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Modal from "./Modal";
+import GuidedCheckpointTimes from "./GuidedCheckpointTimes";
 import GuidedAttachmentPicker, { emptyGuidedAttachment, GuidedAttachmentSummary, readyGuidedAttachment,
   type GuidedAttachmentTarget } from "./GuidedAttachmentPicker";
 import type { GuidedAttachment } from "../lib/authoring/guided-systems-insertion";
@@ -220,7 +221,7 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
           <li className="project-row" key={saved.id}>
             <button type="button" className="project-open" disabled={!!busy} onClick={() => resume(saved)}>
               <span><strong>Resume {saved.payload.title || "Untitled systems diagram"}</strong>
-                <small>Saved {formatTime(saved.createdAt)} · expires {formatTime(saved.expiresAt)}</small></span>
+                <small><GuidedCheckpointTimes checkpoint={saved} /></small></span>
             </button>
             <button type="button" className="button quiet" disabled={!!busy} aria-label={`Discard table draft ${saved.payload.title || "Untitled systems diagram"}`}
               onClick={() => void run("discard", () => discard(saved))}>Discard draft</button>
@@ -306,7 +307,7 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
       <p role="status">{busy === "file" ? "Reading your file…" : busy === "read" ? "Reading table rows…"
         : busy === "checkpoint" ? "Saving the mapped draft…"
         : busy === "preview" ? "Checking and rendering the diagram…" : busy === "save" ? (target ? "Saving the insertion…" : "Saving the new project…")
-          : !draftError && (review || draft.recovered) && draft.checkpoint ? `Draft saved locally · expires ${formatTime(draft.checkpoint.expiresAt)}`
+          : !draftError && (review || draft.recovered) && draft.checkpoint ? <GuidedCheckpointTimes checkpoint={draft.checkpoint} status />
           : "Raw table inputs stay in this session."}</p>
       {draftError && <p role="alert">Session-only draft. {draftError}</p>}
       {recoveryExport && <button type="button" className="button quiet" onClick={() => downloadText(JSON.stringify(recoveryExport, null, 2), "systems.meridian-draft.json")}>Download normalized draft</button>}
@@ -318,8 +319,4 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
 async function withDatabase<Result>(work: (db: IDBDatabase) => Promise<Result>) {
   const db = await openWorkspaceDatabase();
   try { return await work(db); } finally { db.close(); }
-}
-
-function formatTime(value: string) {
-  return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }

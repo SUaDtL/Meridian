@@ -15,6 +15,7 @@ import { listSystemsDrafts, makeSystemsCheckpoint, resumeSystemsDraft, type Syst
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import { downloadText } from "../lib/storage";
 import Modal from "./Modal";
+import GuidedCheckpointTimes from "./GuidedCheckpointTimes";
 
 const shapes = Object.keys(shapeDelimiters) as SystemRow["shape"][];
 const roles = { neutral: "Neutral", service: "Service", database: "Database", queue: "Queue", external: "External system", person: "Person" };
@@ -173,7 +174,7 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
               setNodeStart(0);
               setEdgeStart(0);
             }}><span><strong>Resume {record.payload.title || "Untitled systems diagram"}</strong>
-              <small>Saved {new Date(record.createdAt).toLocaleString()} · expires {new Date(record.expiresAt).toLocaleString()}</small></span></button>
+              <small><GuidedCheckpointTimes checkpoint={record} /></small></span></button>
             <button className="button quiet" disabled={!!busy} onClick={() => void run("Discarding draft", async () => {
               await withDatabase(db => discardGuidedCheckpoint(db, record));
               setSaved(current => current.filter(item => item.id !== record.id));
@@ -258,8 +259,8 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
           <button className="button primary" disabled={!!busy || !painted} onClick={create}>{target ? "Insert reviewed systems" : "Create systems project"}</button>
         </div>
       </section>}
-      {busy && <p role="status">{busy}…</p>}
-      {!busy && (checkpoint || dirty) && <p role="status">{dirty ? "Session-only changes" : "Draft saved locally"}</p>}
+      <p role="status" className="guided-checkpoint-status">{busy ? `${busy}…` : dirty ? "Session-only changes"
+        : checkpoint && <GuidedCheckpointTimes checkpoint={checkpoint} status />}</p>
       {error && <p role="alert">{error}</p>}
       {recoveryExport && dirty && <button type="button" className="button quiet" disabled={!!busy}
         onClick={() => downloadText(JSON.stringify(recoveryExport, null, 2), "systems.meridian-draft.json")}>
