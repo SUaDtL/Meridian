@@ -260,3 +260,49 @@ test('resets user and recipe styles separately, previews the revealed value, and
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   expect((await downloadProject(page, live)).design).toEqual(before.design);
 });
+
+test('reviews scoped paint inside nested groups and preserves other elements and source bytes', async ({ page }) => {
+  const source = '\uFEFFflowchart LR\r\n  subgraph Fleet [Fleet]\r\n    subgraph Team [Team]\r\n'
+    + '      A[Client]\r\n      B[Service]\r\n    end\r\n    C[Warehouse]\r\n  end\r\n'
+    + '  A route@--> B\r\n  B delivery@--> C\r\n  linkStyle 1 stroke:#446677\r\n';
+  const project = { ...createDocument(), title: 'Nested scoped recipe', source };
+  project.design.elements['node:A'] = { fill: '#abcdef' };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Nested scoped recipe' }).click();
+  const live = page.getByRole('dialog', { name: 'Nested scoped recipe' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Nested scoped recipe' })).toBeVisible();
+  const before = await downloadProject(page, live);
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^Client/ }).click();
+  await outline.getByRole('treeitem', { name: /^Service/ }).click({ modifiers: ['Shift'] });
+  await outline.getByRole('textbox', { name: 'Find an element' }).fill('Client');
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 1 hidden');
+  await outline.getByRole('button', { name: 'Explore designs for selection' }).click();
+  const design = page.getByRole('dialog', { name: 'Explore designs' });
+  await expect(design.getByRole('combobox', { name: 'Design scope' })).toHaveValue('selection');
+  await expect(design.getByText('2 selected · 1 hidden in the outline')).toBeVisible();
+  await design.getByRole('group', { name: 'Design recipes' }).getByRole('button', { name: /Technical/ }).click();
+  await design.getByRole('button', { name: 'Preview Technical' }).click();
+  await expect(design.getByRole('region', { name: 'Reviewed design scope' })).toContainText('Applies to 2 of 2 elements. 1 protected paint field.');
+  await design.getByRole('button', { name: 'Apply Technical' }).click();
+  const after = await downloadProject(page, live);
+  const client = before.identity.elements.find((item: { binding: { sourceId: string } }) => item.binding.sourceId === 'A').id;
+  const service = before.identity.elements.find((item: { binding: { sourceId: string } }) => item.binding.sourceId === 'B').id;
+  const recipe = { id: 'technical', version: '1.0.0' };
+  expect(after).toEqual({
+    ...before, revision: before.revision + 1, updatedAt: after.updatedAt,
+    design: { ...before.design, recipeElements: {
+      [client]: { recipe, style: { color: '#e0f2fe', stroke: '#38bdf8' } },
+      [service]: { recipe, style: { fill: '#13212d', color: '#e0f2fe', stroke: '#38bdf8' } },
+    } },
+  });
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  const undone = await downloadProject(page, live);
+  expect(undone).toEqual({ ...before, revision: after.revision + 1, updatedAt: undone.updatedAt });
+});

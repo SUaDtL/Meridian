@@ -32,9 +32,10 @@ function connectionRoutes(result: RenderResult) {
   return result.elements?.filter(item => item.kind === "edge").map(({ key, kind, measuredRoute }) => ({ id: key, kind, measuredRoute })) ?? [];
 }
 
-export default function V3ComparisonDialog({ mode, allowDirection, selection, selectedRoleCounts, currentUrl, currentSize, editor, onApply, onClose }: {
+export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDesign, selection, selectedRoleCounts, currentUrl, currentSize, editor, onApply, onClose }: {
   mode: ComparisonMode;
   allowDirection: boolean;
+  allowScopedDesign: boolean;
   selection?: { ids: readonly string[]; hidden: number };
   selectedRoleCounts: readonly [SemanticRole, number][];
   currentUrl: string;
@@ -180,8 +181,8 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
           resetPreview();
         }}>
           <option value="diagram">Entire diagram</option>
-          {allowDirection && !!selection?.ids.length && <option value="selection">Selected elements</option>}
-          {allowDirection && selectedRoleCounts.length > 0 && <option value="role">Selected role</option>}
+          {allowScopedDesign && !!selection?.ids.length && <option value="selection">Selected elements</option>}
+          {allowScopedDesign && selectedRoleCounts.length > 0 && <option value="role">Selected role</option>}
         </select></label>
         {scopeKind === "selection" && selection && <p>{selection.ids.length} selected · {selection.hidden} hidden in the outline</p>}
         {scopeKind === "role" && <label>Role<select value={role} disabled={busy} onChange={event => {
@@ -196,7 +197,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
             resetPreview();
           }} /> Preserve my element overrides
         </label>}
-        {!allowDirection && <p>Scoped recipes are available on flat flowcharts with explicit node declarations.</p>}
+        {!allowScopedDesign && <p>Scoped recipes are available on flowcharts with explicit node declarations.</p>}
       </div>}
       <p>{layout || scopeKind === "diagram" ? "Diagram scope · Element overrides are preserved."
         : preserveOverrides ? "This scope uses node paint." : "The preview lists the node paint overrides this recipe will clear."}</p>
