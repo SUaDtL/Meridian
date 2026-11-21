@@ -42,8 +42,24 @@ test('resumes reviewed OpenAPI operations and keeps precise provenance without t
   await dialog.getByLabel('Find operations').fill('health');
   await expect(dialog.getByRole('status')).toContainText('1 selected outside visible rows');
   await dialog.getByLabel('Diagram title').fill('Pet operation reference');
-  await dialog.getByRole('button', { name: 'Close dialog' }).click();
-  await expect(dialog).toBeHidden();
+  const enginePath = '**/assets/mermaid.core-*.js';
+  let releaseRender!: () => void;
+  let engineRequested = false;
+  const renderHold = new Promise<void>(resolve => { releaseRender = resolve; });
+  await page.route(enginePath, async route => {
+    engineRequested = true;
+    await renderHold;
+    await route.continue();
+  });
+  try {
+    await dialog.getByRole('button', { name: 'Preview diagram' }).click();
+    await expect.poll(() => engineRequested).toBe(true);
+    await dialog.getByRole('button', { name: 'Close dialog' }).click();
+    await expect(dialog).toBeHidden();
+  } finally {
+    releaseRender();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
   const drafts = await readDrafts(page);
   expect(drafts).toEqual([expect.objectContaining({ feature: 'engineering-facts', payload: expect.objectContaining({
     adapter: 'openapi', selectedFactIds: ['o1'], virtualPaths: ['specifications/service.json'],
