@@ -217,3 +217,24 @@ automatic preview unavailable.
 Build Pages from a clean commit, serve its `site` directory, and run
 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173/ node scripts/measure-layout-review.mjs --input`.
 The JSON records the exact artifact, host limits and individual samples.
+
+### Current input across four graph sizes
+
+The current Pages lab artifact `32e2015581bd172e63b770c8222910412d73c6fe` uses application source `9a04ff7e52a8f67314c56df0da30c42805c5912c`. Chromium 159.0.8154.6 ran on Linux 6.18.57 and an AMD EPYC 9V74 host with a four-core quota and 16 GiB memory ceiling. It loaded the production files over loopback. Desktop used a 1280 × 900 viewport at 1×. The phone viewport was 390 × 844 at 4× CPU throttling, with touch emulation for selection and Chromium keyboard injection for typing.
+
+Each graph size used one warm-up and ten distinct fixtures. Three Outline selections and three source keystrokes per fixture produced 30 samples per action and profile. The input tool timed trusted events through the animation frame after the expected UI state, after the foreground drawing settled. The larger measurements overlapped local artifact builds.
+
+| Nodes and connections | Profile | Selection median / p95 / max (ms) | Typing median / p95 / max (ms) |
+| --- | --- | --- | --- |
+| 10 / 15 | Desktop | 64.0 / 80.1 / 130.7 | 42.8 / 56.5 / 56.6 |
+| 10 / 15 | Throttled phone viewport | 45.4 / 64.0 / 98.6 | 24.8 / 33.7 / 34.7 |
+| 50 / 75 | Desktop | 64.0 / 81.2 / 114.4 | 40.6 / 57.1 / 57.4 |
+| 50 / 75 | Throttled phone viewport | 49.6 / 66.7 / 70.5 | 24.5 / 47.2 / 51.5 |
+| 150 / 225 | Desktop | 64.0 / 80.7 / 80.7 | 43.6 / 78.7 / 111.3 |
+| 150 / 225 | Throttled phone viewport | 46.9 / 141.7 / 193.5 | 25.0 / 35.2 / 38.6 |
+| 200 / 300 | Desktop | 64.1 / 162.7 / 223.8 | 48.0 / 72.6 / 77.8 |
+| 200 / 300 | Throttled phone viewport | 44.7 / 74.3 / 97.6 | 20.2 / 33.3 / 33.5 |
+
+All 480 actions returned the expected feedback. The 10- and 50-node fixtures met the 100 ms p95 ordinary-input budget in both profiles. Selection exceeded 100 ms p95 at 150 nodes on the throttled profile and at 200 nodes on desktop. Explicit layout review stays in place because the separate automatic-preview blocking test exceeded its budget. These runs leave physical mobile input, additional graph shapes and separate layout phase timings open.
+
+Use the same input command with `--nodes=10`, `--nodes=50`, `--nodes=150` or `--nodes=200` to reproduce each row pair.

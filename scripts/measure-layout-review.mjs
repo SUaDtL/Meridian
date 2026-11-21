@@ -14,6 +14,12 @@ if (build.repository !== 'SUaDtL/Meridian' || build.format !== 'split-v1'
 const measureMemory = process.argv.includes('--memory');
 const measureInput = process.argv.includes('--input');
 if (measureInput && measureMemory) throw new Error('Run input and memory measurement separately.');
+const sizeOption = process.argv.find(value => value.startsWith('--nodes='));
+const nodeCount = sizeOption ? Number(sizeOption.slice('--nodes='.length)) : 50;
+if ((sizeOption && !measureInput) || ![10, 50, 150, 200].includes(nodeCount)) {
+  throw new Error('Input measurement supports --nodes=10, 50, 150 or 200.');
+}
+const edgeCount = Math.floor(nodeCount * 1.5);
 const fixtureOption = process.argv.find(value => value.startsWith('--fixtures='));
 const measuredFixtures = fixtureOption ? Number(fixtureOption.slice('--fixtures='.length)) : 10;
 if (!Number.isInteger(measuredFixtures) || measuredFixtures < 1 || measuredFixtures > 49) {
@@ -33,9 +39,12 @@ const standardSettings = {
 const alternatives = ['Compact', 'Balanced', 'Presentation'];
 function prepareFixture(index) {
   const label = String(index + 1).padStart(2, '0');
-  const nodes = Array.from({ length: 50 }, (_, number) => `  N${number}["Service ${label}${number}"]`);
-  const laneEdges = Array.from({ length: 45 }, (_, number) => `  N${number} lane${number}@--> N${number + 5}`);
-  const crossEdges = Array.from({ length: 30 }, (_, number) => `  N${number} cross${number}@--> N${number + (number % 5 === 4 ? 1 : 6)}`);
+  const nodes = Array.from({ length: nodeCount }, (_, number) => `  N${number}["Service ${label}${number}"]`);
+  const laneEdges = Array.from({ length: nodeCount - 5 }, (_, number) => `  N${number} lane${number}@--> N${number + 5}`);
+  const crossEdges = Array.from({ length: edgeCount - laneEdges.length }, (_, number) => {
+    const destination = (number + (number % 5 === 4 ? 1 : 6)) % nodeCount;
+    return `  N${number} cross${number}@--> N${destination}`;
+  });
   return {
     schema: 'meridian/v2', id: `layout-${index}`, title: `G04 layout ${label}`, subtitle: '',
     source: ['flowchart LR', ...nodes, ...laneEdges, ...crossEdges, ''].join('\n'),
@@ -262,7 +271,7 @@ try {
   process.stdout.write(JSON.stringify({ evidenceCommit: build.commit,
     browser: browser.version(), os: os.release(), cpu: os.cpus()[0].model,
     cpuCgroup: readLimit('/sys/fs/cgroup/cpu.max'), memoryCgroup: readLimit('/sys/fs/cgroup/memory.max'),
-    fixture: { nodes: 50, edges: 75, warmedModuleFixtures: 1, measuredFixturesPerProfile: measuredFixtures },
+    fixture: { nodes: nodeCount, edges: edgeCount, warmedModuleFixtures: 1, measuredFixturesPerProfile: measuredFixtures },
     method: measureInput
       ? 'Trusted outline pointerdown or CodeMirror keydown to the animation frame following matching visible state. Three samples per action per fixture, immediately after foreground rendering has settled. Mobile typing uses Chromium keyboard input.'
       : measureMemory
