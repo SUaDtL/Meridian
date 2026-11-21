@@ -28,6 +28,7 @@ test('appends and edits ordinary group scenes, then exports the same settled vis
   const hidden = `[data-element-key="${bindings.get('A')}"]`;
   const shown = `[data-element-key="${bindings.get('B')}"]`;
   const ancestor = `[data-element-key="${bindings.get('Outer')}"]`;
+  const flow = `[data-story-flow="${bindings.get('local')}"]`;
 
   await live.getByRole('button', { name: 'Suggest scenes', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Suggest scenes' });
@@ -58,8 +59,14 @@ test('appends and edits ordinary group scenes, then exports the same settled vis
   await expect(status).toHaveText('Scene 2 of 2 · Outer group');
   await expect(preview.locator(hidden)).toHaveAttribute('aria-hidden', 'false');
   await expect(player).toHaveAttribute('data-story-preview', 'true');
+  const studioCamera = await player.getAttribute('viewBox');
+  expect(studioCamera).toBeTruthy();
   await preview.getByRole('button', { name: 'Play story' }).press('Enter');
   await expect(player).toHaveAttribute('data-story-playing', 'true');
+  await expect(player).toHaveAttribute('data-story-preview', 'false');
+  await expect(player).toHaveAttribute('viewBox', studioCamera!);
+  await expect(preview.locator(hidden)).toHaveCSS('opacity', '1');
+  await expect(preview.locator(flow)).toHaveCSS('display', 'none');
   await preview.getByRole('button', { name: 'Pause story' }).press('Enter');
   await expect(player).toHaveAttribute('data-story-playing', 'false');
   await previous.press('Enter');
@@ -119,6 +126,15 @@ test('appends and edits ordinary group scenes, then exports the same settled vis
     await expect(presentation.locator(hidden)).toHaveAttribute('aria-hidden', 'true');
     await expect(presentation.locator(shown)).toHaveAttribute('aria-hidden', 'false');
     await expect(presentation.locator(ancestor)).toHaveAttribute('aria-hidden', 'false');
+    const portable = presentation.locator('main > svg');
+    const portableCamera = await portable.getAttribute('viewBox');
+    expect(portableCamera).toBeTruthy();
+    await presentation.getByRole('button', { name: 'Play presentation', exact: true }).click();
+    await expect(portable).toHaveAttribute('data-story-playing', 'true');
+    await expect(portable).toHaveAttribute('data-story-preview', 'false');
+    await expect(portable).toHaveAttribute('viewBox', portableCamera!);
+    await expect(presentation.locator(shown)).toHaveCSS('opacity', '1');
+    await expect(presentation.locator(flow)).toHaveCSS('display', 'none');
   } finally { await offline.close(); }
 
   await live.getByRole('button', { name: 'Undo', exact: true }).click();

@@ -265,6 +265,58 @@ test('undoes a structural edit from reviewed source and keeps caret and Outline 
   await expect(second).toHaveAttribute('aria-selected', 'true');
 });
 
+test('refuses a stale diagnostic fix and applies a refreshed bracket only to the draft', async ({ page }) => {
+  const source = 'flowchart LR\r\n  B[Second]\r\n  A[First]\r\n';
+  const project = { ...createDocument(), title: 'Diagnostic source repair', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+    version: 2, activeId: project.id, documents: [project],
+  })), { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Diagnostic source repair' }).click();
+
+  const live = page.getByRole('dialog', { name: project.title, exact: true });
+  const original = await download(page, live);
+  await live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const input = editor.getByRole('textbox', { name: 'Mermaid source' });
+  const preview = editor.getByRole('button', { name: 'Preview source' });
+  const repair = editor.getByRole('region', { name: 'Reviewed diagnostic fix' });
+  const fix = repair.getByRole('button', { name: 'Apply fix to draft' });
+  const firstDraft = 'flowchart LR\n  B[Reviewed second]\n  A[Revised';
+  const refreshedDraft = firstDraft.replace('Revised', 'Updated');
+  await input.fill(firstDraft);
+  await preview.click();
+  await expect(editor.getByRole('alert')).toContainText('Mermaid syntax · Line 3');
+  await expect(repair.getByText('A[Revised]', { exact: true })).toBeVisible();
+  await input.fill(refreshedDraft);
+  await expect(repair.getByText('Preview the current source to refresh this fix.')).toBeVisible();
+  await fix.click();
+  await expect(editor.getByRole('status')).toContainText('The draft changed after this fix was reviewed.');
+  expect((await input.locator('.cm-line').allTextContents()).join('\n')).toBe(refreshedDraft);
+  await expect(editor.getByRole('button', { name: 'Apply source' })).toBeDisabled();
+
+  await preview.click();
+  await expect(repair.getByText('A[Updated]', { exact: true })).toBeVisible();
+  await fix.click();
+  await expect(repair).toHaveCount(0);
+  await expect(input).toBeFocused();
+  expect((await input.locator('.cm-line').allTextContents()).join('\n')).toBe(refreshedDraft + ']');
+  await expect(editor.getByRole('button', { name: 'Apply source' })).toBeDisabled();
+  await preview.click();
+  await editor.getByRole('button', { name: 'Apply source' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const accepted = await download(page, live);
+  expect(accepted.source).toBe((refreshedDraft + ']').replace(/\n/g, '\r\n'));
+  expect(accepted.identity).toEqual(original.identity);
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const undone = await download(page, live);
+  expect(undone).toEqual({ ...original, revision: accepted.revision + 1, updatedAt: undone.updatedAt });
+});
+
 test('keeps failed candidates unapplied and lets an accepted drawing recover after a mount error', async ({ page }) => {
   const source = 'flowchart LR\n  A[First]\n  B[Second]\n  A link@--> B\n';
   const project = { ...createDocument(), title: 'Drawing recovery', source };
