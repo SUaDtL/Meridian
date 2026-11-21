@@ -1,12 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
-import { checkRequestClock, checkTicketClock } from './admission-clock.ts';
+import { checkRequestClock, checkTicketClock, requestRetention } from './admission-clock.ts';
 import { priceCeiling, type PricePolicy } from './price-policy.ts';
+import type { TicketClaims } from './signed-ticket.ts';
 
 const dayMs = 24 * 60 * 60 * 1000;
 const minuteMs = 60_000;
 const moneyLimit = 999_999_999_999_999n;
 const globalBucket = '*';
 const digestPattern = /^[0-9a-f]{64}$/;
+const keyIdPattern = /^[a-zA-Z0-9_-]{1,64}$/;
 const ticketIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export type VerifiedGenerationTicket = {
@@ -27,6 +29,12 @@ type Result =
   | { code: 'INVALID_REQUEST' | 'REQUEST_CLOCK_SKEW' | 'REQUEST_EXPIRED' | 'TICKET_INVALID' | 'TICKET_EXPIRED' |
       'IDEMPOTENCY_CONFLICT' | 'PRICE_POLICY_CHANGED' | 'RATE_LIMITED' | 'BUDGET_EXHAUSTED' };
 
+type Issuance =
+  | { code: 'ISSUED'; claims: TicketClaims; keyId: string }
+  | { code: 'EXISTING'; claims: TicketClaims; keyId: string }
+  | { code: 'INVALID_REQUEST' | 'REQUEST_CLOCK_SKEW' | 'REQUEST_EXPIRED' | 'TICKET_INVALID' | 'TICKET_EXPIRED' |
+      'IDEMPOTENCY_CONFLICT' | 'PRICE_POLICY_CHANGED' | 'RATE_LIMITED' | 'REQUEST_ALREADY_STARTED' | 'FRESH_REQUEST_REQUIRED' };
+
 type Limits = {
   pricePolicy: PricePolicy;
   dailySubjectMicrousd: bigint;
@@ -34,6 +42,30 @@ type Limits = {
 };
 
 const schema = `
+  CREATE TABLE IF NOT EXISTS ticket_issuance (
+    subject TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL UNIQUE,
+    request_hash TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    max_charge TEXT NOT NULL,
+    issued_seconds INTEGER NOT NULL,
+    expires_seconds INTEGER NOT NULL,
+    issued_ms INTEGER NOT NULL,
+    status_expires_ms INTEGER NOT NULL,
+    replay_expires_ms INTEGER NOT NULL,
+    PRIMARY KEY (subject, request_id)
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS ticket_subject_time ON ticket_issuance (subject, issued_ms);
+  CREATE INDEX IF NOT EXISTS ticket_retention ON ticket_issuance (status_expires_ms);
+  CREATE TABLE IF NOT EXISTS replay_tombstones (
+    subject TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    expires_ms INTEGER NOT NULL,
+    PRIMARY KEY (subject, request_id)
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS tombstone_retention ON replay_tombstones (expires_ms);
   CREATE TABLE IF NOT EXISTS generations (
     subject TEXT NOT NULL,
     request_id TEXT NOT NULL,
@@ -82,12 +114,76 @@ export class CompanionAdmissionLedger {
     this.dailyGlobalCap = limits.dailyGlobalMicrousd;
     this.db = new DatabaseSync(filename);
     try {
-      this.db.exec('PRAGMA busy_timeout = 2500');
+      this.db.exec('PRAGMA busy_timeout = 2500; PRAGMA secure_delete = ON;');
       this.db.exec(schema);
     } catch (error) {
       this.db.close();
       throw error;
     }
+  }
+
+  registerIssuance(proposed: TicketClaims, keyId: string, nowMs: number): Issuance {
+    const retention = requestRetention(proposed.requestId, nowMs);
+    if (retention.code !== 'ELIGIBLE') return { code: retention.code };
+    if (!fitsPattern(proposed.jti, ticketIdPattern, 36) || !fitsPattern(proposed.subjectBinding, digestPattern, 64) ||
+        !fitsPattern(proposed.requestHash, digestPattern, 64) || keyIdPattern.exec(keyId)?.[0] !== keyId ||
+        proposed.iat !== Math.floor(nowMs / 1000) || checkTicketClock(proposed.iat, proposed.exp, nowMs) !== 'ELIGIBLE') {
+      return { code: 'TICKET_INVALID' };
+    }
+    if (proposed.pricePolicyVersion !== this.version || proposed.maxChargeMicrousd !== this.charge.toString()) {
+      return { code: 'PRICE_POLICY_CHANGED' };
+    }
+
+    return this.transaction(() => {
+      const subject = proposed.subjectBinding;
+      const requestId = proposed.requestId;
+      const tombstone = this.db.prepare('SELECT 1 FROM replay_tombstones WHERE subject = ? AND request_id = ? AND expires_ms > ?')
+        .get(subject, requestId, nowMs);
+      if (tombstone) return { code: 'FRESH_REQUEST_REQUIRED' };
+      const existing = this.db.prepare('SELECT * FROM ticket_issuance WHERE subject = ? AND request_id = ?').get(subject, requestId);
+      if (existing) {
+        if (Number(existing.status_expires_ms) <= nowMs) return { code: 'FRESH_REQUEST_REQUIRED' };
+        if (existing.request_hash !== proposed.requestHash) return { code: 'IDEMPOTENCY_CONFLICT' };
+        if (this.db.prepare('SELECT 1 FROM generations WHERE subject = ? AND request_id = ?').get(subject, requestId)) {
+          return { code: 'REQUEST_ALREADY_STARTED' };
+        }
+        if (nowMs >= Number(existing.expires_seconds) * 1000) return { code: 'TICKET_EXPIRED' };
+        return { code: 'EXISTING', keyId: String(existing.key_id), claims: Object.freeze({
+          ...proposed, jti: String(existing.ticket_id), iat: Number(existing.issued_seconds), exp: Number(existing.expires_seconds),
+          pricePolicyVersion: String(existing.policy_version), maxChargeMicrousd: String(existing.max_charge),
+        }) };
+      }
+      const rate = this.db.prepare('SELECT COUNT(*) AS count FROM ticket_issuance WHERE subject = ? AND issued_ms > ?')
+        .get(subject, nowMs - minuteMs)?.count;
+      if (Number(rate) >= 10) return { code: 'RATE_LIMITED' };
+      this.db.prepare(`
+        INSERT INTO ticket_issuance (subject, request_id, ticket_id, request_hash, key_id, policy_version, max_charge,
+          issued_seconds, expires_seconds, issued_ms, status_expires_ms, replay_expires_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(subject, requestId, proposed.jti, proposed.requestHash, keyId, proposed.pricePolicyVersion, proposed.maxChargeMicrousd,
+        proposed.iat, proposed.exp, nowMs, retention.statusExpiresAtMs, retention.tombstoneExpiresAtMs);
+      return { code: 'ISSUED', keyId, claims: proposed };
+    });
+  }
+
+  pruneExpired(nowMs: number) {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new RangeError('Invalid server clock');
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO replay_tombstones (subject, request_id, expires_ms)
+        SELECT subject, request_id, replay_expires_ms FROM ticket_issuance
+        WHERE status_expires_ms <= ? AND replay_expires_ms > ?
+        ON CONFLICT (subject, request_id) DO UPDATE SET expires_ms = excluded.expires_ms
+      `).run(nowMs, nowMs);
+      this.db.prepare(`
+        DELETE FROM generations WHERE EXISTS (
+          SELECT 1 FROM ticket_issuance WHERE ticket_issuance.ticket_id = generations.ticket_id AND status_expires_ms <= ?
+        )
+      `).run(nowMs);
+      this.db.prepare('DELETE FROM ticket_issuance WHERE status_expires_ms <= ?').run(nowMs);
+      this.db.prepare('DELETE FROM replay_tombstones WHERE expires_ms <= ?').run(nowMs);
+      this.db.prepare('DELETE FROM daily_commitments WHERE day < ?').run(Math.floor(nowMs / dayMs) - 59);
+    });
   }
 
   reserve(ticket: VerifiedGenerationTicket, requestId: string, requestHash: string, nowMs: number): Result {
@@ -106,6 +202,15 @@ export class CompanionAdmissionLedger {
     }
 
     return this.transaction(() => {
+      const issued = this.db.prepare(`
+        SELECT ticket_id, request_hash, issued_seconds, expires_seconds, policy_version, max_charge
+        FROM ticket_issuance WHERE subject = ? AND request_id = ?
+      `).get(ticket.subjectBinding, requestId);
+      if (!issued || issued.ticket_id !== ticket.jti || issued.request_hash !== requestHash ||
+          issued.issued_seconds !== ticket.iat || issued.expires_seconds !== ticket.exp ||
+          issued.policy_version !== ticket.pricePolicyVersion || issued.max_charge !== ticket.maxChargeMicrousd) {
+        return { code: 'TICKET_INVALID' };
+      }
       const existing = this.db.prepare(`
         SELECT ticket_id, request_hash, state, CAST(amount AS TEXT) AS amount
         FROM generations WHERE subject = ? AND request_id = ?

@@ -27,8 +27,8 @@ export type TicketClaims = Readonly<{
   maxChargeMicrousd: string;
 }>;
 
-type SigningKey = { id: string; key: CryptoKey };
-type TicketRequest = ChargeAcknowledgment & { requestId: string; requestHash: string };
+export type SigningKey = { id: string; key: CryptoKey };
+export type TicketRequest = ChargeAcknowledgment & { requestId: string; requestHash: string };
 
 function matches(value: unknown, pattern: RegExp): value is string {
   return typeof value === 'string' && pattern.exec(value)?.[0] === value;
@@ -88,12 +88,19 @@ export async function signCompanionTicket(
     requestHash: request.requestHash, iat, exp: iat + 900, pricePolicyVersion: policy.version,
     maxChargeMicrousd: agreement.reserveMicrousd.toString(),
   };
+  const ticket = await sealCompanionTicket(claims, signing);
+  return { code: 'SIGNED' as const, ticket, claims: Object.freeze(claims) };
+}
+
+export async function sealCompanionTicket(claims: TicketClaims, signing: SigningKey): Promise<string> {
+  if (!matches(signing.id, keyIdFormat) || !isTicketKey(signing.key, 'sign')) {
+    throw new Error('Invalid companion signing configuration.');
+  }
   const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
-  if (!decodeClaims(payload)) throw new Error('Invalid companion ticket claims.');
+  if (!decodeClaims(payload) || claims.exp - claims.iat !== 900) throw new Error('Invalid companion ticket claims.');
   const signed = `${format}.${signing.id}.${payload}`;
   const signature = await crypto.subtle.sign('HMAC', signing.key, encoder.encode(signed));
-  const ticket = `${signed}.${Buffer.from(signature).toString('base64url')}`;
-  return { code: 'SIGNED' as const, ticket, claims: Object.freeze(claims) };
+  return `${signed}.${Buffer.from(signature).toString('base64url')}`;
 }
 
 export async function verifyCompanionTicket(

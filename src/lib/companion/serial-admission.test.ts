@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { describe, expect, it } from 'vitest';
 import type { VerifiedGenerationTicket } from './serial-admission';
 import type { PricePolicy } from './price-policy';
+import type { TicketClaims } from './signed-ticket';
 
 // Node 22.12 exposes SQLite when the runtime flag is enabled. The pinned
 // CI version runs these reference-ledger cases with its built-in module.
@@ -26,10 +27,11 @@ const pricePolicy: PricePolicy = {
 const charge = BigInt(pricePolicy.maxChargeMicrousd);
 const ordinaryLimits = { pricePolicy, dailySubjectMicrousd: charge * 5n, dailyGlobalMicrousd: charge * 40n };
 
-function ticket(index: number, subjectBinding = subject, at = now): VerifiedGenerationTicket {
+function ticket(index: number, subjectBinding = subject, at = now): TicketClaims {
   const time = at.toString(16).padStart(12, '0');
   const suffix = index.toString(16).padStart(12, '0');
   return {
+    version: 1, aud: 'meridian-assistant-generate/v1',
     jti: `b28ae7c1-4180-4000-8000-${suffix}`,
     subjectBinding, requestId: `${time.slice(0, 8)}-${time.slice(8)}-7000-8000-${suffix}`,
     requestHash, iat: at / 1000, exp: at / 1000 + 900, pricePolicyVersion: pricePolicy.version,
@@ -48,6 +50,7 @@ describe.skipIf(!sqlite)('local serial companion admission', () => {
     const ledger = new CompanionAdmissionLedger!(':memory:', ordinaryLimits);
     try {
       const grant = ticket(1);
+      ledger.registerIssuance(grant, 'fixture', now);
       const submit = (verified = grant, hash = requestHash, at = now) => ledger.reserve(verified, verified.requestId, hash, at);
       expect(submit(grant, 'f'.repeat(64))).toEqual({ code: 'IDEMPOTENCY_CONFLICT' });
       expect(submit({ ...grant, maxChargeMicrousd: '53249' })).toEqual({ code: 'PRICE_POLICY_CHANGED' });
@@ -55,7 +58,7 @@ describe.skipIf(!sqlite)('local serial companion admission', () => {
       expect(submit(grant, requestHash, now + 86_400_000)).toEqual({ code: 'REQUEST_EXPIRED' });
       expect(submit()).toEqual({ code: 'RESERVED', amount: charge });
       expect(submit()).toEqual({ code: 'EXISTING', state: 'running', amount: charge });
-      expect(submit({ ...ticket(2), requestId: grant.requestId })).toEqual({ code: 'IDEMPOTENCY_CONFLICT' });
+      expect(submit({ ...ticket(2), requestId: grant.requestId })).toEqual({ code: 'TICKET_INVALID' });
       expect(submit({ ...grant, requestId: ticket(2).requestId, subjectBinding: otherSubject })).toEqual({ code: 'TICKET_INVALID' });
     } finally { ledger.close(); }
   });
@@ -65,6 +68,8 @@ describe.skipIf(!sqlite)('local serial companion admission', () => {
     try {
       const first = ticket(1);
       const next = ticket(2);
+      ledger.registerIssuance(first, 'fixture', now);
+      ledger.registerIssuance(next, 'fixture', now);
       const submit = (grant: VerifiedGenerationTicket, at = now) => ledger.reserve(grant, grant.requestId, requestHash, at);
       expect(submit(first).code).toBe('RESERVED');
       expect(ledger.reconcileAbandoned(now + 29_999)).toBe(0);
@@ -88,6 +93,7 @@ describe.skipIf(!sqlite)('local serial companion admission', () => {
       const submit = (grant: VerifiedGenerationTicket, at = now) => ledger.reserve(grant, grant.requestId, requestHash, at);
       const first = ticket(1);
       const second = ticket(2);
+      for (let i = 1; i <= 6; i++) ledger.registerIssuance(ticket(i), 'fixture', now);
       expect(submit(first).code).toBe('RESERVED');
       expect(submit(second).code).toBe('RESERVED');
       expect(submit(ticket(3)).code).toBe('RATE_LIMITED');
@@ -111,6 +117,7 @@ describe.skipIf(!sqlite)('local serial companion admission', () => {
         observer.exec(`CREATE TRIGGER stop_global BEFORE INSERT ON daily_commitments WHEN NEW.bucket = '*'
           BEGIN SELECT RAISE(ABORT, 'fixture global write failed'); END;`);
         const grant = ticket(1);
+        ledger.registerIssuance(grant, 'fixture', now);
         const submit = () => ledger.reserve(grant, grant.requestId, requestHash, now);
         expect(submit).toThrow('fixture global write failed');
         expect(observer.prepare('SELECT COUNT(*) as count FROM generations').get()?.count).toBe(0);
@@ -128,6 +135,9 @@ describe.skipIf(!sqlite)('local serial companion admission', () => {
       };
       const gate = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
       const grants = [ticket(1), ticket(2, cap === 'subject' ? subject : otherSubject)];
+      const seed = new CompanionAdmissionLedger!(filename, limits);
+      try { for (const grant of grants) seed.registerIssuance(grant, 'fixture', now); }
+      finally { seed.close(); }
       const workers = grants.map(grant => new Worker(`
         const { parentPort, workerData } = require('node:worker_threads');
         (async () => {
