@@ -361,3 +361,70 @@ test('inserts reviewed process branches after refreshing a changed target and un
     expect(restored).toEqual({ ...changed, revision: accepted.revision + 1, updatedAt: restored.updatedAt });
   } finally { await second.close(); }
 });
+
+for (const mode of ['keyboard', 'touch'] as const) {
+  test.describe(`guided process input with ${mode}`, () => {
+    if (mode === 'touch') test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+
+    test('orders a decision and connects both branches to the same destination', async ({ page }) => {
+      const activate = (control: Locator) => mode === 'keyboard' ? control.press('Enter') : control.tap();
+      async function choose(control: Locator, label: string) {
+        if (mode === 'touch') {
+          // Chromium headless exposes the select value without the native picker UI.
+          await control.selectOption({ label });
+          return;
+        }
+        const { selected, desired } = await control.evaluate((select: HTMLSelectElement, label) => ({
+          selected: select.selectedIndex, desired: Array.from(select.options).findIndex(option => option.label === label),
+        }), label);
+        expect(desired).toBeGreaterThanOrEqual(0);
+        const direction = desired > selected ? 'ArrowDown' : 'ArrowUp';
+        for (let count = 0; count < Math.abs(desired - selected); count++) await control.press(direction);
+        await expect(control.locator('option:checked')).toHaveText(label);
+      }
+      await page.goto('/');
+      await activate(page.getByRole('button', { name: 'Build with guidance' }));
+      const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
+      await wizard.getByLabel('Project title').fill('Reviewed decision');
+      await wizard.getByLabel('Put one step on each line').fill('Start\nDecision\nApprove\nReject\nFinish');
+      await activate(wizard.getByRole('button', { name: 'Review connections' }));
+      await activate(wizard.getByRole('button', { name: 'Make Decision a decision' }));
+      await activate(wizard.getByRole('button', { name: 'Move Reject up' }));
+      const steps = wizard.getByRole('list', { name: 'Process steps' }).getByRole('listitem');
+      await expect(steps.nth(2)).toContainText('Reject');
+      const connection = (index: number) => wizard.getByRole('group', { name: `Connection ${index}`, exact: true });
+      await connection(2).getByLabel('Connection label').fill('Approve branch');
+      await activate(connection(2).getByRole('button', { name: 'Keep connection' }));
+      await activate(connection(3).getByRole('button', { name: 'Remove connection' }));
+      await activate(connection(3).getByRole('button', { name: 'Keep connection' }));
+      const add = wizard.getByRole('button', { name: 'Add connection', exact: true });
+      for (const [index, from, to] of [[4, 'Decision · line 2', 'Reject · line 4'], [5, 'Approve · line 3', 'Finish · line 5']] as const) {
+        await activate(add);
+        await choose(connection(index).getByLabel('From'), from);
+        await choose(connection(index).getByLabel('To'), to);
+        if (index === 4) await connection(index).getByLabel('Connection label').fill('Reject branch');
+        await activate(connection(index).getByRole('button', { name: 'Keep connection' }));
+      }
+      const end = wizard.getByLabel('Mark Finish as an end');
+      if (mode === 'keyboard') await end.press('Space');
+      else await end.tap();
+      await expect(end).toBeChecked();
+      await activate(wizard.getByRole('button', { name: 'Preview process' }));
+      await expect(wizard.getByRole('list', { name: 'Reviewed connections' }).getByRole('listitem')).toHaveText([
+        'Start → Decision', 'Decision → Approve (Approve branch)', 'Reject → Finish', 'Decision → Reject (Reject branch)', 'Approve → Finish',
+      ]);
+      await activate(wizard.getByRole('button', { name: 'Create process' }));
+      const live = page.getByRole('dialog', { name: 'Reviewed decision' });
+      await expect(live.getByText('Saved in this browser.')).toBeVisible();
+      const [file] = await Promise.all([page.waitForEvent('download'), activate(live.getByRole('button', { name: 'Download v3 project' }))]);
+      const path = await file.path();
+      if (!path) throw new Error('Missing reviewed decision project download.');
+      const project = JSON.parse(await readFile(path, 'utf8'));
+      expect(project.source).toBe([
+        'flowchart LR', '  m_n1["Start"]', '  m_n2{"Decision"}', '  m_n3["Reject"]', '  m_n4["Approve"]', '  m_n5["Finish"]',
+        '  m_n1 m_e1@--> m_n2', '  m_n2 m_e2@-->|"Approve branch"| m_n4', '  m_n3 m_e3@--> m_n5',
+        '  m_n2 m_e4@-->|"Reject branch"| m_n3', '  m_n4 m_e5@--> m_n5', '',
+      ].join('\n'));
+    });
+  });
+}
