@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
+import { projectBaseToken } from '../../src/lib/authoring/base-token';
 
 const source = '\uFEFFflowchart LR\r\n  A[Original]\r\n';
 
@@ -77,6 +78,50 @@ test('keeps the legacy backup available after a quota failure and permits a clea
   await dialog.getByRole('button', { name: 'Prepare v3 copies' }).click();
   await expect(dialog.getByText('1 copied · 1 need recovery')).toBeVisible();
   expect(await download(page, 'Download pre-migration backup')).toBe(raw);
+});
+
+test('downloads the exact legacy workspace while an older tab blocks the database upgrade', async ({ page, context }) => {
+  const { raw } = await seedWorkspace(page);
+  const oldProject = JSON.parse(await readFile('src/lib/authoring/fixtures/example-project.json', 'utf8'));
+  const { stateDigest } = await projectBaseToken(oldProject);
+  const authored = { id: oldProject.id, document: oldProject, anchor: { stateDigest, storageGeneration: crypto.randomUUID() } };
+  const older = await context.newPage();
+  try {
+    await older.goto('/');
+    await older.evaluate(authored => new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('meridian-workspace', 1);
+      open.onupgradeneeded = () => {
+        const db = open.result;
+        db.createObjectStore('documents', { keyPath: 'id' }).add(authored);
+        db.createObjectStore('datasets', { keyPath: 'digest' });
+        db.createObjectStore('library', { keyPath: ['id', 'version'] });
+        for (const store of ['drafts', 'pendingAssist']) db.createObjectStore(store, { keyPath: 'id' });
+        for (const store of ['migrations', 'metadata', 'previews']) db.createObjectStore(store, { keyPath: 'key' });
+      };
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        // An older tab which never received the modern versionchange handler
+        // keeps this connection alive until its document closes.
+        (window as Window & { oldMeridianConnection?: IDBDatabase }).oldMeridianConnection = open.result;
+        resolve();
+      };
+    }), authored);
+
+    const dialog = await openReview(page);
+    await expect(dialog.getByRole('alert')).toHaveText('Close older Meridian tabs before preparing the workspace database.');
+    expect(await download(page, 'Download current legacy workspace')).toBe(raw);
+    expect(await page.evaluate(key => localStorage.getItem(key), STORAGE_KEY)).toBe(raw);
+    await expect(dialog.getByRole('button', { name: 'Download pre-migration backup' })).toHaveCount(0);
+  } finally {
+    await older.close();
+  }
+
+  const current = page.getByRole('dialog', { name: 'Project migration and recovery' });
+  await current.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await expect(current.getByText('1 copied · 1 need recovery')).toBeVisible();
+  await expect(current.getByRole('alert')).toHaveCount(0);
+  expect(await download(page, 'Download pre-migration backup')).toBe(raw);
+  expect(JSON.parse(await download(page, `Download v3 copy of ${oldProject.title}`))).toEqual(oldProject);
 });
 
 test('round-trips and previews a portable v3 project before a later legacy migration', async ({ page, browser }) => {
