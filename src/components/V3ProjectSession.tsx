@@ -21,6 +21,9 @@ import { flowchartSubsetTopology, groupContentsDeletionScopes, planGroupCreation
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
+import type { GuidedSystemsAttachment } from "../lib/authoring/guided-systems-insertion";
+import type { SystemsDraft } from "../lib/authoring/systems-draft";
+import { emptySystemsSession } from "../lib/authoring/systems-session";
 import { rolePaintFields, type ReadabilityTarget, type RolePaintField, type ViewingProfile } from "../lib/authoring/readability";
 import { buildReadabilityHighlight } from "../lib/authoring/readability-highlight";
 import { buildExportFrame, buildMermaidProjectPresentation, type ExportFrame, type ExportFrameOptions } from "../lib/export";
@@ -37,6 +40,7 @@ const DesignResetDialog = lazy(() => import("./DesignResetDialog"));
 const OrphanReviewDialog = lazy(() => import("./OrphanReviewDialog"));
 const V3SourceEditor = lazy(() => import("./V3SourceEditor"));
 const ExportDialog = lazy(() => import("./ExportDialog"));
+const GuidedSystemsDialog = lazy(() => import("./GuidedSystemsDialog"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: Omit<ExportFrame, "svg">; url: string };
@@ -69,6 +73,12 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [assistOpen, setAssistOpen] = useState(false);
   const [editSource, setEditSource] = useState(false);
   const [insertOpen, setInsertOpen] = useState(false);
+  const [guidedSystemsOpen, setGuidedSystemsOpen] = useState(false);
+  const [guidedSystems, setGuidedSystems] = useState(emptySystemsSession);
+  const [guidedAttachment, setGuidedAttachment] = useState({
+    existingElementId: "", draftNodeId: "", direction: "" as GuidedSystemsAttachment["direction"] | "",
+  });
+  const guidedNeedsRefresh = useRef(false);
   const [detachOpen, setDetachOpen] = useState(false);
   // The mounted source editor owns its draft. Retain a copy for reopening
   // without updating the workspace behind the dialog on every keystroke.
@@ -483,7 +493,38 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   function downloadPresentation() {
     void run(() => savePresentation());
   }
+  async function reviewGuidedSystems(values: SystemsDraft, attachment: GuidedSystemsAttachment | undefined, signal: AbortSignal) {
+    const current = editor.current;
+    if (!current) throw new Error("Open the saved project before previewing systems.");
+    if (!guidedNeedsRefresh.current) return current.prepareGuidedSystems(values, attachment, signal);
+    if (current.saveState().phase !== "saved" || !connection.current) {
+      throw new Error("Save your current changes before refreshing the insertion target.");
+    }
+    const refreshed = await openStoredProjectEditor(connection.current, id, setSave);
+    try {
+      return await refreshed.prepareGuidedSystems(values, attachment, signal);
+    } finally {
+      if (signal.aborted || editor.current !== current) refreshed.close();
+      else {
+        adoptEditor(refreshed);
+        guidedNeedsRefresh.current = false;
+      }
+    }
+  }
+
+  async function insertGuidedSystems(proposal: ReadyProposal, signal: AbortSignal) {
+    const current = editor.current;
+    if (!current) return "stale";
+    const outcome = await current.applyGuidedSystems(proposal, signal);
+    if (outcome === "applied") setProject(current.snapshot());
+    else guidedNeedsRefresh.current = true;
+    return outcome;
+  }
+
   const commands: WorkspaceCommand[] = [
+    { id: "insert-guided-systems", title: "Insert systems diagram", category: "Diagram", synonyms: ["guided systems", "add systems"],
+      unavailable: busy || !targetTable || !componentSourceSupported ? "Open a supported flowchart before inserting systems." : undefined,
+      run: () => setGuidedSystemsOpen(true) },
     { id: "export-diagram", title: "Export diagram", category: "Export", synonyms: ["PNG", "SVG", "Mermaid"],
       run: () => setExportOpen(true) },
     { id: "external-assistant", title: "External assistant file exchange", category: "Advanced", synonyms: ["request file", "import AI proposal"],
@@ -634,6 +675,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                     onClick={() => setOrphanReviewOpen(true)}>Review unresolved annotations</button>}
                   <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
                   {targetTable && <button className="button secondary" disabled={busy} onClick={() => setEditSource(true)}>Edit Mermaid source</button>}
+                  {targetTable && componentSourceSupported && <button className="button secondary" disabled={busy}
+                    onClick={() => setGuidedSystemsOpen(true)}>Insert systems diagram</button>}
                   {!!project.componentInstances.length && <button className="button secondary" disabled={busy} onClick={() => setDetachOpen(true)}>Detach component</button>}
                   {targetTable && flatFlowchart && (
                     <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
@@ -718,6 +761,18 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
             }} />
         </Suspense>
       )}
+      {guidedSystemsOpen && project && <Suspense fallback={<p role="status">Opening systems editor…</p>}>
+        <GuidedSystemsDialog session={guidedSystems} onSession={setGuidedSystems}
+          onBack={() => setGuidedSystemsOpen(false)} onClose={() => setGuidedSystemsOpen(false)}
+          target={{ title, nodes, attachment: guidedAttachment, onAttachment: setGuidedAttachment,
+            prepare: reviewGuidedSystems, apply: insertGuidedSystems, onCompleted: draftRetained => {
+              setGuidedSystemsOpen(false);
+              setGuidedSystems(emptySystemsSession);
+              setGuidedAttachment({ existingElementId: "", draftNodeId: "", direction: "" });
+              guidedNeedsRefresh.current = false;
+              if (draftRetained) setError("Systems inserted. The saved draft could not be cleared.");
+            } }} />
+      </Suspense>}
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} restoredView={restoredOutline} onSelection={setOutlineSelection}
         canRename={!labelEditingUnavailable} onClose={() => setOutlineOpen(false)}
