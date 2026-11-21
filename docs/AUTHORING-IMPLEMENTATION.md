@@ -415,6 +415,27 @@ Closing the workspace reduced documents and node counts. Later projects retained
 
 Run `PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173/ node scripts/measure-layout-review.mjs --memory` against a clean Pages artifact. The JSON includes per-fixture active and closed samples alongside the browser and host profile.
 
+### Extended layout memory run
+
+The clean local Pages build at `600151074ad216bebcc9f6479c83424567c47773` added the lab script to application source `0f7ccf4911387526b4788975a6696ae139436e22`. The lab ran one warm-up plus 30 distinct 50-node, 75-connection fixtures per profile. The lab requested Compact, Balanced and Presentation in rotation for all 31 fixtures. It recorded Chromium 159.0.8154.6, Linux 6.18.57, an AMD EPYC 9V74 host with a four-core CPU quota and a 16 GiB memory ceiling, a 1280 × 900 desktop viewport, and a 390 × 844 viewport with 4× CPU throttling.
+
+| Metric | Desktop | Throttled phone viewport |
+| --- | ---: | ---: |
+| Maximum connected measurement hosts | 1 | 1 |
+| Maximum elements in one measurement host | 1,067 | 1,067 |
+| Maximum active DOM nodes | 9,817 | 9,819 |
+| DOM nodes after the last close | 7,282 | 7,282 |
+| JS heap after warm-up close | 17.9 MiB | 17.9 MiB |
+| JS heap after the last close | 20.8 MiB | 20.7 MiB |
+| Peak active renderer process PSS | 193.5 MiB | 190.5 MiB |
+| Median closed renderer PSS, first five measured fixtures | 167.9 MiB | 153.1 MiB |
+| Median closed renderer PSS, last five measured fixtures | 159.0 MiB | 178.4 MiB |
+| Renderer process PSS after the last close | 164.4 MiB | 153.8 MiB |
+
+All sampled Chromium processes reported Linux proportional set size (PSS). PSS includes the JavaScript heap and other process allocations, with shared pages attributed proportionally. The throttled profile's last five closed samples had a higher median process PSS and its last sample returned to 153.8 MiB. This run leaves browser-process variance and physical mobile memory open. The application separately enforces the shared 32 MiB cache estimate. The lab timings include instrumentation.
+
+Run `PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173/ node scripts/measure-layout-review.mjs --memory --fixtures=30` for the extended record. The render-queue test separately holds an active preview, supersedes pending previews and an older foreground revision, and verifies one renderer owner with only the current foreground result delivered.
+
 ## Reviewed source, exports and mobile authoring
 
 - The v3 CodeMirror editor offers completion only in proven source contexts and keeps draft history separate from accepted project history. Accepted Undo and Redo are available from source and preserve the exact source, stable caret and Outline selection. [Reviewed completion #141](https://github.com/SUaDtL/Meridian/pull/141) · [Project history #156](https://github.com/SUaDtL/Meridian/pull/156)

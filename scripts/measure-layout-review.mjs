@@ -14,6 +14,11 @@ if (build.repository !== 'SUaDtL/Meridian' || build.format !== 'split-v1'
 const measureMemory = process.argv.includes('--memory');
 const measureInput = process.argv.includes('--input');
 if (measureInput && measureMemory) throw new Error('Run input and memory measurement separately.');
+const fixtureOption = process.argv.find(value => value.startsWith('--fixtures='));
+const measuredFixtures = fixtureOption ? Number(fixtureOption.slice('--fixtures='.length)) : 10;
+if (!Number.isInteger(measuredFixtures) || measuredFixtures < 1 || measuredFixtures > 49) {
+  throw new Error('Choose between 1 and 49 measured fixtures, plus one warm-up.');
+}
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
 
 function readLimit(path) {
@@ -26,9 +31,8 @@ const standardSettings = {
   frame: 'auto', font: 'sans', edgeWidth: 2, padding: 20, showTitle: true, showBrand: false,
 };
 const alternatives = ['Compact', 'Balanced', 'Presentation'];
-const variants = 11;
 function prepareFixture(index) {
-  const label = String.fromCharCode(65 + index);
+  const label = String(index + 1).padStart(2, '0');
   const nodes = Array.from({ length: 50 }, (_, number) => `  N${number}["Service ${label}${number}"]`);
   const laneEdges = Array.from({ length: 45 }, (_, number) => `  N${number} lane${number}@--> N${number + 5}`);
   const crossEdges = Array.from({ length: 30 }, (_, number) => `  N${number} cross${number}@--> N${number + (number % 5 === 4 ? 1 : 6)}`);
@@ -38,9 +42,25 @@ function prepareFixture(index) {
     updatedAt: '2026-11-21T00:00:00Z', nodeAccents: {}, settings: standardSettings,
   };
 }
-const documents = Array.from({ length: variants }, (_, index) => prepareFixture(index));
+const documents = Array.from({ length: measuredFixtures + 1 }, (_, index) => prepareFixture(index));
 
-async function browserMemory(session) {
+async function processMemory(browserSession) {
+  if (process.platform !== 'linux') return undefined;
+  const { processInfo } = await browserSession.send('SystemInfo.getProcessInfo');
+  const byType = Object.create(null);
+  let inaccessible = 0;
+  for (const { id, type } of processInfo) {
+    const rollup = readLimit(`/proc/${id}/smaps_rollup`);
+    const proportionalKiB = rollup?.match(/^Pss:\s+(\d+) kB$/m)?.[1];
+    if (!proportionalKiB) { inaccessible++; continue; }
+    const memory = byType[type] ??= { processes: 0, proportionalBytes: 0 };
+    memory.processes++;
+    memory.proportionalBytes += Number(proportionalKiB) * 1024;
+  }
+  return { byType, inaccessible };
+}
+
+async function browserMemory(session, browserSession) {
   await session.send('HeapProfiler.collectGarbage');
   const [{ documents, nodes, jsEventListeners }, { metrics }] = await Promise.all([
     session.send('Memory.getDOMCounters'),
@@ -50,7 +70,8 @@ async function browserMemory(session) {
   if (!heap || !Number.isSafeInteger(heap.value) || heap.value <= 0) {
     throw new Error('Chromium did not report JS heap bytes.');
   }
-  return { documents, nodes, jsEventListeners, jsHeapBytes: heap.value };
+  const native = await processMemory(browserSession);
+  return { documents, nodes, jsEventListeners, jsHeapBytes: heap.value, native };
 }
 
 async function inputToPaint(page, target, eventType, expectedText, trigger) {
@@ -126,6 +147,7 @@ async function measure(mobile) {
   try {
     const session = await page.context().newCDPSession(page);
     if (mobile) await session.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    const browserSession = measureMemory ? await browser.newBrowserCDPSession() : undefined;
     if (measureMemory) await session.send('Performance.enable');
     await page.addInitScript(({ documents, measureMemory }) => {
       localStorage.setItem('meridian:v2', JSON.stringify({ version: 2, activeId: documents[0].id, documents }));
@@ -148,8 +170,11 @@ async function measure(mobile) {
     await page.getByRole('button', { name: 'Manage projects' }).click();
     await page.getByRole('button', { name: 'Project migration and recovery' }).click();
     await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+    // An extended run migrates all fixtures before the first project is available.
+    const firstProject = page.getByRole('button', { name: `Open v3 project ${documents[0].title}` });
+    await firstProject.waitFor({ timeout: 180_000 });
     const batches = [];
-    const memory = measureMemory ? { baseline: await browserMemory(session), fixtures: [] } : undefined;
+    const memory = measureMemory ? { baseline: await browserMemory(session, browserSession), fixtures: [] } : undefined;
     for (const [index, project] of documents.entries()) {
       await page.getByRole('button', { name: `Open v3 project ${project.title}` }).click({ timeout: 30000 });
       const live = page.getByRole('dialog', { name: project.title });
@@ -218,12 +243,12 @@ async function measure(mobile) {
       }
       if (index > 0) batches.push(samples);
       process.stderr.write(`${mobile ? 'mobile' : 'desktop'} fixture ${index + 1}/${documents.length}\n`);
-      const active = memory ? await browserMemory(session) : undefined;
+      const active = memory ? await browserMemory(session, browserSession) : undefined;
       await dialog.getByRole('button', { name: 'Close dialog' }).click();
       await live.getByRole('button', { name: 'Back to v3 projects' }).click();
       if (memory) {
         await live.waitFor({ state: 'hidden' });
-        const closed = await browserMemory(session);
+        const closed = await browserMemory(session, browserSession);
         memory.fixtures.push({ title: project.title, active, closed });
       }
     }
@@ -237,11 +262,11 @@ try {
   process.stdout.write(JSON.stringify({ evidenceCommit: build.commit,
     browser: browser.version(), os: os.release(), cpu: os.cpus()[0].model,
     cpuCgroup: readLimit('/sys/fs/cgroup/cpu.max'), memoryCgroup: readLimit('/sys/fs/cgroup/memory.max'),
-    fixture: { nodes: 50, edges: 75, warmedModuleFixtures: 1, measuredFixturesPerProfile: 10 },
+    fixture: { nodes: 50, edges: 75, warmedModuleFixtures: 1, measuredFixturesPerProfile: measuredFixtures },
     method: measureInput
       ? 'Trusted outline pointerdown or CodeMirror keydown to the animation frame following matching visible state. Three samples per action per fixture, immediately after foreground rendering has settled. Mobile typing uses Chromium keyboard input.'
       : measureMemory
-      ? 'Observed temporary rendering hosts with a DOM observer. Read Chromium DOM and live JavaScript heap counters after forced garbage collection before opening the first project, during the settled comparison, and after closing each project. Timings include observer instrumentation.'
+      ? 'Observed temporary rendering hosts with a DOM observer. Read Chromium DOM and live JavaScript heap counters after forced garbage collection before opening the first project, during the settled comparison, and after closing each project. Linux process proportional set size allocates shared pages proportionally and includes JavaScript heap and other memory. It is reported by Chromium process type. Timings include observer instrumentation.'
       : 'Real click or tap to two animation frames after a visible decoded candidate becomes eligible to apply. Long Tasks API and requestAnimationFrame gaps observed independently. Candidate inputs differ per fixture. Three sequential options per fixture.',
     results,
   }, null, 2) + '\n');
