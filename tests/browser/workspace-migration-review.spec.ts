@@ -1,18 +1,20 @@
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 import { projectBaseToken } from '../../src/lib/authoring/base-token';
 
 const source = '\uFEFFflowchart LR\r\n  A[Original]\r\n';
 
-async function seedWorkspace(page: Page, originalSource = source) {
+async function seedWorkspace(page: Page, originalSource = source, location = '/') {
   const original = { ...createDocument(), title: 'Migration example', source: originalSource };
   const invalid = { ...createDocument(), title: 'Unfinished diagram', source: 'flowchart LR\n  A[' };
   const raw = JSON.stringify({ version: 2, activeId: original.id, documents: [original, invalid] }, null, 4);
   await page.addInitScript(({ key, raw }) => {
     if (localStorage.getItem(key) === null) localStorage.setItem(key, raw);
   }, { key: STORAGE_KEY, raw });
-  await page.goto('/');
+  await page.goto(location);
   return { original, raw };
 }
 
@@ -482,4 +484,77 @@ test('reopens the last durable revision when a tab closes before its project wri
   await review.getByRole('button', { name: 'Open v3 project Durable heading' }).click();
   await expect(reopened.getByRole('dialog', { name: 'Durable heading', exact: true }).getByText('Saved in this browser.')).toBeVisible();
   expect(await download(reopened, 'Download v3 project')).toBe(durable);
+});
+
+test('terminates bounded source planning and preserves the label draft through a fresh retry', async ({ page }) => {
+  await page.addInitScript(() => {
+    const nativePost = Worker.prototype.postMessage;
+    const nativeTerminate = Worker.prototype.terminate;
+    const held = new WeakSet<Worker>();
+    let requests = 0;
+    let stopped = 0;
+    Worker.prototype.postMessage = function (...args) {
+      if (args[0]?.version === 1 && args[0]?.intent?.op === 'setNodeLabel' && ++requests <= 2) {
+        held.add(this);
+        return;
+      }
+      return nativePost.apply(this, args);
+    };
+    Worker.prototype.terminate = function () {
+      if (held.delete(this)) document.documentElement.dataset.stoppedSourcePlanners = String(++stopped);
+      nativeTerminate.call(this);
+    };
+  });
+  await seedWorkspace(page);
+  const list = await openReview(page);
+  await list.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await list.getByRole('button', { name: 'Open v3 project Migration example' }).click();
+  const original = await download(page, 'Download v3 project');
+  await page.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await edit.getByRole('combobox', { name: 'Operation' }).selectOption('setNodeLabel');
+  await edit.getByRole('combobox', { name: 'Node to rename' }).selectOption({ label: 'Original (A)' });
+  const label = edit.getByRole('textbox', { name: 'Node label' });
+  const apply = edit.getByRole('button', { name: 'Apply change' });
+  const preview = edit.getByRole('button', { name: 'Preview change' });
+  await label.fill('Held draft');
+  await preview.click();
+  await expect(edit.getByRole('alert')).toHaveText('Planning the source edit timed out.');
+  await expect(page.locator('html')).toHaveAttribute('data-stopped-source-planners', '1');
+  await expect(label).toHaveValue('Held draft');
+  await expect(apply).toBeDisabled();
+  await edit.getByRole('button', { name: 'Retry planning for five seconds' }).click();
+  await expect(edit.getByRole('alert')).toContainText('Planning timed out again.');
+  await expect(page.locator('html')).toHaveAttribute('data-stopped-source-planners', '2');
+  await expect(label).toHaveValue('Held draft');
+  await expect(preview).toBeDisabled();
+  await expect(apply).toBeDisabled();
+  await label.fill('Recovered draft');
+  await preview.click();
+  await expect(apply).toBeEnabled();
+  await edit.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(await download(page, 'Download v3 project')).toBe(original);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
+
+test('reviews and applies a structural edit in the offline standalone worker', async ({ page, context }) => {
+  const network: string[] = [];
+  context.on('request', request => { if (/^https?:/.test(request.url())) network.push(request.url()); });
+  await context.setOffline(true);
+  await seedWorkspace(page, source, pathToFileURL(resolve('standalone/Meridian.html')).href);
+  const list = await openReview(page);
+  await list.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await list.getByRole('button', { name: 'Open v3 project Migration example' }).click();
+  const original = JSON.parse(await download(page, 'Download v3 project'));
+  await page.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await edit.getByRole('combobox', { name: 'Operation' }).selectOption('setNodeLabel');
+  await edit.getByRole('combobox', { name: 'Node to rename' }).selectOption({ label: 'Original (A)' });
+  await edit.getByRole('textbox', { name: 'Node label' }).fill('Offline review');
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  await edit.getByRole('button', { name: 'Apply change' }).click();
+  await expect(page.getByText('Saved in this browser.', { exact: true })).toBeVisible();
+  const edited = JSON.parse(await download(page, 'Download v3 project'));
+  expect(edited).toEqual({ ...original, source: source.replace('A[Original]', 'A["Offline review"]'), revision: 1, updatedAt: edited.updatedAt });
+  expect(network).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import { AuthoringWorkerTimeout } from "../lib/authoring/authoring-worker";
 import { useEffect, useRef, useState } from "react";
 import Modal from "./Modal";
 import { buildExportFrame } from "../lib/export";
@@ -59,6 +60,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   const [branches, setBranches] = useState(emptyBranches);
   const [showSecondBranchFirst, setShowSecondBranchFirst] = useState(false);
   const [error, setError] = useState("");
+  const [retryMode, setRetryMode] = useState<"retry" | "reduce">();
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
@@ -99,6 +101,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
     setPreview(undefined);
     setPainted(false);
     setError("");
+    setRetryMode(undefined);
   }
 
   function switchTo(next: EditDestination) {
@@ -145,7 +148,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
     resetPreview();
   }
 
-  async function prepare() {
+  async function prepare(extended: boolean) {
     if (work.current) return;
     resetPreview();
     const controller = new AbortController();
@@ -164,7 +167,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         : operation === "removeNode" ? { op: operation, targetId: to, incidentEdgeIds: incident.map(edge => edge.id) }
         : operation === "removeEdges" ? { op: operation, targetIds: deleteConnections?.ids ?? [] }
         : { op: operation, targetId: to };
-      const proposal = await editor.prepareStructure(edit, controller.signal);
+      const proposal = await editor.prepareStructure(edit, controller.signal, extended);
       const candidate = editor.readStructurePreview(proposal);
       if (!candidate) throw new Error("The project changed. Prepare the preview again.");
       const rendered = await renderMermaidProject(candidate, controller.signal, "preview");
@@ -175,7 +178,9 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
       setPreview({ proposal, url, impact: editor.readStructureImpact(proposal) });
     } catch (reason) {
       if (!controller.signal.aborted) {
-        setError(reason instanceof Error ? reason.message : "The edit could not be previewed.");
+        if (reason instanceof AuthoringWorkerTimeout) setRetryMode(extended ? "reduce" : "retry");
+        setError(extended && reason instanceof AuthoringWorkerTimeout ? "Planning timed out again. Try a smaller diagram before previewing this edit."
+          : reason instanceof Error ? reason.message : "The edit could not be previewed.");
         if (destination) requestAnimationFrame(() => labelField.current?.focus());
       }
     } finally {
@@ -208,6 +213,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
     : (operation === "removeEdge" || operation === "setEdgeLabel") ? !!to
     : removingEdges ? !!selectedEdges?.length && selectedEdges.every(Boolean)
     : operation === "removeNode" ? !!to && !unidentified.length : !!from && !!to && (!duplicateKey || approvedDuplicate === duplicateKey);
+  const canPlan = canPreview && retryMode !== "reduce";
+  const retryLabel = retryMode === "retry" ? "Retry planning for five seconds" : undefined;
   const search = operation === "addEdge" ? nodeQuery.trim().toLowerCase() : "";
   const nodeOptions = nodes.filter(node => !search || node.id === from || node.id === to || node.label.toLowerCase().includes(search))
     .map(node => <option value={node.id} key={node.id}>{node.label}</option>);
@@ -216,7 +223,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
       <form className="heading-form" onSubmit={event => {
         event.preventDefault();
         if (destination && preview && painted) applyButton.current?.focus();
-        else if (canPreview) void prepare();
+        else if (canPlan) void prepare(retryMode === "retry");
       }}>
         <label>Operation
           <select ref={operationField} value={operation} disabled={busy || !!groupMembers || !!destination}
@@ -254,7 +261,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
               requestAnimationFrame(() => labelField.current?.focus());
             }}>Keep editing</button>
             <button type="button" className="button secondary" disabled={busy} onClick={() => continueTo(destination)}>Discard label and continue</button>
-            <button type="submit" className="button primary" disabled={busy || !canPreview}>Review label before saving</button>
+            <button type="submit" className="button primary" disabled={busy || !canPlan}>{retryLabel ?? "Review label before saving"}</button>
           </div>
         </section>}
         {(operation === "addNode" || operation === "addNext") && <label>Shape
@@ -438,7 +445,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
           <button className="button quiet" type="button" onClick={onClose}>Cancel</button>
           {!destination && labelChoices && originalLabel !== undefined && <button className="button quiet" type="button" disabled={busy}
             onClick={() => requestSwitch({ switchProject: true })}>Switch project</button>}
-          {!destination && <button className="button secondary" type="submit" disabled={busy || !canPreview}>Preview change</button>}
+          {!destination && <button className="button secondary" type="submit" disabled={busy || !canPlan}>{retryLabel ?? "Preview change"}</button>}
           <button className="button primary" type="button" ref={applyButton} disabled={!preview || !painted || busy}
             onClick={apply}>{destination ? "Save label and continue" : "Apply change"}</button>
         </div>
