@@ -112,9 +112,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return commit(result.document);
   }
 
-  async function prepareStructure(edit: NativeFlowchartEdit, signal?: AbortSignal): Promise<ReadyProposal> {
+  async function prepareStructure(edit: NativeFlowchartEdit, signal?: AbortSignal, extended = false): Promise<ReadyProposal> {
     const base = current.document;
-    const { document, elementId, impact } = await prepareFlowchartCandidate(base, { ...edit }, signal);
+    const { document, elementId, impact } = await prepareFlowchartCandidate(base, { ...edit }, signal, extended);
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     structure.set(proposal, { base, next: freezeSnapshot(document), elementId, impact: freezeSnapshot(impact) });
     return proposal;

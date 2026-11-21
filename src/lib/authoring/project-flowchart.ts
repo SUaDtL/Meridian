@@ -28,7 +28,7 @@ export type NativeFlowchartEdit =
   | { op: 'removeEdges'; targetIds: readonly string[] }
   | { op: 'removeEdge'; targetId: string };
 
-export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit: NativeFlowchartEdit, signal?: AbortSignal) {
+export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit: NativeFlowchartEdit, signal?: AbortSignal, extended = false) {
   const previous = document.identity.elements;
   const previousById = new Map(previous.map(item => [item.id, item]));
   function nodeSourceId(id: string) {
@@ -65,7 +65,7 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
       const to = branch.destination.kind === 'existing' ? { current: nodeSourceId(branch.destination.id) } : { key };
       edges.push({ key, from: decision, to, label: branch.label });
     }
-    const resolved = await prepareProjectFragment(document, { nodes, edges }, signal);
+    const resolved = await prepareProjectFragment(document, { nodes, edges }, signal, extended);
     const elementId = resolved.bind(resolved.nodes[0].sourceId);
     const next = validateMermaidProject({
       ...document, source: resolved.source, identity: { ...document.identity, elements: resolved.elements },
@@ -153,7 +153,7 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
     default:
       throw new Error('This operation is outside the supported editing subset.');
   }
-  const proof = await proveFlowchartEdit({ source: document.source, settings: document.settings }, intent, signal);
+  const proof = await proveFlowchartEdit({ source: document.source, settings: document.settings }, intent, signal, extended);
   signal?.throwIfAborted();
   const retired = removal.length ? retireElements(document, removal) : undefined;
   if ((edit.op === 'setNodeLabel' || edit.op === 'setEdgeLabel') && proof.source === document.source) return { document, elementId: edit.targetId, impact: undefined };

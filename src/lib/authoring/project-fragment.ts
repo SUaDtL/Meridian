@@ -6,8 +6,8 @@ import type { MermaidProjectV3 } from './mermaid-project';
 import type { FlowchartFragment } from './source-patches';
 
 /** Prove the appended graph and bind only newly verified source declarations. */
-export async function prepareProjectFragment(base: MermaidProjectV3, fragment: FlowchartFragment, signal?: AbortSignal) {
-  const resolved = await proveFlowchartFragment(base, fragment, signal);
+export async function prepareProjectFragment(base: MermaidProjectV3, fragment: FlowchartFragment, signal?: AbortSignal, extended = false) {
+  const resolved = await proveFlowchartFragment(base, fragment, signal, extended);
   const model = flowchartModelFor(resolved.rendered);
   if (!model) throw new Error('Mermaid could not verify the inserted elements.');
   const priorIds = new Set(base.identity.elements.map(item => item.id));
