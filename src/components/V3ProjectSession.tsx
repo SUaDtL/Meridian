@@ -69,7 +69,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [editSource, setEditSource] = useState(false);
   const [insertOpen, setInsertOpen] = useState(false);
   const [detachOpen, setDetachOpen] = useState(false);
-  const [sourceDraft, setSourceDraft] = useState<SourceDraft>();
+  // The mounted source editor owns its draft. Retain a copy for reopening
+  // without updating the workspace behind the dialog on every keystroke.
+  const sourceDraft = useRef<SourceDraft | undefined>(undefined);
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [componentHidden, setComponentHidden] = useState<number>();
@@ -804,14 +806,14 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           }} />
       </Suspense>}
       {editSource && editor.current && <Suspense>
-        <V3SourceEditor editor={editor.current} savedDraft={sourceDraft} onDraft={setSourceDraft}
+        <V3SourceEditor editor={editor.current} savedDraft={sourceDraft.current} onDraft={draft => { sourceDraft.current = draft; }}
           canUndo={!busy && editor.current.canUndo()} canRedo={!busy && editor.current.canRedo()}
           onHistory={direction => inFlight.current ? undefined : applyHistory(direction)}
           onClose={() => setEditSource(false)} onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);
             if (result.status === "applied") {
-              setSourceDraft(undefined);
+              sourceDraft.current = undefined;
               setProject(current.snapshot());
             }
             return result.status;

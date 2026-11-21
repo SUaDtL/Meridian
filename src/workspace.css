@@ -981,6 +981,10 @@
   overflow-wrap: anywhere;
 }
 
+.modal:has(.v3-source-draft)::backdrop {
+  backdrop-filter: none;
+}
+
 .v3-source-draft {
   height: clamp(11rem, 32svh, 24rem);
   min-width: 0;
