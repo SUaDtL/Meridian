@@ -4,8 +4,8 @@ import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 
 const source = '\uFEFFflowchart LR\r\n  A[Original]\r\n';
 
-async function seedWorkspace(page: Page) {
-  const original = { ...createDocument(), title: 'Migration example', source };
+async function seedWorkspace(page: Page, originalSource = source) {
+  const original = { ...createDocument(), title: 'Migration example', source: originalSource };
   const invalid = { ...createDocument(), title: 'Unfinished diagram', source: 'flowchart LR\n  A[' };
   const raw = JSON.stringify({ version: 2, activeId: original.id, documents: [original, invalid] }, null, 4);
   await page.addInitScript(({ key, raw }) => {
@@ -173,6 +173,56 @@ test('opens a live v3 project, saves reversible edits and recovers a second tab 
   expect(savedCopy).toEqual({ ...unsaved, id: savedCopy.id, revision: 0 });
   expect(JSON.parse(await download(second, 'Download v3 copy of First tab edit'))).toEqual(first);
   expect(await download(second, 'Download pre-migration backup')).toBe(raw);
+});
+
+test('resolves a label draft before switching to a different operation or target', async ({ page }) => {
+  const authored = source + '  B[Archive]\r\n';
+  await seedWorkspace(page, authored);
+  const list = await openReview(page);
+  await list.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await list.getByRole('button', { name: 'Open v3 project Migration example' }).click();
+  const original = JSON.parse(await download(page, 'Download v3 project'));
+  await page.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  const operations = edit.getByRole('combobox', { name: 'Operation' });
+  const nodes = edit.getByRole('combobox', { name: 'Node to rename' });
+  const label = edit.getByRole('textbox', { name: 'Node label' });
+  const pending = edit.getByRole('region', { name: 'Unsaved label edit' });
+  await operations.selectOption('setNodeLabel');
+  await nodes.selectOption({ label: 'Original (A)' });
+  await expect(label).toHaveValue('Original');
+  await label.fill('Discarded wording');
+  await nodes.selectOption({ label: 'Archive (B)' });
+  await expect(pending).toContainText('choosing another element');
+  await expect(pending.getByRole('button', { name: 'Keep editing' })).toBeFocused();
+  await expect(label).toHaveValue('Discarded wording');
+  await pending.getByRole('button', { name: 'Discard label and continue' }).press('Enter');
+  await expect(nodes).toBeFocused();
+  await expect(label).toHaveValue('Archive');
+
+  await label.fill('A|B');
+  await operations.selectOption('addEdge');
+  await expect(pending).toContainText('changing operations');
+  await pending.getByRole('button', { name: 'Review label before saving' }).press('Enter');
+  await expect(edit.getByRole('alert')).toContainText('could not display that label exactly');
+  await expect(label).toHaveValue('A|B');
+  await expect(label).toBeFocused();
+  await label.fill('Accepted archive');
+  await pending.getByRole('button', { name: 'Review label before saving' }).press('Enter');
+  const save = edit.getByRole('button', { name: 'Save label and continue' });
+  await expect(save).toBeFocused();
+  await save.press('Enter');
+  await expect(operations).toHaveValue('addEdge');
+  await expect(operations).toBeFocused();
+  await expect(edit.getByRole('combobox', { name: 'To', exact: true }).getByRole('option', { name: 'Accepted archive (B)' })).toHaveCount(1);
+  await edit.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const accepted = JSON.parse(await download(page, 'Download v3 project'));
+  expect(accepted.source).toBe(authored.replace('B[Archive]', 'B["Accepted archive"]'));
+  expect(accepted.revision).toBe(original.revision + 1);
+  expect(accepted.identity).toEqual(original.identity);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByText('Saved in this browser.', { exact: true })).toBeVisible();
+  expect(JSON.parse(await download(page, 'Download v3 project')).source).toBe(authored);
 });
 
 test('previews and commits Add, Rename and Connect through the live v3 workspace', async ({ page }) => {

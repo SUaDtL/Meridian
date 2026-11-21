@@ -14,6 +14,7 @@ type Operation = NativeFlowchartEdit["op"];
 type NodeChoice = { id: string; label: string };
 type EdgeChoice = NodeChoice & { sourceId: string | null; targetId: string | null; explicit: boolean; text: string; direction: ConnectionDirection | null };
 type Preview = { proposal: ReadyProposal; url: string; impact?: ElementRemovalImpact };
+type EditDestination = { operation: Operation } | { target: string };
 const nextRoles: readonly SemanticRole[] = ["process", "decision", "neutral", "service", "database", "queue", "external", "person"];
 const emptyBranches = (): DecisionBranch[] => [
   { label: "", destination: { kind: "existing", id: "" } },
@@ -58,7 +59,16 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
+  const [destination, setDestination] = useState<EditDestination>();
   const work = useRef<AbortController | undefined>(undefined);
+  const operationField = useRef<HTMLSelectElement>(null);
+  const targetField = useRef<HTMLSelectElement>(null);
+  const labelField = useRef<HTMLInputElement>(null);
+  const keepDraft = useRef<HTMLButtonElement>(null);
+  const applyButton = useRef<HTMLButtonElement>(null);
+  const labelChoices = operation === "setNodeLabel" ? nodes : operation === "setEdgeLabel" ? edges : undefined;
+  const originalLabel = labelChoices?.find(item => item.id === to)?.text;
+  const dirtyLabel = originalLabel !== undefined && label !== originalLabel;
   const removingNode = operation === "removeNode";
   const removingEdges = operation === "removeEdges";
   const selectedEdges = deleteConnections?.ids.map(id => edges.find(edge => edge.id === id && edge.explicit));
@@ -86,6 +96,41 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
     setPreview(undefined);
     setPainted(false);
     setError("");
+  }
+
+  function switchTo(next: EditDestination) {
+    setDestination(undefined);
+    resetPreview();
+    if ("target" in next) {
+      setTo(next.target);
+      if (labelChoices) setLabel(labelChoices.find(item => item.id === next.target)?.text ?? "");
+      return;
+    }
+    setOperation(next.operation);
+    setLabel("");
+    setEdgeLabel("");
+    setIncoming(false);
+    setEdgeDirection("forward");
+    setNodeQuery("");
+    setApprovedDuplicate("");
+    setRole("");
+    setFrom("");
+    setTo(next.operation === "removeGroup" || next.operation === "removeGroupContents" ? group?.id ?? "" : "");
+    setMembers(new Set());
+    setBranches(emptyBranches());
+    setShowSecondBranchFirst(false);
+  }
+
+  function requestSwitch(next: EditDestination) {
+    if (dirtyLabel) {
+      setDestination(next);
+      requestAnimationFrame(() => keepDraft.current?.focus());
+    } else switchTo(next);
+  }
+
+  function continueTo(next: EditDestination) {
+    switchTo(next);
+    requestAnimationFrame(() => ("target" in next ? targetField : operationField).current?.focus());
   }
 
   function editBranch(index: number, branch: DecisionBranch) {
@@ -122,7 +167,10 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
       const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
       setPreview({ proposal, url, impact: editor.readStructureImpact(proposal) });
     } catch (reason) {
-      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "The edit could not be previewed.");
+      if (!controller.signal.aborted) {
+        setError(reason instanceof Error ? reason.message : "The edit could not be previewed.");
+        if (destination) requestAnimationFrame(() => labelField.current?.focus());
+      }
     } finally {
       work.current = undefined;
       if (!controller.signal.aborted) setBusy(false);
@@ -132,8 +180,10 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   function apply() {
     if (!preview || !painted) return;
     const status = onApply(preview.proposal);
-    if (status === "applied" || status === "unchanged") onClose();
-    else {
+    if (status === "applied" || status === "unchanged") {
+      if (destination) continueTo(destination);
+      else onClose();
+    } else {
       resetPreview();
       setError(status === "stale" ? "The project changed. Prepare the preview again." : "This change could not be applied with Undo.");
     }
@@ -156,25 +206,14 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
     .map(node => <option value={node.id} key={node.id}>{node.label}</option>);
   return (
     <Modal title="Edit flowchart" wide onClose={onClose}>
-      <form className="heading-form" onSubmit={event => { event.preventDefault(); if (canPreview) void prepare(); }}>
+      <form className="heading-form" onSubmit={event => {
+        event.preventDefault();
+        if (destination && preview && painted) applyButton.current?.focus();
+        else if (canPreview) void prepare();
+      }}>
         <label>Operation
-          <select value={operation} disabled={busy || !!groupMembers} onChange={event => {
-            const next = event.target.value as Operation;
-            setOperation(next);
-            setLabel("");
-            setEdgeLabel("");
-            setIncoming(false);
-            setEdgeDirection("forward");
-            setNodeQuery("");
-            setApprovedDuplicate("");
-            setRole("");
-            setFrom("");
-            setTo(next === "removeGroup" || next === "removeGroupContents" ? group?.id ?? "" : "");
-            setMembers(new Set());
-            setBranches(emptyBranches());
-            setShowSecondBranchFirst(false);
-            resetPreview();
-          }}>
+          <select ref={operationField} value={operation} disabled={busy || !!groupMembers || !!destination}
+            onChange={event => requestSwitch({ operation: event.target.value as Operation })}>
             {removingEdges ? <option value="removeEdges">Delete selected connections</option> : <>
               {flatFlowchart && <>
                 <option value="addNode">Add node</option>
@@ -199,6 +238,17 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
             </>}
           </select>
         </label>
+        {destination && <section className="heading-form" aria-label="Unsaved label edit">
+          <p>Save or discard the edited label before {"operation" in destination ? "changing operations" : "choosing another element"}.</p>
+          <div className="dialog-actions">
+            <button type="button" className="button quiet" ref={keepDraft} disabled={busy} onClick={() => {
+              setDestination(undefined);
+              requestAnimationFrame(() => labelField.current?.focus());
+            }}>Keep editing</button>
+            <button type="button" className="button secondary" disabled={busy} onClick={() => continueTo(destination)}>Discard label and continue</button>
+            <button type="submit" className="button primary" disabled={busy || !canPreview}>Review label before saving</button>
+          </div>
+        </section>}
         {(operation === "addNode" || operation === "addNext") && <label>Shape
           <select value={shape} disabled={busy} onChange={event => { setShape(event.target.value as Shape); resetPreview(); }}>
             {Object.keys(shapeDelimiters).map(value => <option key={value} value={value}>{value === "rect" ? "Rectangle" : value}</option>)}
@@ -213,20 +263,14 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
           </select>
         </label>}
         {(operation === "addEdge" || operation === "setNodeLabel") && <label>{operation === "addEdge" ? "To" : "Node to rename"}
-          <select value={to} disabled={busy} onChange={event => {
-            setTo(event.target.value);
-            if (operation === "setNodeLabel") setLabel(nodes.find(node => node.id === event.target.value)?.text ?? "");
-            resetPreview();
-          }}>
+          <select ref={targetField} value={to} disabled={busy || !!destination}
+            onChange={event => requestSwitch({ target: event.target.value })}>
             <option value="">Choose a node</option>{nodeOptions}
           </select>
         </label>}
         {(operation === "removeEdge" || operation === "setEdgeLabel") && <label>{operation === "removeEdge" ? "Connection to delete" : "Connection to edit"}
-          <select value={to} disabled={busy} onChange={event => {
-            setTo(event.target.value);
-            if (operation === "setEdgeLabel") setLabel(edges.find(edge => edge.id === event.target.value)?.text ?? "");
-            resetPreview();
-          }}>
+          <select ref={targetField} value={to} disabled={busy || !!destination}
+            onChange={event => requestSwitch({ target: event.target.value })}>
             <option value="">Choose a connection</option>{edges.filter(edge => edge.explicit).map(edge => <option value={edge.id} key={edge.id}>{edge.label}</option>)}
           </select>
         </label>}
@@ -244,7 +288,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         </label>}
         {operation !== "removeEdge" && !removingEdges && !removingNode && !ungrouping && !movingToGroup && !deletingGroup && <label>{(operation === "addEdge" || operation === "setEdgeLabel")
           ? "Connection label (optional)" : grouping ? "Group label" : operation === "addDecision" ? "Decision label" : "Node label"}
-          <input value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
+          <input ref={labelField} value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
         </label>}
         {operation === "addDecision" && <>
           <label>Connect from this node (optional)<select value={from} disabled={busy}
@@ -330,7 +374,10 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         {preview && (
           <div className="migration-preview">
             <img src={preview.url} alt="Proposed diagram"
-              onLoad={() => setPainted(true)}
+              onLoad={() => {
+                setPainted(true);
+                if (destination) requestAnimationFrame(() => applyButton.current?.focus());
+              }}
               onError={() => setError("The proposed diagram could not be displayed. Prepare the preview again.")} />
           </div>
         )}
@@ -368,8 +415,9 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         </section>}
         <div className="dialog-actions">
           <button className="button quiet" type="button" onClick={onClose}>Cancel</button>
-          <button className="button secondary" type="submit" disabled={busy || !canPreview}>Preview change</button>
-          <button className="button primary" type="button" disabled={!preview || !painted || busy} onClick={apply}>Apply change</button>
+          {!destination && <button className="button secondary" type="submit" disabled={busy || !canPreview}>Preview change</button>}
+          <button className="button primary" type="button" ref={applyButton} disabled={!preview || !painted || busy}
+            onClick={apply}>{destination ? "Save label and continue" : "Apply change"}</button>
         </div>
       </form>
     </Modal>
