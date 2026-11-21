@@ -33,3 +33,53 @@ test('reviews typed filters and explains excluded rows while preserving source d
   await chart.getByRole('button', { name: 'Displayed values', exact: true }).click();
   await expect(chart.getByRole('table', { name: 'Displayed values' }).getByRole('cell', { name: 'South' })).toBeVisible();
 });
+
+test('requires explicit filtering above the mark caps and draws every observation at each cap', async ({ page }) => {
+  const rows = Array.from({ length: 2001 }, (_, index) => `${index + 1},${(index % 31) - 15}`);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Chart values' }).click();
+  const chart = page.getByRole('dialog', { name: 'Chart values' });
+  await chart.getByLabel('Chart data file').setInputFiles({
+    name: 'mark-limits.csv', mimeType: 'text/csv', buffer: Buffer.from(['X,Y', ...rows].join('\n')),
+  });
+  await chart.getByRole('button', { name: 'Read data' }).click();
+  for (const field of ['X', 'Y']) await chart.getByRole('group', { name: field, exact: true }).getByLabel('Type').selectOption('number');
+  await chart.getByRole('button', { name: 'Confirm columns' }).click();
+  await chart.getByLabel('Title', { exact: true }).fill('Reviewed mark limits');
+  const review = chart.getByRole('button', { name: 'Review chart' });
+  const mark = chart.getByLabel('Chart type');
+  const figure = chart.getByRole('img', { name: 'Reviewed mark limits' });
+
+  async function setLimit(cutoff: string) {
+    const filter = chart.getByRole('group', { name: 'Filter retained rows' });
+    if (!(await filter.isVisible())) await chart.getByText(/^Data filters \(\d+\)$/).click();
+    const remove = filter.getByRole('button', { name: 'Remove filter 1' });
+    if (await remove.isVisible()) await remove.click();
+    await filter.getByLabel('Filter column').selectOption({ label: 'X' });
+    await filter.getByLabel('Filter comparison').selectOption('lte');
+    await filter.getByLabel('Filter value').fill(cutoff);
+    await filter.getByRole('button', { name: 'Add filter' }).click();
+  }
+
+  await mark.selectOption('scatter');
+  await chart.getByLabel('Y field').selectOption({ label: 'Y' });
+  await review.click();
+  await expect(chart.getByRole('alert')).toContainText('up to 2,000 observations');
+  await expect(figure).toHaveCount(0);
+  await setLimit('2000');
+  await review.click();
+  await expect(figure.locator('circle')).toHaveCount(2000);
+  await expect(figure).toHaveAccessibleDescription(/2000 observations from 2000 retained rows of 2001 input rows/);
+
+  await chart.getByRole('button', { name: 'Back to mapping' }).click();
+  await mark.selectOption('line');
+  await chart.getByLabel('Y field').selectOption({ label: 'Y' });
+  await review.click();
+  await expect(chart.getByRole('alert')).toContainText('up to 500 observations');
+  await expect(figure).toHaveCount(0);
+  await setLimit('500');
+  await review.click();
+  await expect(figure.locator('circle')).toHaveCount(500);
+  await expect(figure).toHaveAccessibleDescription(/500 observations from 500 retained rows of 2001 input rows/);
+});

@@ -162,7 +162,16 @@ export function projectChartValues(project: ChartProject) {
       overlap.set(key, points);
     }
   }
-  for (const points of overlap.values()) for (const point of points) point.overlap = points.length;
+  let overlappingPoints = 0;
+  let overlapPositions = 0;
+  for (const points of overlap.values()) {
+    if (points.length < 2) continue;
+    for (const point of points) point.overlap = points.length;
+    if (!points[0].outside) {
+      overlappingPoints += points.length;
+      overlapPositions++;
+    }
+  }
   if (spec.ordering !== 'source') {
     const direction = spec.ordering === 'ascending' ? 1 : -1;
     observations.sort((a, b) => {
@@ -174,6 +183,7 @@ export function projectChartValues(project: ChartProject) {
     unitScale: spec.unitScale,
     x, y, series, xDomain, yDomain, observations, seriesKeys: [...seriesKeys], filterExclusions: exclusions,
     counts: { input: dataset.rows.length, retained: rows.length, excludedMissing, nullX, nullY,
-      outside: observations.filter(point => point.outside).length, plotted: observations.filter(point => point.y !== null).length },
+      outside: observations.filter(point => point.outside).length, plotted: observations.filter(point => point.y !== null).length,
+      overlappingPoints, overlapPositions },
   };
 }
