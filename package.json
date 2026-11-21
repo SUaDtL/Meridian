@@ -12,6 +12,8 @@
     "licenses": "node scripts/third-party-notices.mjs",
     "prebuild": "npm run licenses",
     "build": "tsc -b && vite build",
+    "build:companion": "tsc -b && vite build companion --config companion/vite.config.ts",
+    "build:companion-fixture": "vite build --config companion/vite.config.ts --ssr tests/support/companion-fixture.ts --outDir companion/.fixtures/dist",
     "build:standalone": "npm run licenses && tsc -b && node scripts/build-standalone.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run src",
