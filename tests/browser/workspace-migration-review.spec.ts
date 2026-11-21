@@ -332,3 +332,52 @@ test('previews and commits Add, Rename and Connect through the live v3 workspace
   expect(undone.source).toBe(added.source.replace('A[Original]', 'A["Intake"]'));
   expect(undone.revision).toBe(4);
 });
+
+test('reopens the last durable revision when a tab closes before its project write commits', async ({ page, context }) => {
+  const { original } = await seedWorkspace(page);
+  const migration = await openReview(page);
+  await migration.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await migration.getByRole('button', { name: 'Open v3 project Migration example' }).click();
+  async function editTitle(previous: string, next: string) {
+    await page.getByRole('dialog', { name: previous, exact: true }).getByRole('button', { name: 'Edit heading' }).click();
+    const heading = page.getByRole('dialog', { name: 'Edit heading' });
+    await heading.getByRole('textbox', { name: 'Title', exact: true }).fill(next);
+    await heading.getByRole('button', { name: 'Apply heading' }).click();
+  }
+
+  await editTitle('Migration example', 'Durable heading');
+  const durableProject = page.getByRole('dialog', { name: 'Durable heading', exact: true });
+  await expect(durableProject.getByText('Saved in this browser.')).toBeVisible();
+  const durable = await download(page, 'Download v3 project');
+
+  await page.evaluate(projectId => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, key) {
+      const write = put.call(this, value, key);
+      if (this.name === 'documents' && value?.id === projectId && value?.document?.title === 'Unfinished heading') {
+        const currentStore = this;
+        // Keep the real read-write transaction active after its successful put.
+        // Closing this tab ends the transaction before the durable complete event.
+        const keepOpen = () => {
+          const read = currentStore.get(projectId);
+          read.onsuccess = keepOpen;
+        };
+        keepOpen();
+        write.onsuccess = () => { document.documentElement.dataset.heldProjectWrite = 'true'; };
+      }
+      return write;
+    };
+  }, original.id);
+  await editTitle('Durable heading', 'Unfinished heading');
+  await expect(page.getByRole('dialog', { name: 'Unfinished heading', exact: true }).getByText('Saving changes…')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-held-project-write', 'true');
+  await page.close({ runBeforeUnload: false });
+
+  const reopened = await context.newPage();
+  await reopened.goto('/');
+  const review = await openReview(reopened);
+  await expect(review.getByRole('button', { name: 'Open v3 project Unfinished heading' })).toHaveCount(0);
+  await review.getByRole('button', { name: 'Open v3 project Durable heading' }).click();
+  await expect(reopened.getByRole('dialog', { name: 'Durable heading', exact: true }).getByText('Saved in this browser.')).toBeVisible();
+  expect(await download(reopened, 'Download v3 project')).toBe(durable);
+});
