@@ -155,10 +155,20 @@ export async function proveFlowchartFragment(
   const source = applySourcePatches(document.source, plan.patches);
   const render = (text: string) => renderDiagram(text, document.settings, {}, undefined, { signal });
   const current = await render(document.source);
-  const before = readModel(flowchartModelFor(current));
-  if (canonicalJson(semanticTopology(before)) !== canonicalJson(flowchartSubsetTopology(document.source))) throw mismatch();
+  const before = readModel(flowchartModelFor(current), !!plan.existingGroups.size);
+  const topology = semanticTopology(before);
+  const byId = <Item extends { id: string }>(left: Item, right: Item) => left.id.localeCompare(right.id);
+  if (plan.existingGroups.size) {
+    const groups = Array.from(plan.existingGroups, ([id, members]) => ({ id, members: [...members].sort() })).sort(byId);
+    const observed = before.groups.map(({ id, members }) => ({ id, members })).sort(byId);
+    if (canonicalJson(groups) !== canonicalJson(observed)) throw mismatch();
+    topology.nodes.sort(byId);
+    plan.topology.nodes.sort(byId);
+  }
+  if (canonicalJson(topology) !== canonicalJson(plan.topology)) throw mismatch();
   const rendered = await render(source);
-  const actual = readModel(flowchartModelFor(rendered));
+  const grouped = !!(plan.existingGroups.size || plan.groups.length);
+  const actual = readModel(flowchartModelFor(rendered), grouped);
   let expected = before;
   for (const item of plan.nodes) {
     expected = expectedEdit(expected, { op: 'addNode', label: item.label, shape: item.shape }, item.sourceId, true);
@@ -166,14 +176,25 @@ export async function proveFlowchartFragment(
   for (const item of plan.edges) {
     expected = expectedEdit(expected, { op: 'addEdge', from: item.from, to: item.to, label: item.label, direction: item.direction }, item.sourceId, true);
   }
+  if (grouped) {
+    expected = { ...expected, groups: [...before.groups, ...plan.groups.map(({ sourceId, label, members }) =>
+      ({ id: sourceId, label, members: [...members].sort() }))] };
+    for (const graph of [actual, expected]) {
+      graph.groups.sort(byId);
+      graph.nodes.sort(byId);
+    }
+  }
   if (canonicalJson(actual) !== canonicalJson(expected)) throw mismatch();
   const svg = new DOMParser().parseFromString(rendered.svg, 'image/svg+xml');
   const nodeLabels = new Map(Array.from(svg.querySelectorAll('[data-node-key]'),
     item => [item.getAttribute('data-node-key'), item.textContent]));
   const edgeLabels = new Map(Array.from(svg.querySelectorAll('g.edgeLabel[data-element-owner]'),
     item => [item.getAttribute('data-element-owner'), item.textContent]));
+  const groupLabels = new Map(Array.from(svg.querySelectorAll('[data-element-kind="group"]'), item =>
+    [item.getAttribute('data-element-key'), item.querySelector('.cluster-label')?.textContent]));
   if (plan.nodes.some(item => nodeLabels.get(item.sourceId) !== item.label)
-    || plan.edges.some(item => item.label && edgeLabels.get(`edge:id:${item.sourceId}`) !== item.label)) throw inexactLabel();
+    || plan.edges.some(item => item.label && edgeLabels.get(`edge:id:${item.sourceId}`) !== item.label)
+    || plan.groups.some(item => groupLabels.get(`group:${item.sourceId}`) !== item.label)) throw inexactLabel();
   return { ...plan, source, rendered };
 }
 

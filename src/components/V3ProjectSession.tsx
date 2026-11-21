@@ -16,7 +16,7 @@ import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-pr
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
-import { flowchartSubsetTopology, supportedGroupMoves, supportedUngroupSourceId } from "../lib/authoring/source-patches";
+import { flowchartSubsetTopology, supportedGroupMoves, supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
@@ -197,6 +197,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     return [...counts];
   }, [project?.roles]);
   const ungroupSourceId = useMemo(() => source && !flatFlowchart ? supportedUngroupSourceId(source) : undefined, [source, flatFlowchart]);
+  const componentInsertionSupported = useMemo(() => flatFlowchart || (!!source && supportsComponentInsertion(source)), [source, flatFlowchart]);
   const outlineAvailable = !!targetTable?.targets.length;
   const outline = useMemo(() => outlineOpen && project && targetTable ? projectOutline(project, targetTable) : undefined,
     [outlineOpen, project, targetTable]);
@@ -341,7 +342,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "edit-source", title: "Edit Mermaid source", category: "Project", synonyms: ["update source", "code"],
       unavailable: busy ? "Wait for the current action to finish." : targetTable ? undefined : "Open a verified flowchart before editing its source.", run: () => setEditSource(true) },
     { id: "insert-component", title: "Insert component", category: "Diagram", synonyms: ["add reusable pattern", "component library"],
-      unavailable: editingUnavailable, run: () => setInsertOpen(true) },
+      unavailable: busy ? "Wait for the current action to finish." : targetTable && componentInsertionSupported ? undefined
+        : "Open a rendered flowchart with supported declarations and group membership.",
+      run: () => setInsertOpen(true) },
     { id: "detach-component", title: "Detach component", category: "Diagram", synonyms: ["component instance"],
       unavailable: busy ? "Wait for the current action to finish." : project?.componentInstances.length ? undefined : "This project has no component instances.",
       run: () => setDetachOpen(true) },

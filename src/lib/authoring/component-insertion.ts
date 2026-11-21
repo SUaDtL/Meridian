@@ -14,9 +14,6 @@ export async function prepareComponentInsertion(
 ) {
   if (base.componentInstances.length >= 100) throw new Error('This project already has 100 component instances.');
   const component = structuredClone(validateComponentDefinition(definition));
-  if (component.fragment.groups.length) {
-    throw new Error('Insertion supports ungrouped definitions.');
-  }
   const ports = component.ports;
   if (assignments.size !== ports.length || ports.some(port => !assignments.has(port.id))) {
     throw new Error('Choose a connection or Leave unconnected for every port.');
@@ -44,9 +41,9 @@ export async function prepareComponentInsertion(
   }
   const definitionHash = await canonicalDigest('meridian-component/v1', [component]);
   signal?.throwIfAborted();
-  const resolved = await prepareProjectFragment(base, { nodes: graph.nodes, edges }, signal);
+  const resolved = await prepareProjectFragment(base, { nodes: graph.nodes, edges, groups: graph.groups }, signal);
   const { bind } = resolved;
-  const bindings = [...resolved.nodes, ...resolved.edges.slice(0, graph.edges.length)]
+  const bindings = [...resolved.nodes, ...resolved.edges.slice(0, graph.edges.length), ...resolved.groups]
     .map(item => ({ localId: item.key, elementId: bind(item.sourceId) }));
   const roles = graph.nodes.flatMap((item, index) => item.role
     ? [{ elementId: bind(resolved.nodes[index].sourceId), role: item.role }] : []);

@@ -1,4 +1,4 @@
-import { authoringLimits, encodeMermaidLabel, shapeDelimiters, writeEdgeDeclaration, writeNodeDeclaration, type ConnectionDirection, type Shape } from './flowchart-source';
+import { authoringLimits, encodeMermaidLabel, shapeDelimiters, writeContainedDeclarations, writeEdgeDeclaration, writeGroupDeclaration, writeNodeDeclaration, type ConnectionDirection, type FlowchartInput, type Shape } from './flowchart-source';
 
 export interface SourcePatch {
   from: number;
@@ -79,7 +79,7 @@ function scanRecords(source: string): RecordSpan[] {
   return records;
 }
 
-function readSubset(source: string) {
+function readSubset(source: string, allowGroups = false) {
   const [first, ...records] = scanRecords(source);
   const direction = first && header.exec(first.text)?.[1];
   if (!direction) throw unsupported();
@@ -87,8 +87,24 @@ function readSubset(source: string) {
   const edges: { id?: string; from: string; to: string; direction: ConnectionDirection; record: RecordSpan; label: RecordSpan }[] = [];
   const edgeIds = new Set<string>();
   const styles: { record: RecordSpan; indices: string }[] = [];
+  const groups = new Map<string, string[]>();
+  const parents: string[][] = [];
 
   for (const record of records) {
+    const opening = allowGroups ? subgraph.exec(record.text) : null;
+    if (opening) {
+      const id = opening[1];
+      if (reserved.has(id) || groups.has(id) || groups.size >= authoringLimits.graphGroups) throw unsupported();
+      parents.at(-1)?.push(id);
+      const members: string[] = [];
+      groups.set(id, members);
+      parents.push(members);
+      continue;
+    }
+    if (allowGroups && record.text === 'end') {
+      if (!parents.pop()?.length) throw unsupported();
+      continue;
+    }
     let match = node.exec(record.text);
     if (match) {
       const [, name, open, label, close] = match;
@@ -96,8 +112,10 @@ function readSubset(source: string) {
       if (!notation || notation.close !== close || reserved.has(name) || nodes.has(name)) throw unsupported();
       const start = record.start + name.length + open.length;
       nodes.set(name, { start, end: start + label.length, text: label, shape: notation.shape, declaration: record });
+      parents.at(-1)?.push(name);
       continue;
     }
+    if (parents.length) throw unsupported();
     match = edge.exec(record.text);
     if (match) {
       const [, from, edgeId, arrow, token = '', gap, to] = match;
@@ -112,24 +130,34 @@ function readSubset(source: string) {
     styles.push({ record, indices: match[1] });
   }
 
-  if (edges.some(({ from, to, id }) => !nodes.has(from) || !nodes.has(to) || (id && nodes.has(id)))) throw unsupported();
+  const endpoint = (id: string) => nodes.has(id) || groups.has(id);
+  if (parents.length || [...groups.keys()].some(id => nodes.has(id) || edgeIds.has(id))
+    || edges.some(({ from, to, id }) => !endpoint(from) || !endpoint(to) || (id && endpoint(id)))) throw unsupported();
   for (const { indices } of styles) {
     if (indices === 'default') continue;
     if (indices.split(',').some(index => !Number.isSafeInteger(Number(index)) || Number(index) >= edges.length)) {
       throw unsupported();
     }
   }
-  return { heading: first, records, direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles };
+  return { heading: first, records, direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles, groups };
 }
 
-/** Only the source editor may handle undeclared nodes, groups or opaque directives. */
-export function flowchartSubsetTopology(source: string) {
-  const { direction, nodes, edges } = readSubset(source);
+function subsetTopology({ direction, nodes, edges }: ReturnType<typeof readSubset>) {
   return {
     direction,
     nodes: Array.from(nodes, ([id, node]) => ({ id, shape: node.shape })),
     edges: edges.map(({ id, from, to, direction }) => ({ id: id ?? null, from, to, direction })),
   };
+}
+
+/** The main visual editing subset covers explicit flat flowcharts. */
+export function flowchartSubsetTopology(source: string) {
+  return subsetTopology(readSubset(source));
+}
+
+export function supportsComponentInsertion(source: string) {
+  try { readSubset(source, true); return true; }
+  catch { return false; }
 }
 
 export function flowchartSourceLocations(source: string) {
@@ -205,25 +233,38 @@ export type FragmentEndpoint = { key: string } | { current: string };
 export type FlowchartFragment = {
   nodes: readonly { key: string; label: string; shape: Shape }[];
   edges: readonly { key: string; from: FragmentEndpoint; to: FragmentEndpoint; label: string; direction?: ConnectionDirection }[];
+  groups?: FlowchartInput['groups'];
 };
 
 /** Append verified fragment declarations while retaining all authored bytes and indices. */
 export function planFlowchartFragment(source: string, fragment: FlowchartFragment) {
-  const { nodes, edges, edgeIds } = readSubset(source);
+  const parsed = readSubset(source, true);
+  const { nodes, edges, edgeIds, groups: existingGroups } = parsed;
   if (!fragment.nodes.length || nodes.size + fragment.nodes.length > authoringLimits.graphNodes
-      || edges.length + fragment.edges.length > authoringLimits.graphEdges) {
-    throw new Error('The combined project exceeds the supported node or connection limit.');
+      || edges.length + fragment.edges.length > authoringLimits.graphEdges
+      || existingGroups.size + (fragment.groups?.length ?? 0) > authoringLimits.graphGroups) {
+    throw new Error('The combined project exceeds the supported node, connection, or group limit.');
   }
+  const topology = subsetTopology(parsed);
+  for (const id of existingGroups.keys()) edgeIds.add(id);
   const allocated = new Map<string, string>();
-  const statements: string[] = [];
+  const declarations = new Map<string, string>();
   const insertedNodes = fragment.nodes.map(item => {
     if (!item.key || allocated.has(item.key)) throw new Error('Each inserted node needs a distinct fragment key.');
     const sourceId = allocateSourceId('m_n', nodes, edgeIds);
     allocated.set(item.key, sourceId);
     edgeIds.add(sourceId);
-    statements.push(writeNodeDeclaration(sourceId, item.label, item.shape));
+    declarations.set(item.key, writeNodeDeclaration(sourceId, item.label, item.shape));
     return { ...item, sourceId };
   });
+  const groups = (fragment.groups ?? []).map(item => {
+    if (!item.key || allocated.has(item.key)) throw new Error('Each inserted group needs a distinct fragment key.');
+    const sourceId = allocateSourceId('m_g', nodes, edgeIds);
+    allocated.set(item.key, sourceId);
+    edgeIds.add(sourceId);
+    return { ...item, sourceId };
+  });
+  const statements = writeContainedDeclarations(declarations, groups);
   const endpoint = (item: FragmentEndpoint) => {
     const found = 'key' in item ? allocated.get(item.key) : nodes.has(item.current) ? item.current : undefined;
     if (!found) throw new Error('Choose a current node for every attachment.');
@@ -240,7 +281,9 @@ export function planFlowchartFragment(source: string, fragment: FlowchartFragmen
     statements.push(writeEdgeDeclaration(sourceId, from, to, item.label, item.direction));
     return { ...item, sourceId, from, to };
   });
-  return { nodes: insertedNodes, edges: insertedEdges, patches: [appendStatements(source, ...statements)] };
+  return { topology, existingGroups, nodes: insertedNodes, edges: insertedEdges, groups: groups.map(group => ({
+    ...group, members: group.members.map(key => allocated.get(key)!),
+  })), patches: [appendStatements(source, ...statements)] };
 }
 
 /** Wrap a consecutive set of declarations without moving the existing source bytes. */
@@ -271,7 +314,7 @@ export function planGroupCreation(source: string, members: readonly string[], ti
   const newline = source.match(/\r?\n/)?.[0] ?? '\n';
   const sourceId = allocateSourceId('m_g', nodes, edgeIds);
   return { sourceId, patches: [
-    { from: first.start, to: first.start, expectedText: '', replacement: `subgraph ${sourceId} [${encodeMermaidLabel(title)}]${newline}${indentation}` },
+    { from: first.start, to: first.start, expectedText: '', replacement: `${writeGroupDeclaration(sourceId, title)}${newline}${indentation}` },
     { from: insertion, to: insertion, expectedText: '', replacement: `${lastSeparator === -1 ? newline : ''}${indentation}end${newline}` },
   ] };
 }
