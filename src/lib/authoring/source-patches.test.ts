@@ -25,6 +25,18 @@ it('wraps a consecutive authored range and leaves comments and relationship line
     comments.replace('subgraph nested [Nested];', '').replace('end %% End of batch', ' %% End of batch'));
 });
 
+it('wraps only consecutive sibling nodes in the original nested parent', () => {
+  const source = '\uFEFFflowchart LR\r\n  subgraph m_g1 [Fleet]\r\n    subgraph Team [Team]\r\n'
+    + '      A[First]\r\n      %% Keep this comment\r\n      B[Second]\r\n      C[Neighbor]\r\n'
+    + '    end\r\n  end\r\n  D[Outside]\r\n  B boundary@--> D\r\n  linkStyle 0 stroke:#446677\r\n';
+  const plan = planGroupCreation(source, ['A', 'B'], 'New batch');
+  expect(plan.sourceId).toBe('m_g2');
+  expect(applySourcePatches(source, plan.patches)).toBe(source.replace('      A[First]',
+    '      subgraph m_g2 ["New batch"]\r\n      A[First]').replace('      C[Neighbor]', '      end\r\n      C[Neighbor]'));
+  expect(() => planGroupCreation(source, ['A', 'D'], 'Mixed parents')).toThrow('same containing group');
+  expect(() => planGroupCreation(source, ['A', 'C'], 'Skip a member')).toThrow('consecutive node declarations');
+});
+
 it('moves the exact standalone line and omits members and shared source lines', () => {
   const line = '  B[Outside] %% Keep with B\r\n';
   const source = '\uFEFFflowchart LR\r\n' + line + '  subgraph Team [Team]\r\n  A[Member]\r\n  end\r\n  C[Shared]; D[Shared]\r\n  A link@--> B\r\n';

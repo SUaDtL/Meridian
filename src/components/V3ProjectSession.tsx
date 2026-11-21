@@ -16,7 +16,7 @@ import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-pr
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
-import { flowchartSubsetTopology, supportedGroupMoveTargets, supportedGroupRemovals, supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
+import { flowchartSubsetTopology, planGroupCreation, supportedGroupMoveTargets, supportedGroupRemovals, supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
@@ -251,6 +251,14 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         sourceId: item.sourceId, targetId: item.targetId, direction: item.direction, explicit: ids.has(item.id), text: edgeLabels?.get(item.id) ?? "" }] : []) ?? [];
   }, [identities, targetTable, edgeLabels]);
   const selectedSource = outlineSelection.size === 1 ? nodes.find(node => outlineSelection.has(node.id))?.id : undefined;
+  const canGroupWithinParent = useMemo(() => {
+    if (!source || flatFlowchart || !componentSourceSupported || !outlineSelection.size) return false;
+    const members = identities?.filter(record => outlineSelection.has(record.id) && record.elementKind === "node"
+      && record.status === "resolved").map(record => record.binding.sourceId);
+    if (members?.length !== outlineSelection.size) return false;
+    try { planGroupCreation(source, members, "New group"); return true; }
+    catch { return false; }
+  }, [source, flatFlowchart, componentSourceSupported, identities, outlineSelection]);
   const removableGroup = useMemo(() => {
     const identity = identities?.find(record => record.status === "resolved" && record.elementKind === "group"
       && record.binding.sourceId === ungroupSourceId);
@@ -554,7 +562,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setEditFlowchart("moveToGroup");
         }}
         onConnect={!editingUnavailable && selectedSource ? openConnection : undefined}
-        onGroup={!editingUnavailable ? hidden => {
+        onGroup={!busy && (!editingUnavailable || canGroupWithinParent) ? hidden => {
           setGroupMembers({ ids: [...outlineSelection], hidden });
           setEditFlowchart("addGroup");
         } : undefined}

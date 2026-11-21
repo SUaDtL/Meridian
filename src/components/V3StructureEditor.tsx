@@ -227,10 +227,10 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
               </>}
               {flatFlowchart && <>
                 <option value="addEdge" disabled={!nodes.length}>Connect nodes</option>
-                <option value="addGroup" disabled={!nodes.length}>Create group</option>
                 <option value="removeEdge" disabled={!edges.some(edge => edge.explicit)}>Delete connection</option>
                 <option value="removeNode" disabled={nodes.length < 2}>Delete node</option>
               </>}
+              {(flatFlowchart || groupMembers) && <option value="addGroup" disabled={!nodes.length}>Create group</option>}
               {group && <>
                 {canUngroup && <option value="removeGroup">Ungroup</option>}
                 {groupRemoval && <option value="removeGroupContents" disabled={!!groupRemoval.unavailable}>Delete group and contents</option>}
@@ -330,7 +330,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         {grouping && groupMembers && <section aria-label="Selected group members">
           <p>{groupMembers.ids.length} selected · {groupMembers.hidden} hidden in the outline</p>
           <ul>{selectedMembers?.map((node, index) => <li key={groupMembers.ids[index]}>{node?.label || "Node unavailable"}</li>)}</ul>
-          <p>Meridian groups consecutive node declarations. Close this review to change the selection.</p>
+          <p>Group consecutive node declarations. Close this review to change the selection.</p>
         </section>}
         {grouping && !groupMembers && <fieldset className="guided-process-fieldset" disabled={busy}>
           <legend>Group members</legend>

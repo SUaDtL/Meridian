@@ -205,7 +205,7 @@ function appendStatements(source: string, ...statements: string[]): SourcePatch 
   return { from: source.length, to: source.length, expectedText: '', replacement: separator + statements.map(statement => '  ' + statement + newline).join('') };
 }
 
-function allocateSourceId(prefix: string, nodes: ReadonlyMap<string, unknown>, edges: ReadonlySet<string>): string {
+function allocateSourceId(prefix: string, nodes: Pick<ReadonlyMap<string, unknown>, 'has'>, edges: ReadonlySet<string>): string {
   let ordinal = 1;
   while (nodes.has(prefix + ordinal) || edges.has(prefix + ordinal)) ordinal++;
   return prefix + ordinal;
@@ -275,7 +275,8 @@ export function planFlowchartFragment(source: string, fragment: FlowchartFragmen
   });
   const groups = (fragment.groups ?? []).map(item => {
     if (!item.key || allocated.has(item.key)) throw new Error('Each inserted group needs a distinct fragment key.');
-    const sourceId = allocateSourceId('m_g', nodes, edgeIds);
+    const occupied = new Set([...nodes.keys(), ...groups.keys()]);
+  const sourceId = allocateSourceId('m_g', occupied, edgeIds);
     allocated.set(item.key, sourceId);
     edgeIds.add(sourceId);
     return { ...item, sourceId };
@@ -304,13 +305,18 @@ export function planFlowchartFragment(source: string, fragment: FlowchartFragmen
 
 /** Wrap a consecutive set of declarations without moving the existing source bytes. */
 export function planGroupCreation(source: string, members: readonly string[], title: string) {
-  const { nodes, edges, edgeIds, records } = readSubset(source);
+  const { nodes, groups, edges, edgeIds, records } = readSubset(source, true);
   const selected = new Set(members);
   if (!members.length || selected.size !== members.length || members.some(member => !nodes.has(member))) {
     throw new Error('Choose current node declarations to include in the group.');
   }
-  if (nodes.size > authoringLimits.graphNodes || edges.length > authoringLimits.graphEdges) {
+  if (nodes.size > authoringLimits.graphNodes || edges.length > authoringLimits.graphEdges || groups.size >= authoringLimits.graphGroups) {
     throw new Error('The diagram is too large for a generated group edit.');
+  }
+  const parentById = new Map([...groups].flatMap(([id, children]) => children.map(child => [child, id] as const)));
+  const parent = parentById.get(members[0]);
+  if (members.some(member => parentById.get(member) !== parent)) {
+    throw new Error('Choose node declarations that share the same containing group.');
   }
   const declarations = new Set([...nodes].filter(([key]) => selected.has(key)).map(([, record]) => record.declaration));
   const ordered = [...declarations];
@@ -328,7 +334,8 @@ export function planGroupCreation(source: string, members: readonly string[], ti
     throw new Error('Choose consecutive declarations with the first and last declarations on their own lines.');
   }
   const newline = source.match(/\r?\n/)?.[0] ?? '\n';
-  const sourceId = allocateSourceId('m_g', nodes, edgeIds);
+  const occupied = new Set([...nodes.keys(), ...groups.keys()]);
+  const sourceId = allocateSourceId('m_g', occupied, edgeIds);
   return { sourceId, patches: [
     { from: first.start, to: first.start, expectedText: '', replacement: `${writeGroupDeclaration(sourceId, title)}${newline}${indentation}` },
     { from: insertion, to: insertion, expectedText: '', replacement: `${lastSeparator === -1 ? newline : ''}${indentation}end${newline}` },

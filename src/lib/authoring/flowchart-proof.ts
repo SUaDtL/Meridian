@@ -94,8 +94,13 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
         type: flowchartEngineConnections[intent.direction ?? 'forward'], stroke: 'normal', length: 1, interpolate: null, styles: [], classes: [],
       }],
     };
-    case 'addGroup':
-      return { ...graph, groups: [{ id: sourceId, label: intent.label, members: [...intent.members].sort() }] };
+    case 'addGroup': {
+      const added = { id: sourceId, label: intent.label, members: [...intent.members].sort() };
+      const wrapped = new Set(intent.members);
+      const groups = graph.groups.map(group => group.members.some(id => wrapped.has(id))
+        ? { ...group, members: [...group.members.filter(id => !wrapped.has(id)), sourceId].sort() } : group);
+      return { ...graph, groups: [...groups, added] };
+    }
     case 'removeGroup': {
       const removed = graph.groups.find(group => group.id === sourceId);
       if (!removed) throw mismatch();
@@ -223,7 +228,7 @@ export async function proveFlowchartEdit(
   const patched = applySourcePatches(document.source, plan.patches);
   const source = plan.afterGroupRemoval ? applySourcePatches(patched, plan.afterGroupRemoval) : patched;
   const groupId = intent.op === 'removeGroupContents' ? intent.sourceId : undefined;
-  const canReadGroups = intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel' || intent.op === 'removeGroup' || intent.op === 'moveToGroup';
+  const canReadGroups = intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel' || intent.op === 'removeGroup' || intent.op === 'moveToGroup' || intent.op === 'addGroup';
   const groupedSource = canReadGroups ? groupedFlowchartTopology(document.source) : undefined;
   const sourceTopology = groupedSource?.topology ?? flowchartSubsetTopology(plan.flatSource ?? document.source);
   const groupedEdit = !!groupedSource?.groups.size;
@@ -249,7 +254,7 @@ export async function proveFlowchartEdit(
     verifyVisibleLabel(output, intent, plan.sourceId);
     expected = expectedEdit(before, intent, plan.sourceId, source !== document.source);
   }
-  const ordered = (graph: SemanticGraph) => intent.op === 'removeGroup' || intent.op === 'moveToGroup'
+  const ordered = (graph: SemanticGraph) => intent.op === 'removeGroup' || intent.op === 'moveToGroup' || intent.op === 'addGroup'
     ? { ...graph, nodes: [...graph.nodes].sort(byId), groups: [...graph.groups].sort(byId) } : graph;
   if (canonicalJson(ordered(actual)) !== canonicalJson(ordered(expected))) throw mismatch();
   return { source, sourceId: plan.sourceId, render: output, addedEdgeId };
