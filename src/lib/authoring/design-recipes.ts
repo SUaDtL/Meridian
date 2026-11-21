@@ -45,12 +45,12 @@ const display: Record<keyof RecipeSettings, string> = {
   spacing: 'Spacing', frame: 'Frame', padding: 'Padding', motion: 'Motion', background: 'Background', ambient: 'Ambient light', shadow: 'Shadows',
 };
 
-type ScopedDesign = ({ kind: 'selection'; ids: readonly string[] } | { kind: 'role'; role: SemanticRole }) & { preserveOverrides?: boolean; enlargeLabels?: boolean };
+type ScopedDesign = ({ kind: 'selection'; ids: readonly string[] } | { kind: 'role'; role: SemanticRole }) & { preserveOverrides?: boolean; enlargeLabels?: boolean; applyRoleShapes?: boolean };
 export type DesignScope = { kind: 'diagram'; applyRoleShapes?: boolean } | ScopedDesign;
 type Frame = Awaited<ReturnType<typeof renderMermaidProject>>;
 type RecipeChange = { label: string; before: unknown; after: unknown };
 type ScopeSummary = { eligible: number; total: number; protectedFields: number; clearedFields: number; clearedTargets: number;
-  exclusions: string[]; omitted: string[]; typography?: { protected: string[]; moved: string[] } };
+  exclusions: string[]; omitted: string[]; moved: string[]; typography?: { protected: string[] }; shapes?: { protected: string[] } };
 type StyleProof = { targetId: string; field: StyleField; value: string | number };
 
 const paintFields = { fill: 'Fill', color: 'Text', stroke: 'Border' } as const;
@@ -108,6 +108,11 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
   const exclusions: string[] = [];
   const proof: StyleProof[] = [];
   const labelSize = intent.enlargeLabels && recipe.scopedLabelSize;
+  const shapeOverride = intent.applyRoleShapes && recipe.decisionShape;
+  if (intent.applyRoleShapes && !shapeOverride) throw new Error('Choose Presentation for a scoped Decision shape review.');
+  const decisions = new Set(base.roles.filter(item => item.role === 'decision').map(item => item.elementId));
+  const shapeIds: string[] = [];
+  const protectedShapes: string[] = [];
   const protectedTypography: string[] = [];
   let eligible = 0;
   let protectedFields = 0;
@@ -120,7 +125,7 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
     const previous = recipeElements[targetId];
     const sameRecipe = previous?.recipe.id === recipe.id && previous.recipe.version === recipe.version;
     const unsupportedStyle = previous && Object.keys(previous.style).some(field =>
-      !Object.hasOwn(paintFields, field) && !(sameRecipe && field === 'fontSize'));
+      !Object.hasOwn(paintFields, field) && !(sameRecipe && (field === 'fontSize' || field === 'shape')));
     if (element?.kind !== 'node' || unsupportedStyle) {
       exclusions.push(name);
       continue;
@@ -163,12 +168,27 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
         changes.push({ label: `${name} · Label size`, before: `${before} px`, after: `${labelSize} px` });
       }
     }
-    if (!hasEligiblePaint && !hasEligibleTypography) {
+    let applyShape = false;
+    if (shapeOverride && decisions.has(targetId)) {
+      if (manualStyle.shape !== undefined) {
+        protectedShapes.push(name);
+      } else if (element.capabilities.includes('shape')) {
+        const before = element.appearance?.diamondShape;
+        if (before === undefined) throw new Error('The renderer could not measure a selected Decision node’s shape.');
+        if (!before) {
+          applyShape = true;
+          style.shape = shapeOverride;
+          shapeIds.push(targetId);
+          changes.push({ label: `${name} · Presentation shape`, before: 'Existing shape', after: 'Diamond' });
+        }
+      }
+    }
+    if (!hasEligiblePaint && !hasEligibleTypography && !applyShape) {
       exclusions.push(name);
       continue;
     }
     eligible++;
-    if (proof.length > start) recipeElements[targetId] = { recipe: { id: recipe.id, version: recipe.version }, style };
+    if (proof.length > start || applyShape) recipeElements[targetId] = { recipe: { id: recipe.id, version: recipe.version }, style };
     if (clearedFields > clearedBefore) {
       clearedTargets++;
       if (Object.keys(manualStyle).length) manualElements[targetId] = manualStyle;
@@ -178,12 +198,14 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
   if (!eligible) throw new Error('This scope has no eligible node styling. Choose another selection or role.');
   const scope: ScopeSummary = {
     eligible, total: selected.size, protectedFields, clearedFields, clearedTargets, exclusions, omitted: Object.values(display),
-    typography: labelSize ? { protected: protectedTypography, moved: [] } : undefined,
+    moved: [],
+    typography: labelSize ? { protected: protectedTypography } : undefined,
+    shapes: shapeOverride ? { protected: protectedShapes } : undefined,
   };
-  const document = proof.length ? validateMermaidProject({
+  const document = proof.length || shapeIds.length ? validateMermaidProject({
     ...base, design: { ...base.design, recipeElements, elements: manualElements }, revision: base.revision + 1, updatedAt: new Date().toISOString(),
   }) : base;
-  return { recipe, document, changes, scope, proof, selectedIds: [...selected] };
+  return { recipe, document, changes, scope, proof, shapeIds, selectedIds: [...selected] };
 }
 
 export function verifyScopedDesign(current: Frame, preview: Frame, proof: readonly StyleProof[], selectedIds: readonly string[]) {

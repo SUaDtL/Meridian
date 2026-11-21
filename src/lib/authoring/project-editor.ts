@@ -16,6 +16,7 @@ import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
 import type { GuidedAttachment } from './guided-systems-insertion';
 import type { ProcessStep } from './process-steps';
 import type { ProcessConnections } from './process-connections';
+import type { RelationshipGraph } from './relationship-table';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
 import { prepareManualSource } from './manual-source';
 import type { MermaidProjectV3 } from './mermaid-project';
@@ -230,6 +231,18 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     }, signal);
   }
 
+  function prepareGuidedTable(graph: RelationshipGraph, attachment?: GuidedAttachment, signal?: AbortSignal) {
+    const draft = structuredClone({ graph, attachment });
+    return prepareGuidedInsertion(async base => {
+      const { prepareGuidedFragmentInsertion } = await import('./guided-systems-insertion');
+      const nodes = draft.graph.nodes.map(({ key, label, role }) => ({ key, label, role, shape: 'rect' as const }));
+      const edges = draft.graph.edges.map(({ from, to }, index) => ({
+        key: `row-edge-${index + 1}`, from: { key: from }, to: { key: to }, label: '',
+      }));
+      return prepareGuidedFragmentInsertion(base, nodes, edges, draft.attachment, signal);
+    }, signal);
+  }
+
   async function prepareGuidedInsertion(
     prepare: (base: MermaidProjectV3) => Promise<MermaidProjectV3>, signal?: AbortSignal,
   ) {
@@ -347,10 +360,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       : buildScopedDesignRecipe(base, id, scope, accepted!);
     const rendered = candidate.document === base && accepted ? accepted : await renderMermaidProject(candidate.document, signal, 'preview');
     if (accepted && 'selectedIds' in candidate) {
-      const moved = verifyScopedDesign(accepted, rendered, candidate.proof, candidate.selectedIds);
-      if (candidate.scope.typography) candidate.scope.typography.moved = moved;
+      candidate.scope.moved = verifyScopedDesign(accepted, rendered, candidate.proof, candidate.selectedIds);
     }
-    if (accepted && 'shapeIds' in candidate && candidate.shapeIds.length) verifyPresentationRoleShapes(accepted, rendered, candidate.shapeIds);
+    if (accepted && candidate.shapeIds.length) verifyPresentationRoleShapes(accepted, rendered, candidate.shapeIds);
     signal?.throwIfAborted();
     if (!rendered.targetTable) throw new Error('This design can only be previewed on a verified flowchart.');
     if (closed || current.document !== base) throw new Error('The project changed. Refresh the design preview.');
@@ -678,6 +690,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     applyInsertion,
     prepareGuidedSystems,
     prepareGuidedProcess,
+    prepareGuidedTable,
     applyGuidedInsertion,
     prepareAssistSuggestion,
     applyAssistSuggestion,

@@ -24,6 +24,8 @@ import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
 import type { GuidedAttachment } from "../lib/authoring/guided-systems-insertion";
 import { emptyGuidedAttachment } from "./GuidedAttachmentPicker";
 import type { GuidedProcessDraft } from "./GuidedProcessDialog";
+import type { RelationshipTableDraft } from "./GuidedRelationshipTableDialog";
+import type { RelationshipGraph } from "../lib/authoring/relationship-table";
 import type { ProcessStep } from "../lib/authoring/process-steps";
 import type { ProcessConnections } from "../lib/authoring/process-connections";
 import type { SystemsDraft } from "../lib/authoring/systems-draft";
@@ -40,17 +42,20 @@ const SaveComponentDialog = lazy(() => import("./SaveComponentDialog"));
 const ComponentProjectDialog = lazy(() => import("./ComponentProjectDialog"));
 const AssistExchangeDialog = lazy(() => import("./AssistExchangeDialog"));
 const SavedScenesDialog = lazy(() => import("./V3SavedScenesDialog"));
+const SavedStoryDialog = lazy(() => import("./V3SavedStoryDialog"));
 const DesignResetDialog = lazy(() => import("./DesignResetDialog"));
 const OrphanReviewDialog = lazy(() => import("./OrphanReviewDialog"));
 const V3SourceEditor = lazy(() => import("./V3SourceEditor"));
 const ExportDialog = lazy(() => import("./ExportDialog"));
 const GuidedSystemsDialog = lazy(() => import("./GuidedSystemsDialog"));
 const GuidedProcessDialog = lazy(() => import("./GuidedProcessDialog"));
+const GuidedRelationshipTableDialog = lazy(() => import("./GuidedRelationshipTableDialog"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: Omit<ExportFrame, "svg">; url: string };
 
 const emptyGuidedProcess: GuidedProcessDraft = { title: "Process draft", text: "" };
+const emptyGuidedTable: RelationshipTableDraft = { title: "Relationship table draft", text: "", delimiter: ",", header: true };
 
 const workspacePanels = ["Build", "Canvas", "Design", "Story"] as const;
 type WorkspacePanel = typeof workspacePanels[number];
@@ -80,11 +85,13 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [assistOpen, setAssistOpen] = useState(false);
   const [editSource, setEditSource] = useState(false);
   const [insertOpen, setInsertOpen] = useState(false);
-  const [guidedKind, setGuidedKind] = useState<"systems" | "process">();
+  const [guidedKind, setGuidedKind] = useState<"systems" | "process" | "table">();
   const [guidedSystems, setGuidedSystems] = useState(emptySystemsSession);
   const [guidedSystemsAttachment, setGuidedSystemsAttachment] = useState(emptyGuidedAttachment);
   const [guidedProcess, setGuidedProcess] = useState(emptyGuidedProcess);
   const [guidedProcessAttachment, setGuidedProcessAttachment] = useState(emptyGuidedAttachment);
+  const [guidedTable, setGuidedTable] = useState(emptyGuidedTable);
+  const [guidedTableAttachment, setGuidedTableAttachment] = useState(emptyGuidedAttachment);
   const insertionNeedsRefresh = useRef(false);
   const [detachOpen, setDetachOpen] = useState(false);
   // The mounted source editor owns its draft. Retain a copy for reopening
@@ -113,6 +120,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [comparisonSelection, setComparisonSelection] = useState<{ ids: string[]; hidden: number }>();
   const [comparison, setComparison] = useState<"design" | "layout">();
   const [storyOpen, setStoryOpen] = useState(false);
+  const [savedStoryOpen, setSavedStoryOpen] = useState(false);
   const [savedScenesOpen, setSavedScenesOpen] = useState<"edit" | "create">();
   const [savedSceneScope, setSavedSceneScope] = useState<ManualSceneSelection>();
   const [storyDraft, setStoryDraft] = useState(initialGroupStoryDraft);
@@ -528,6 +536,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     return reviewInsertion(target => target.prepareGuidedProcess(steps, connections, attachment, signal), signal);
   }
 
+  function reviewGuidedTable(graph: RelationshipGraph, attachment: GuidedAttachment | undefined, signal: AbortSignal) {
+    return reviewInsertion(target => target.prepareGuidedTable(graph, attachment, signal), signal);
+  }
+
   async function applyReviewedInsertion(apply: (target: Editor) => ReturnType<Editor["applyInsertion"]>) {
     const current = editor.current;
     if (!current) return "stale";
@@ -548,6 +560,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "insert-guided-process", title: "Insert process diagram", category: "Diagram", synonyms: ["guided process", "add process steps"],
       unavailable: busy || !targetTable || !componentSourceSupported ? "Open a supported flowchart before inserting a process." : undefined,
       run: () => setGuidedKind("process") },
+    { id: "insert-guided-table", title: "Insert relationship table", category: "Diagram", synonyms: ["add CSV systems", "insert TSV"],
+      unavailable: busy || !targetTable || !componentSourceSupported ? "Open a supported flowchart before inserting a table." : undefined,
+      run: () => setGuidedKind("table") },
     { id: "export-diagram", title: "Export diagram", category: "Export", synonyms: ["PNG", "SVG", "Mermaid"],
       run: () => setExportOpen(true) },
     { id: "external-assistant", title: "External assistant file exchange", category: "Advanced", synonyms: ["request file", "import AI proposal"],
@@ -578,6 +593,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to compare layouts.", run: () => setComparison("layout") },
     { id: "suggest-scenes", title: "Suggest scenes", category: "Story", synonyms: ["group story", "storyboard"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to suggest scenes.", run: () => setStoryOpen(true) },
+    { id: "preview-saved-story", title: "Preview saved story", category: "Story", synonyms: ["play storyboard", "play saved scenes"],
+      unavailable: currentFrame?.rendered.targetTable && project?.storyboard.scenes.length ? undefined : "Open a verified diagram with saved scenes.",
+      run: () => setSavedStoryOpen(true) },
     { id: "edit-saved-scenes", title: "Edit saved scenes", category: "Story", synonyms: ["scene properties", "storyboard"],
       unavailable: outlineAvailable && project?.storyboard.scenes.length ? undefined : "Open a verified diagram with saved scenes.",
       run: () => setSavedScenesOpen("edit") },
@@ -702,6 +720,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                     onClick={() => setGuidedKind("systems")}>Insert systems diagram</button>}
                   {targetTable && componentSourceSupported && <button className="button secondary" disabled={busy}
                     onClick={() => setGuidedKind("process")}>Insert process diagram</button>}
+                  {targetTable && componentSourceSupported && <button className="button secondary" disabled={busy}
+                    onClick={() => setGuidedKind("table")}>Insert relationship table</button>}
                   {!!project.componentInstances.length && <button className="button secondary" disabled={busy} onClick={() => setDetachOpen(true)}>Detach component</button>}
                   {targetTable && flatFlowchart && (
                     <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
@@ -719,6 +739,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                 {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
               </section>
               <section data-v3-panel="Story" aria-label="Story tools" className="recovery-actions">
+                {currentFrame?.rendered.targetTable && project.storyboard.scenes.length > 0 &&
+                  <button className="button secondary" disabled={busy} onClick={() => setSavedStoryOpen(true)}>Preview saved story</button>}
                 {outlineAvailable && <button ref={suggestScenesButton} className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
                 {outlineAvailable && <button className="button secondary" disabled={busy}
                   onClick={() => setSavedScenesOpen(project.storyboard.scenes.length ? "edit" : "create")}>
@@ -807,6 +829,17 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               setGuidedProcessAttachment(emptyGuidedAttachment);
               insertionNeedsRefresh.current = false;
               if (draftRetained) setError("Process inserted. The saved draft could not be cleared.");
+            } }} />
+      </Suspense>}
+      {guidedKind === "table" && project && <Suspense fallback={<p role="status">Opening table editor…</p>}>
+        <GuidedRelationshipTableDialog draft={guidedTable} onDraft={setGuidedTable} onClose={() => setGuidedKind(undefined)}
+          target={{ title, nodes, attachment: guidedTableAttachment, onAttachment: setGuidedTableAttachment,
+            prepare: reviewGuidedTable, apply: insertGuidedDiagram, onCompleted: draftRetained => {
+              setGuidedKind(undefined);
+              setGuidedTable(emptyGuidedTable);
+              setGuidedTableAttachment(emptyGuidedAttachment);
+              insertionNeedsRefresh.current = false;
+              if (draftRetained) setError("Mapped systems inserted. The saved draft could not be cleared.");
             } }} />
       </Suspense>}
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
@@ -914,6 +947,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           }
           return status;
         }} />}
+      {savedStoryOpen && currentFrame?.rendered.targetTable && project && <Suspense fallback={<p role="status">Opening saved story…</p>}>
+        <SavedStoryDialog project={project} result={currentFrame.rendered.result} table={currentFrame.rendered.targetTable}
+          onClose={() => setSavedStoryOpen(false)} />
+      </Suspense>}
       {savedScenesOpen && editor.current && <Suspense>
         <SavedScenesDialog editor={editor.current} startNew={savedScenesOpen === "create"} initialScope={savedSceneScope} onClose={() => {
           setSavedScenesOpen(undefined);
