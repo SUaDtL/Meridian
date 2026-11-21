@@ -420,31 +420,43 @@ export function supportedGroupRemovals(source: string) {
 }
 
 export function supportedGroupMoves(source: string, groupId: string) {
-  try {
-    const group = groupRemovalPlan(source);
-    if (group.sourceId !== groupId) return [];
-    const members = new Set(group.memberIds);
-    return scanRecords(source).flatMap(record => {
-      const id = node.exec(record.text)?.[1];
-      return id && !members.has(id) && standaloneDeclaration(source, record) ? [id] : [];
-    });
-  } catch { return []; }
+  return supportedGroupMoveTargets(source).get(groupId) ?? [];
 }
 
-/** Move one standalone declaration into a verified top-level group's body. */
+export function supportedGroupMoveTargets(source: string): ReadonlyMap<string, string[]> {
+  try {
+    const parsed = readSubset(source, true);
+    const nodes = [...parsed.nodes.keys()];
+    return new Map([...parsed.groups.keys()].flatMap(groupId => {
+      const eligible = nodes.filter(id => !!groupMoveLines(source, parsed, id, groupId));
+      return eligible.length ? [[groupId, eligible] as const] : [];
+    }));
+  } catch { return new Map(); }
+}
+
+function groupMoveLines(source: string, parsed: ReturnType<typeof readSubset>, sourceId: string, groupId: string) {
+  const ending = parsed.groupEndings.get(groupId);
+  const closingLine = ending && standaloneDeclaration(source, ending);
+  if (!closingLine) return;
+  const currentGroup = [...parsed.groups].find(([, members]) => members.includes(sourceId));
+  if (currentGroup?.[0] === groupId || currentGroup?.[1].length === 1) return;
+  const declaration = parsed.nodes.get(sourceId)?.declaration;
+  const nodeLine = declaration && standaloneDeclaration(source, declaration);
+  if (nodeLine) return { nodeLine, insertion: closingLine.from };
+}
+
+/** Move a standalone declaration into an explicitly named group. */
 export function planMoveToGroup(source: string, sourceId: string, groupId: string) {
-  const group = groupRemovalPlan(source);
-  if (group.sourceId !== groupId || group.memberIds.includes(sourceId)) throw new Error('Choose an outside node and the current top-level group.');
-  const declaration = scanRecords(source).find(record => node.exec(record.text)?.[1] === sourceId);
-  const span = declaration && standaloneDeclaration(source, declaration);
-  if (!span) throw new Error('Choose a node declaration on its own source line.');
-  const { from, to, separator } = span;
+  const parsed = readSubset(source, true);
+  if (parsed.groups.get(groupId)?.includes(sourceId)) throw new Error('Choose an outside node or a different destination group.');
+  const move = groupMoveLines(source, parsed, sourceId, groupId);
+  if (!move) throw new Error('Choose a node declaration on its own source line and keep at least one member in its current group.');
+  const { from, to, separator } = move.nodeLine;
   const text = source.slice(from, to);
-  const insertion = group.patches[1].from;
   const newline = source.match(/\r?\n/)?.[0] ?? '\n';
-  return { sourceId, memberIds: group.memberIds, flatSource: group.flatSource, patches: [
+  return { sourceId, patches: [
     { from, to, expectedText: text, replacement: '' },
-    { from: insertion, to: insertion, expectedText: '', replacement: separator === -1 ? text + newline : text },
+    { from: move.insertion, to: move.insertion, expectedText: '', replacement: separator === -1 ? text + newline : text },
   ] };
 }
 

@@ -93,7 +93,7 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
     operations: [{ op: 'setNodeLabel', targetId: writable.id, label: 'Reviewed label' }],
   };
   await review(dialog, { ...proposal, origin: 'canvas' });
-  await expect(dialog.getByRole('alert')).toContainText('one supported label edit or removal');
+  await expect(dialog.getByRole('alert')).toContainText('one supported edit that preserves annotations');
   await review(dialog, { ...proposal, operations: [{ ...proposal.operations[0], targetId: contextOnly.id }] });
   await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
   await review(dialog, { ...proposal, baseToken: { ...proposal.baseToken, stateDigest: 'a'.repeat(64) } });
@@ -310,4 +310,63 @@ test('requires complete writable incidence for assistant node removal and restor
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const restored = JSON.parse(await download(page, projectFile));
   expect(restored).toEqual({ ...original, revision: removed.revision + 1, updatedAt: restored.updatedAt });
+});
+
+test('allows one new solid connection through a reviewed attachment with one writable endpoint', async ({ page, context }, info) => {
+  const source = 'flowchart LR\n A[Writer]\n B[Attachment]\n C[Context only]\n D[Second attachment]\n A retained@--> C\n';
+  const live = await openProject(page, 'Reviewed attachment', source);
+  const backup = live.getByRole('button', { name: 'Download v3 project' });
+  const original = JSON.parse(await download(page, backup));
+  const dialog = await openExchange(page, live);
+  await context.setOffline(true);
+  await dialog.getByLabel('Instruction').fill('Join the writer and the approved attachment with a connection.');
+  await dialog.getByRole('checkbox', { name: 'Allow one new solid connection' }).check();
+  await dialog.getByRole('combobox', { name: 'Writer', exact: true }).selectOption('writable');
+  await dialog.getByRole('combobox', { name: 'Attachment', exact: true }).selectOption('attachment');
+  await dialog.getByRole('combobox', { name: 'Second attachment', exact: true }).selectOption('attachment');
+  await dialog.getByRole('combobox', { name: 'Context only', exact: true }).selectOption('context');
+  await dialog.getByRole('button', { name: 'Review what will be shared' }).click();
+  const disclosure = dialog.getByRole('region', { name: 'What will be shared' });
+  await expect(disclosure).toContainText('Attachment · Read-only attachment point');
+  await expect(disclosure).toContainText('Context only · Read-only context');
+  const request = JSON.parse(await download(page, dialog.getByRole('button', { name: 'Download request' })));
+  const ids = new Map<string, string>(request.graph.nodes.map((node: { id: string; label: string }) => [node.label, node.id]));
+  expect(request.scope.writableElementIds).toEqual([ids.get('Writer')]);
+  expect(new Set(request.scope.attachmentPointIds)).toEqual(new Set([ids.get('Attachment'), ids.get('Second attachment')]));
+  expect(request.allowedOperations).toEqual(['setNodeLabel', 'addEdge']);
+  const requestHash = await canonicalDigest('meridian-assist-request/v1', request);
+  const proposal = {
+    schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'ai',
+    requestId: request.requestId, requestHash, baseToken: request.baseToken,
+  };
+  const connection = { op: 'addEdge', ref: 'new:reviewed_edge', sourceId: ids.get('Writer'), targetId: ids.get('Attachment'),
+    label: 'Exchange', direction: 'both', lineStyle: 'solid' };
+  await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+  for (const invalid of [
+    { ...connection, targetId: ids.get('Context only') },
+    { ...connection, sourceId: ids.get('Second attachment') },
+  ]) {
+    await review(dialog, { ...proposal, operations: [invalid] });
+    await expect(dialog.getByRole('alert')).toContainText('A new connection needs a writable node');
+  }
+  await review(dialog, { ...proposal, operations: [{ op: 'setNodeLabel', targetId: ids.get('Attachment'), label: 'Changed' }] });
+  await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
+  await review(dialog, { ...proposal, operations: [{ ...connection, lineStyle: 'dashed' }] });
+  await expect(dialog.getByRole('alert')).toContainText('one supported edit');
+  await review(dialog, { ...proposal, operations: [connection] });
+  const preview = dialog.getByRole('region', { name: 'Unverified suggestion' });
+  await expect(preview).toContainText('Connect Writer ↔ Attachment · Exchange · solid');
+  const apply = preview.getByRole('button', { name: 'Apply reviewed new connection' });
+  await expect(apply).toBeEnabled();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('approved-connection-mobile.png') });
+  await apply.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const applied = JSON.parse(await download(page, backup));
+  expect(applied.source).toBe(source + '  A m_e1@<-->|"Exchange"| B\n');
+  expect(applied.identity.elements).toEqual([...original.identity.elements, expect.objectContaining({ elementKind: 'edge' })]);
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = JSON.parse(await download(page, backup));
+  expect(restored).toEqual({ ...original, revision: applied.revision + 1, updatedAt: restored.updatedAt });
 });

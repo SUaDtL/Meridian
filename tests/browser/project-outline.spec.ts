@@ -336,6 +336,56 @@ test('removes one nested container while keeping the parent, member identities, 
   expect(restored.identity).toEqual(original.identity);
 });
 
+test('moves a reviewed node between nested groups while preserving its bindings and source bytes', async ({ page }, info) => {
+  const declaration = '      B[Worker]\r\n';
+  const source = '\uFEFFflowchart LR\r\n  subgraph Fleet [Fleet]\r\n    subgraph Rack [Rack]\r\n      A[Service]\r\n    end\r\n'
+    + '    subgraph Pool [Pool]\r\n      %% Preserve this note\r\n' + declaration + '      C[Neighbor]\r\n    end\r\n  end\r\n'
+    + '  D[External]\r\n  B existing@-->|"Reports"| D\r\n  linkStyle 0 stroke:#446677\r\n';
+  const live = await openProject(page, 'Move between groups', source);
+  const download = async () => {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing project backup.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  };
+  const original = await download();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  const openOutline = live.getByRole('button', { name: 'Outline', exact: true });
+  const rack = outline.getByRole('treeitem', { name: /Rack/ });
+  const worker = outline.getByRole('treeitem', { name: /Worker/ });
+  await openOutline.click();
+  await rack.click();
+  await outline.getByRole('button', { name: 'Move node into this group' }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  const nodes = edit.getByRole('combobox', { name: 'Node to move into Rack' });
+  await expect(nodes.getByRole('option', { name: 'Service (A)' })).toHaveCount(0);
+  await nodes.selectOption({ label: 'Worker (B)' });
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  const impact = edit.getByRole('region', { name: 'Group move impact' });
+  await expect(impact).toContainText('Worker (B) will join Rack.');
+  await expect(impact.getByRole('list', { name: 'Connections retained' })).toContainText('Reports');
+  await page.screenshot({ path: info.outputPath('nested-move-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('nested-move-mobile.png') });
+  await edit.getByRole('button', { name: 'Apply change' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const moved = await download();
+  expect(moved.source).toBe(source.replace(declaration, '').replace('    end\r\n', declaration + '    end\r\n'));
+  expect(moved.identity).toEqual(original.identity);
+  await openOutline.click();
+  await expect(worker).toBeVisible();
+  await rack.click();
+  await outline.getByRole('button', { name: 'Collapse group' }).click();
+  await expect(worker).toHaveCount(0);
+  await expect(outline.getByRole('treeitem', { name: /Neighbor/ })).toBeVisible();
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await download();
+  expect(restored.source).toBe(source);
+  expect(restored.identity).toEqual(original.identity);
+});
+
 test('groups the complete reviewed outline selection and refuses a mixed selection', async ({ page }, info) => {
   const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  B[Second]\r\n  C[Third]\r\n  A internal@--> B\r\n  B outside@-->|"External"| C\r\n';
   const live = await openProject(page, 'Group outline selection', source);

@@ -106,7 +106,7 @@ it('extracts direct schema references, preserves cycles, and omits unsupported r
       { from: key('Customer'), to: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Customer/allOf/0/$ref' },
     ],
     unresolved: [
-      { from: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Account/properties/missing/$ref', reason: 'Unsupported reference form' },
+      { from: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Account/properties/missing/$ref', reason: 'Target component unavailable in supplied files' },
       { from: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Account/properties/dynamic/$dynamicRef', reason: 'Unsupported dynamic or recursive reference' },
     ], omitted: 1,
   });
@@ -151,4 +151,27 @@ it('respects OpenAPI 3.0 reference siblings and reports unsupported 3.1 dialects
   expect(read('3.0.3')?.references).toHaveLength(1);
   expect(read('3.1.0')?.references).toHaveLength(2);
   expect(read('3.1.0', 'https://example.invalid/custom')).toMatchObject({ references: [], omitted: 2 });
+});
+
+it('resolves registered OpenAPI 3.1 component resources and anchors without retaining logical URLs', () => {
+  const read = (schemas: Record<string, unknown>) => readOpenApiFacts(
+    bytes(JSON.stringify({ openapi: '3.1.0', components: { schemas } })), 'api/spec.json', undefined, 'schemas',
+  ).schemaView!;
+  const base = 'https://logical.invalid/models/first';
+  const report = read({
+    First: { $id: base, $anchor: 'start', allOf: [{ $ref: 'second#finish' }, { $ref: 'second' }, { $ref: '#start' }] },
+    Second: { $id: 'https://logical.invalid/models/second', $anchor: 'finish', $ref: 'first#start' },
+    Third: { $anchor: 'local', $ref: '#local' },
+    Fourth: { $ref: 'https://logical.invalid/unknown#finish' },
+  });
+  const byName = new Map(report.schemas.map(({ name, key }) => [key, name]));
+  expect(report.references.map(({ from, to }) => [byName.get(from), byName.get(to)])).toEqual([
+    ['First', 'Second'], ['First', 'Second'], ['First', 'First'], ['Second', 'First'], ['Third', 'Third'],
+  ]);
+  expect(report.unresolved.map(({ reason }) => reason)).toEqual(['Target component unavailable in supplied files']);
+  expect(JSON.stringify(report)).not.toMatch(/logical\.invalid|#finish|#start/);
+  expect(() => read({ First: { $id: base }, Second: { $id: 'https://logical.invalid/models/%66irst' } }))
+    .toThrow('same normalized ID');
+  expect(() => read({ First: { $anchor: 'same' }, Second: { $anchor: 'same' } }))
+    .toThrow('anchor is invalid or repeated');
 });

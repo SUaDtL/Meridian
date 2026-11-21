@@ -9,7 +9,7 @@ import { getTheme } from "../lib/themes";
 import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
 import { emptyPathDraft, isCurrentStoryDraft, listStoryCheckpoints, resumeStoryCheckpoint, saveStoryCheckpoint,
   type PathDraft, type StoryCheckpoint, type StoryDraft } from "../lib/persistence/story-drafts";
-import StoryPreviewPlayer from "./StoryPreviewPlayer";
+import ResponsiveStoryPreview from "./StoryPreviewPlayer";
 import Modal from "./Modal";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
@@ -318,7 +318,7 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
       {error && <p role="alert">{error}</p>}
       {closeBlocked && <button className="button quiet" onClick={onClose}>Close without saving draft</button>}
       {prepared && <>
-        <StoryPreviewPlayer svg={prepared.svg} story={scenes}
+        <ResponsiveStoryPreview svg={prepared.svg} story={scenes}
           table={prepared.result.rendered.targetTable!} accent={getTheme(prepared.result.next.settings.theme).accent} onReady={setPreviewReady} />
         <ul aria-label="Suggested scene coverage">{prepared.result.suggestions.map(({ scene, coverage }) => <li key={scene.id}>
           <strong>{scene.title}</strong><p>{count(coverage.node.shown, "node")}, {count(coverage.edge.shown, "connection")}, and {count(coverage.group.shown, "group")} shown.</p>
