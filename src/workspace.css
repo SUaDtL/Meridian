@@ -952,3 +952,11 @@
   z-index: 1;
   padding-block: 4px 10px;
 }
+
+.annotation-list { padding-inline-start: 0; }
+.annotation-list .project-row {
+  display: grid;
+  gap: .35rem;
+  padding: .65rem .8rem;
+  overflow-wrap: anywhere;
+}
