@@ -1,6 +1,11 @@
 import { solidTextContrast, type SolidTextPaint } from './solid-text-color';
 import { analyzeCrossings, type CrossingEvidence, type CrossingFinding } from './crossing-findings';
 import type { RoutePoint } from './route-geometry';
+import type { SemanticRole } from './mermaid-project';
+
+export type RolePaintField = 'fill' | 'color' | 'stroke';
+export const rolePaintFields: readonly RolePaintField[] = ['fill', 'color', 'stroke'];
+type RolePaint = { role: SemanticRole; tokens: { field: RolePaintField; expected: string; actual?: string; override?: string }[] };
 
 export type ViewingProfile = { width: number; height?: number; padding: number };
 export type FrameGeometry = { width: number; height: number; diagramScale: number };
@@ -14,6 +19,7 @@ export type ReadabilityTarget = {
   labelOverflowInDiagram?: number;
   measuredRoute?: RoutePoint[];
   solidTextPaint?: SolidTextPaint;
+  rolePaint?: RolePaint;
   from: string | null;
   to: string | null;
 };
@@ -24,6 +30,7 @@ export type ReadabilityFinding =
   | { rule: 'QC-04'; target: string; pixels: number }
   | { rule: 'QC-05'; targets: string[] }
   | { rule: 'QC-06'; regions: string[][] }
+  | { rule: 'QC-08'; target: string; role: SemanticRole; field: RolePaintField; expected: string; actual: string; override?: string }
   | CrossingFinding;
 
 export type ReadabilityReport = {
@@ -100,8 +107,21 @@ export function analyzeReadability(targets: readonly ReadabilityTarget[], profil
   const separation = coverageFor('QC-06');
   const contrast = coverageFor('QC-01');
   const containment = coverageFor('QC-04');
+  const rolePaint = coverageFor('QC-08');
   const duplicateNames = new Map<string, string[]>();
   for (const item of targets) {
+    if (!item.rolePaint?.tokens.length) rolePaint.inapplicable++;
+    else {
+      const { role, tokens } = item.rolePaint;
+      if (tokens.some(token => token.actual === undefined)) rolePaint.unknown++;
+      else rolePaint.measured++;
+      for (const token of tokens) {
+        const { actual, expected, field, override } = token;
+        if (actual !== undefined && actual.toLowerCase() !== expected.toLowerCase()) {
+          findings.push({ rule: 'QC-08', target: item.id, role, field, actual, expected, override });
+        }
+      }
+    }
     const overflow = item.labelOverflowInDiagram;
     if (!item.typography) containment.inapplicable++;
     else if (overflow === undefined || !Number.isFinite(overflow) || overflow < 0) containment.unknown++;
@@ -153,5 +173,5 @@ export function analyzeReadability(targets: readonly ReadabilityTarget[], profil
   }
   const crossings = analyzeCrossings(targets);
   findings.push(...crossings.findings);
-  return { findings, coverage: [size, names, separation, contrast, containment, crossings.coverage], crossings: crossings.evidence };
+  return { findings, coverage: [size, names, separation, contrast, containment, crossings.coverage, rolePaint], crossings: crossings.evidence };
 }
