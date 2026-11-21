@@ -85,6 +85,16 @@ describe('companion provider operation scope', () => {
     expect(() => run([{ op: 'moveToGroup', targetIds: [writer], parentGroupId: null }], request)).toThrow('scope');
   });
 
+  it('refuses deletion of a context-only neighbor and its read-only boundary connection', () => {
+    const request = fixture();
+    request.scope.writableElementIds = [writer, oldGroup, parentGroup];
+    expect(() => run([{ ...remove([connection]), targetId: neighbor }], request)).toThrow('scope');
+    expect(() => run([{ op: 'removeEdge', targetId: connection, annotationPolicy: 'preserve-orphans' }], request)).toThrow('scope');
+    expect(() => run([{ op: 'setEdgeLabel', targetId: connection, label: 'Changed' }], request)).toThrow('scope');
+    const ownRename = [{ op: 'setNodeLabel', targetId: writer, label: 'Reviewed' }];
+    expect(run(ownRename, request)).toEqual(ownRename);
+  });
+
   it('uses closed operations, per-request allowlists, conservative labels and bounded output', () => {
     const request = fixture();
     expect(() => run([{ ...add, source: 'graph TD' }], request)).toThrow('Invalid companion operations');
