@@ -13,7 +13,10 @@ if (build.repository !== 'SUaDtL/Meridian' || build.format !== 'split-v1'
 }
 const measureMemory = process.argv.includes('--memory');
 const measureInput = process.argv.includes('--input');
-if (measureInput && measureMemory) throw new Error('Run input and memory measurement separately.');
+const measureReadability = process.argv.includes('--readability');
+if ([measureInput, measureMemory, measureReadability].filter(Boolean).length > 1) {
+  throw new Error('Run input, memory and readability measurement separately.');
+}
 const sizeOption = process.argv.find(value => value.startsWith('--nodes='));
 const nodeCount = sizeOption ? Number(sizeOption.slice('--nodes='.length)) : 50;
 if ((sizeOption && !measureInput) || ![10, 50, 150, 200].includes(nodeCount)) {
@@ -150,6 +153,58 @@ async function workspaceInput(page, live, mobile) {
   return { selection, typing };
 }
 
+async function readabilityInput(page, live, mobile) {
+  if (mobile) {
+    await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Design', exact: true }).tap();
+  }
+  await live.getByRole('button', { name: 'Check readability' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Check readability' });
+  const check = dialog.getByRole('button', { name: 'Check diagram' });
+  const samples = [];
+  for (let index = 0; index < 3; index++) {
+    await check.evaluate(button => {
+      window.readabilityMeasurement = new Promise((resolve, reject) => {
+        button.addEventListener('click', event => {
+          if (!event.isTrusted) return reject(new Error('Expected a trusted readability action.'));
+          window.readabilityWorkerElapsed = null;
+          const start = event.timeStamp;
+          let renderHostAppeared = false;
+          const observer = new MutationObserver(records => {
+            renderHostAppeared ||= records.some(record => [...record.addedNodes].some(node => node instanceof Element &&
+              (node.matches('[data-meridian-render]') || node.querySelector('[data-meridian-render]'))));
+          });
+          observer.observe(document.body, { subtree: true, childList: true });
+          let frame;
+          const timeout = setTimeout(() => {
+            observer.disconnect();
+            cancelAnimationFrame(frame);
+            reject(new Error('The readability report did not settle.'));
+          }, 5_000);
+          const settled = '[aria-label="Readability results"][aria-busy="false"]';
+          function checkReport() {
+            if (!Number.isFinite(window.readabilityWorkerElapsed) || !button.closest('dialog')?.querySelector(settled)) {
+              frame = requestAnimationFrame(checkReport);
+              return;
+            }
+            frame = requestAnimationFrame(time => {
+              clearTimeout(timeout);
+              observer.disconnect();
+              resolve({ milliseconds: time - start, workerRoundTrip: window.readabilityWorkerElapsed, renderHostAppeared });
+            });
+          }
+          frame = requestAnimationFrame(checkReport);
+        }, { once: true, capture: true });
+      });
+    });
+    await (mobile ? check.tap() : check.click());
+    const sample = await page.evaluate(() => window.readabilityMeasurement);
+    if (sample.renderHostAppeared) throw new Error('Readability should reuse the settled rendering.');
+    samples.push(sample);
+  }
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  return samples;
+}
+
 async function measure(mobile) {
   const page = await browser.newPage({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 900 },
     deviceScaleFactor: 1, hasTouch: mobile, isMobile: mobile, reducedMotion: 'reduce' });
@@ -158,8 +213,24 @@ async function measure(mobile) {
     if (mobile) await session.send('Emulation.setCPUThrottlingRate', { rate: 4 });
     const browserSession = measureMemory ? await browser.newBrowserCDPSession() : undefined;
     if (measureMemory) await session.send('Performance.enable');
-    await page.addInitScript(({ documents, measureMemory }) => {
+    await page.addInitScript(({ documents, measureMemory, measureReadability }) => {
       localStorage.setItem('meridian:v2', JSON.stringify({ version: 2, activeId: documents[0].id, documents }));
+      if (measureReadability) {
+        const BuiltinWorker = window.Worker;
+        window.Worker = class extends BuiltinWorker {
+          postMessage(message, ...args) {
+            if (Array.isArray(message?.targets) && message?.profile && message?.frame) {
+              const started = performance.now();
+              this.addEventListener('message', event => {
+                if (event.data?.id === message.id && event.data?.status === 'ready') {
+                  window.readabilityWorkerElapsed = performance.now() - started;
+                }
+              }, { once: true });
+            }
+            return super.postMessage(message, ...args);
+          }
+        };
+      }
       if (!measureMemory) return;
       const peak = { hosts: 0, elements: 0 };
       window.layoutMeasurementHosts = peak;
@@ -174,7 +245,7 @@ async function measure(mobile) {
         for (const host of hosts) peak.elements = Math.max(peak.elements, host.querySelectorAll('*').length);
       });
       observer.observe(document, { childList: true, subtree: true });
-    }, { documents, measureMemory });
+    }, { documents, measureMemory, measureReadability });
     await page.goto(base.href);
     await page.getByRole('button', { name: 'Manage projects' }).click();
     await page.getByRole('button', { name: 'Project migration and recovery' }).click();
@@ -188,11 +259,11 @@ async function measure(mobile) {
       await page.getByRole('button', { name: `Open v3 project ${project.title}` }).click({ timeout: 30000 });
       const live = page.getByRole('dialog', { name: project.title });
       await live.getByRole('img', { name: `Diagram preview for ${project.title}` }).waitFor();
-      if (measureInput) {
-        const sample = await workspaceInput(page, live, mobile);
+      if (measureInput || measureReadability) {
+        const sample = await (measureInput ? workspaceInput : readabilityInput)(page, live, mobile);
         if (index > 0) batches.push(sample);
         await live.getByRole('button', { name: 'Back to v3 projects' }).click();
-        process.stderr.write(`${mobile ? 'mobile' : 'desktop'} input fixture ${index + 1}/${documents.length}\n`);
+        process.stderr.write(`${mobile ? 'mobile' : 'desktop'} ${measureInput ? 'input' : 'readability'} fixture ${index + 1}/${documents.length}\n`);
         continue;
       }
       if (mobile) await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Design', exact: true }).tap();
@@ -274,6 +345,8 @@ try {
     fixture: { nodes: nodeCount, edges: edgeCount, warmedModuleFixtures: 1, measuredFixturesPerProfile: measuredFixtures },
     method: measureInput
       ? 'Trusted outline pointerdown or CodeMirror keydown to the animation frame following matching visible state. Three samples per action per fixture, immediately after foreground rendering has settled. Mobile typing uses Chromium keyboard input.'
+      : measureReadability
+      ? 'Trusted readability click or tap through the frame after the settled report. Worker round trip measured separately from its send and ready message. A DOM observer rejects a new renderer host. Three checks per drawn fixture.'
       : measureMemory
       ? 'Observed temporary rendering hosts with a DOM observer. Read Chromium DOM and live JavaScript heap counters after forced garbage collection before opening the first project, during the settled comparison, and after closing each project. Linux process proportional set size allocates shared pages proportionally and includes JavaScript heap and other memory. It is reported by Chromium process type. Timings include observer instrumentation.'
       : 'Real click or tap to two animation frames after a visible decoded candidate becomes eligible to apply. Long Tasks API and requestAnimationFrame gaps observed independently. Candidate inputs differ per fixture. Three sequential options per fixture.',

@@ -238,3 +238,16 @@ Each graph size used one warm-up and ten distinct fixtures. Three Outline select
 All 480 actions returned the expected feedback. The 10- and 50-node fixtures met the 100 ms p95 ordinary-input budget in both profiles. Selection exceeded 100 ms p95 at 150 nodes on the throttled profile and at 200 nodes on desktop. Explicit layout review stays in place because the separate automatic-preview blocking test exceeded its budget. These runs leave physical mobile input, additional graph shapes and separate layout phase timings open.
 
 Use the same input command with `--nodes=10`, `--nodes=50`, `--nodes=150` or `--nodes=200` to reproduce each row pair.
+
+### Readability processing and visible results
+
+The same artifact and Chromium profiles drew ten 50-node, 75-connection fixtures after one warm-up. Each settled drawing received three Readability checks via a trusted click or tap. The lab sampled the worker round trip from sending the measured drawing facts to receiving its complete report, including crossings. It separately timed the complete interaction through the animation frame after the results settled. Local artifact verification overlapped the phone run.
+
+| Profile | Worker round trip median / p95 / max (ms) | Visible report median / p95 / max (ms) |
+| --- | --- | --- |
+| Desktop | 19.2 / 56.4 / 58.1 | 94.4 / 147.2 / 148.1 |
+| Throttled phone viewport | 36.6 / 61.1 / 74.4 | 115.4 / 191.1 / 387.4 |
+
+All 60 checks reused the settled drawing. A DOM observer saw zero new Mermaid renderer hosts. Worker time stayed below 100 ms in both profiles. The visible report exceeded 100 ms p95 in both profiles, so complete readiness retains explicit activation. Additional physical device and layout phase evidence remains open.
+
+Run `PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173/ node scripts/measure-layout-review.mjs --readability` against a clean Pages artifact. The JSON contains both timing samples for each interaction.
