@@ -325,6 +325,7 @@ test('requires complete writable incidence for assistant node removal and restor
   await expect(dialog.getByRole('list', { name: 'Nodes eligible for removal' }).getByRole('listitem')).toHaveText('Old relay');
   const request = JSON.parse(await download(page, dialog.getByRole('button', { name: 'Download request' })));
   const relay = request.graph.nodes.find((node: { label: string }) => node.label === 'Old relay');
+  const receiver = request.graph.nodes.find((node: { label: string }) => node.label === 'Receiver');
   const incident = request.graph.edges.filter((edge: { sourceId: string; targetId: string }) => edge.sourceId === relay.id || edge.targetId === relay.id);
   const [first, second] = incident.map((edge: { id: string }) => edge.id);
   const unauthorized = request.graph.edges.find((edge: { id: string }) => edge.id !== first && edge.id !== second);
@@ -338,6 +339,8 @@ test('requires complete writable incidence for assistant node removal and restor
     requestId: request.requestId, requestHash: await canonicalDigest('meridian-assist-request/v1', request), baseToken: request.baseToken,
     operations: [operation],
   };
+  await review(dialog, { ...proposal, operations: [{ ...operation, targetId: receiver.id, incidentEdgeIds: [first, unauthorized.id] }] });
+  await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
   await review(dialog, { ...proposal, operations: [{ ...operation, incidentEdgeIds: [first, unauthorized.id] }] });
   await expect(dialog.getByRole('alert')).toContainText('Every incident connection must be inside the request’s writable scope');
   await review(dialog, { ...proposal, operations: [{ ...operation, incidentEdgeIds: [first] }] });

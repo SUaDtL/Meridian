@@ -28,8 +28,8 @@ const operations = JSON.stringify([{ op: 'addNode', ref: 'new:example', label, s
 const validOutcome = { kind: 'completed' as const, operations, usage };
 type Provider = ConstructorParameters<typeof CompanionGeneration>[4];
 
-function requestAt(index = 1) {
-  const timestamp = initialTime.toString(16).padStart(12, '0');
+function requestAt(index = 1, time = initialTime) {
+  const timestamp = time.toString(16).padStart(12, '0');
   return {
     schema: 'meridian/assist-request/v1',
     requestId: `${timestamp.slice(0, 8)}-${timestamp.slice(8)}-7000-8000-${index.toString(16).padStart(12, '0')}`,
@@ -259,6 +259,67 @@ describe.skipIf(!sqlite)('local companion generation with a provider stub', () =
       env.advance(24 * 60 * 60 * 1_000);
       expect(await describe()).toMatchObject({ status: 404, body: { code: 'REQUEST_NOT_FOUND' } });
       expect(provider).toHaveBeenCalledTimes(1);
+    } finally { env.ledger.close(); }
+  });
+
+  it('refuses local API generation at ticket, UUID and future-dated replay boundaries', async () => {
+    const origin = 'https://companion.example.invalid';
+    const csrf = 'c'.repeat(48);
+    const minute = 60_000;
+    const day = 24 * 60 * minute;
+    const future = 5 * minute;
+    const provider = vi.fn<Provider>().mockResolvedValue(validOutcome);
+    const env = await setup(provider);
+    const api = createLocalCompanionApi({
+      origin, generation: env.service, issue: env.issueFromApi, now: env.now,
+      async authenticate() {
+        const session = apiSession(subject, csrf);
+        const expires = new Date(env.now() + minute).toISOString();
+        return { ...session, sessionIdleExpiresAt: expires, sessionAbsoluteExpiresAt: expires };
+      },
+      async logout() {},
+    });
+    const send = (path: string, body: unknown, idempotencyKey?: string) => api(new Request(origin + path, {
+      method: 'POST', body: JSON.stringify(body), headers: {
+        Origin: origin, 'Content-Type': 'application/json', 'X-CSRF-Token': csrf,
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+      },
+    }));
+    const ticket = async (request: ReturnType<typeof requestAt>) => {
+      const { requestHash } = await parseCompanionRequest(encoder.encode(JSON.stringify(request)));
+      return send('/v1/tickets', { requestId: request.requestId, requestHash, acknowledgeBillableRequest: true,
+        pricePolicyVersion: policy.version, acknowledgedMaxChargeMicrousd: policy.maxChargeMicrousd });
+    };
+    const refuse = async (response: Response, status: number, code: string) => {
+      expect(response.status).toBe(status);
+      expect(await response.json()).toMatchObject({ code, retryable: false });
+    };
+    try {
+      const current = requestAt();
+      const futureDated = requestAt(2, initialTime + future);
+      await refuse(await ticket(requestAt(3, initialTime + future + 1)), 400, 'REQUEST_CLOCK_SKEW');
+      const normalTicket = await ticket(current);
+      const futureTicket = await ticket(futureDated);
+      expect(normalTicket.status).toBe(201);
+      expect(futureTicket.status).toBe(201);
+      const normalBody = { request: current, ticket: (await normalTicket.json()).ticket };
+      const futureBody = { request: futureDated, ticket: (await futureTicket.json()).ticket };
+
+      env.advance(15 * minute);
+      await refuse(await send('/v1/proposals', normalBody, current.requestId), 410, 'TICKET_EXPIRED');
+      env.advance(day);
+      env.service.cleanup();
+      await refuse(await ticket(current), 410, 'REQUEST_EXPIRED');
+      await refuse(await ticket(futureDated), 409, 'FRESH_REQUEST_REQUIRED');
+      await refuse(await send('/v1/proposals', futureBody, futureDated.requestId), 410, 'TICKET_EXPIRED');
+      env.advance(day + future - 1);
+      env.service.cleanup();
+      await refuse(await ticket(futureDated), 409, 'FRESH_REQUEST_REQUIRED');
+      env.advance(day + future);
+      env.service.cleanup();
+      await refuse(await ticket(futureDated), 410, 'REQUEST_EXPIRED');
+      await refuse(await send('/v1/proposals', futureBody, futureDated.requestId), 410, 'REQUEST_EXPIRED');
+      expect(provider).not.toHaveBeenCalled();
     } finally { env.ledger.close(); }
   });
 
