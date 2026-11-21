@@ -13,7 +13,9 @@ import { buildContrastCandidate, measureTargetContrast, type ContrastKind } from
 import { buildDesignRecipeCandidate, buildScopedDesignRecipe, readDesignRecipe, verifyPresentationRoleShapes, verifyScopedDesign, type DesignRecipeId, type DesignScope } from './design-recipes';
 import { buildDesignReset, measuredResetValues, type DesignReset } from './design-reset';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
-import type { GuidedSystemsAttachment } from './guided-systems-insertion';
+import type { GuidedAttachment } from './guided-systems-insertion';
+import type { ProcessStep } from './process-steps';
+import type { ProcessConnections } from './process-connections';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
 import { prepareManualSource } from './manual-source';
 import type { MermaidProjectV3 } from './mermaid-project';
@@ -212,24 +214,40 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return !closed && change.base === current.document ? commit(change.next) : 'stale';
   }
 
-  async function prepareGuidedSystems(values: SystemsDraft, attachment?: GuidedSystemsAttachment, signal?: AbortSignal) {
-    const base = current.document;
-    if (closed) throw new Error('The project is closed.');
+  function prepareGuidedSystems(values: SystemsDraft, attachment?: GuidedAttachment, signal?: AbortSignal) {
     const input = structuredClone(values);
     const port = attachment && { ...attachment };
-    const { prepareGuidedSystemsInsertion } = await import('./guided-systems-insertion');
-    const document = freezeSnapshot(await prepareGuidedSystemsInsertion(base, input, port, signal));
+    return prepareGuidedInsertion(async base => {
+      const { prepareGuidedSystemsInsertion } = await import('./guided-systems-insertion');
+      return prepareGuidedSystemsInsertion(base, input, port, signal);
+    }, signal);
+  }
+
+  function prepareGuidedProcess(steps: readonly ProcessStep[], connections?: ProcessConnections, attachment?: GuidedAttachment, signal?: AbortSignal) {
+    const draft = structuredClone({ steps, connections, attachment });
+    return prepareGuidedInsertion(async base => {
+      const { prepareGuidedProcessInsertion } = await import('./guided-process');
+      return prepareGuidedProcessInsertion(base, draft.steps, draft.connections, draft.attachment, signal);
+    }, signal);
+  }
+
+  async function prepareGuidedInsertion(
+    prepare: (base: MermaidProjectV3) => Promise<MermaidProjectV3>, signal?: AbortSignal,
+  ) {
+    const base = current.document;
+    if (closed) throw new Error('The project is closed.');
+    const document = freezeSnapshot(await prepare(base));
     const rendered = await renderMermaidProject(document, signal);
     signal?.throwIfAborted();
     if (!rendered.targetTable || closed || current.document !== base) {
-      throw new Error('The project changed or the inserted systems could not be verified.');
+      throw new Error('The project changed or the insertion could not be verified.');
     }
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     guidedInsertions.set(proposal, { base, next: document });
     return { proposal, document, rendered: rendered.result };
   }
 
-  async function applyGuidedSystems(proposal: ReadyProposal, signal?: AbortSignal) {
+  async function applyGuidedInsertion(proposal: ReadyProposal, signal?: AbortSignal) {
     const change = guidedInsertions.get(proposal);
     if (closed || savingPreparedChange || !change || change.base !== current.document) return 'stale';
     const next = historyEntry(change.next);
@@ -240,7 +258,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       signal?.throwIfAborted();
       const saved = queue.state();
       if (closed || change.base !== current.document) return 'stale';
-      if (saved.phase !== 'saved' || !saved.anchor) throw new Error('Save the current project before inserting systems.');
+      if (saved.phase !== 'saved' || !saved.anchor) throw new Error('Save the current project before inserting your diagram.');
       const anchor = await writeWorkspaceProject(db, change.next, saved.anchor);
       advanceHistory(next, anchor);
       guidedInsertions.delete(proposal);
@@ -655,7 +673,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareInsertion,
     applyInsertion,
     prepareGuidedSystems,
-    applyGuidedSystems,
+    prepareGuidedProcess,
+    applyGuidedInsertion,
     prepareAssistSuggestion,
     applyAssistSuggestion,
     detachComponentInstance,

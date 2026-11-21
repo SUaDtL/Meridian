@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
+import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 
 test('creates a reviewed five-step v3 process without writing source', async ({ page }) => {
   await page.goto('/');
@@ -254,4 +255,102 @@ test('reviews and resumes explicit approval branches without connecting approve 
     '  m_n1 m_e1@--> m_n2', '  m_n2 m_e2@-->|"Approve request"| m_n3', '  m_n4 m_e3@--> m_n5',
     '  m_n2 m_e4@-->|"Reject request"| m_n4', '  m_n3 m_e5@--> m_n5', '',
   ].join('\n'));
+});
+
+test('inserts reviewed process branches after refreshing a changed target and undoes the exact insertion', async ({ page }) => {
+  const source = '\uFEFFflowchart TB\r\n  A[Intake]\r\n  B[Archive]\r\n  A original@--> B\r\n';
+  const project = { ...createDocument(), title: 'Process insertion target', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+    version: 2, activeId: project.id, documents: [project],
+  })), { key: STORAGE_KEY, project });
+
+  async function openTarget(tab: Page, prepare: boolean) {
+    await tab.goto('/');
+    await tab.getByRole('button', { name: 'Manage projects' }).click();
+    await tab.getByRole('button', { name: 'Project migration and recovery' }).click();
+    if (prepare) await tab.getByRole('button', { name: 'Prepare v3 copies' }).click();
+    await tab.getByRole('button', { name: 'Open v3 project Process insertion target' }).click();
+    const live = tab.getByRole('dialog', { name: project.title, exact: true });
+    await expect(live.getByRole('img', { name: /Diagram preview for/ })).toBeVisible();
+    return live;
+  }
+
+  async function download(tab: Page, live: Locator) {
+    const [file] = await Promise.all([
+      tab.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click(),
+    ]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing process project download.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  }
+
+  const original = await openTarget(page, true);
+  await original.getByRole('button', { name: 'Insert process diagram', exact: true }).click();
+  const wizard = page.getByRole('dialog', { name: 'Insert process diagram', exact: true });
+  const stepInput = wizard.getByLabel('Put one step on each line');
+  await expect(stepInput).toBeFocused();
+  await stepInput.fill('Start\nDecision\nAccept\nReject');
+  await wizard.getByRole('button', { name: 'Review connections' }).click();
+  await wizard.getByRole('button', { name: 'Make Decision a decision' }).click();
+  const connection = (n: number) => wizard.getByRole('group', { name: `Connection ${n}`, exact: true });
+  await connection(2).getByLabel('Connection label').fill('Accept it');
+  await connection(2).getByRole('button', { name: 'Keep connection' }).click();
+  await connection(3).getByRole('button', { name: 'Remove connection' }).click();
+  await wizard.getByLabel('Mark Accept as an end').check();
+  await wizard.getByLabel('Mark Reject as an end').check();
+  await wizard.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await connection(3).getByLabel('From').selectOption({ label: 'Decision · line 2' });
+  await connection(3).getByLabel('To').selectOption({ label: 'Reject · line 4' });
+  await connection(3).getByLabel('Connection label').fill('Reject it');
+  await connection(3).getByRole('button', { name: 'Keep connection' }).click();
+
+  const attachment = wizard.getByRole('group', { name: 'Attachment to this project' });
+  await attachment.getByRole('combobox', { name: 'Existing node', exact: true }).selectOption({ label: 'Intake (A)' });
+  await attachment.getByRole('combobox', { name: 'Draft node', exact: true }).selectOption({ label: 'Accept · line 3' });
+  await attachment.getByRole('combobox', { name: 'Attachment direction', exact: true }).selectOption('to-existing');
+  const preview = wizard.getByRole('button', { name: 'Preview process' });
+  const insert = wizard.getByRole('button', { name: 'Insert process', exact: true });
+  await preview.click();
+  await expect(wizard.getByRole('alert')).toHaveText('A step marked as an end cannot have an outgoing attachment.');
+  await attachment.getByRole('combobox', { name: 'Draft node', exact: true }).selectOption({ label: 'Start · line 1' });
+  await attachment.getByRole('combobox', { name: 'Attachment direction', exact: true }).selectOption('from-existing');
+  await preview.click();
+  await expect(wizard.getByText('Attachment Intake (A) → Start · line 1', { exact: true })).toBeVisible();
+  await expect(insert).toBeEnabled();
+
+  const second = await page.context().newPage();
+  try {
+    const other = await openTarget(second, false);
+    await other.getByRole('button', { name: 'Edit heading' }).click();
+    const heading = second.getByRole('dialog', { name: 'Edit heading' });
+    await heading.getByRole('textbox', { name: 'Title', exact: true }).fill('Updated process target');
+    await heading.getByRole('button', { name: 'Apply heading' }).click();
+    const updated = second.getByRole('dialog', { name: 'Updated process target', exact: true });
+    await expect(updated.getByText('Saved in this browser.')).toBeVisible();
+    const changed = await download(second, updated);
+
+    await insert.click();
+    await expect(wizard.getByRole('alert')).toContainText('The saved project changed.');
+    await expect(wizard.getByLabel('Mark Accept as an end')).toBeChecked();
+    await expect(connection(3).getByLabel('Connection label')).toHaveValue('Reject it');
+    await expect(attachment.getByRole('combobox', { name: 'Attachment direction', exact: true })).toHaveValue('from-existing');
+    expect(await download(second, updated)).toEqual(changed);
+
+    await preview.click();
+    await expect(wizard.getByText('Destination Updated process target', { exact: true })).toBeVisible();
+    await insert.click();
+    const live = page.getByRole('dialog', { name: 'Updated process target', exact: true });
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const accepted = await download(page, live);
+    expect(accepted.source).toBe(source + [
+      '  m_n1["Start"]', '  m_n2{"Decision"}', '  m_n3["Accept"]', '  m_n4["Reject"]',
+      '  m_n1 m_e1@--> m_n2', '  m_n2 m_e2@-->|"Accept it"| m_n3',
+      '  m_n2 m_e3@-->|"Reject it"| m_n4', '  A m_e4@--> m_n1', '',
+    ].join('\r\n'));
+    expect(accepted.identity.elements.slice(0, changed.identity.elements.length)).toEqual(changed.identity.elements);
+    await live.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const restored = await download(page, live);
+    expect(restored).toEqual({ ...changed, revision: accepted.revision + 1, updatedAt: restored.updatedAt });
+  } finally { await second.close(); }
 });
