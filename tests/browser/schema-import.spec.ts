@@ -17,7 +17,8 @@ test('resumes schema facts without source bytes and creates exact local provenan
       name: 'common.json', mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify({
         required: ['pet'], properties: {
-          pet: { $ref: '../models/common.json#Pet' },
+          pet: { $ref: '../models/common.json#/$defs/NestedPet' },
+          secondPet: { $ref: 'https://schema.example/types/pet.json#Pet' },
           external: { $ref: 'https://schema.example/private.json' },
         },
         description: 'raw-schema-secret-fixture',
@@ -25,7 +26,10 @@ test('resumes schema facts without source bytes and creates exact local provenan
     },
     {
       name: 'common.json', mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify({ $id: 'https://schema.example/private-id', $anchor: 'Pet', type: 'object' })),
+      buffer: Buffer.from(JSON.stringify({
+        $id: 'https://schema.example/root.json',
+        $defs: { NestedPet: { $id: 'types/pet.json', $anchor: 'Pet', type: 'object' } },
+      })),
     },
   ]);
   await dialog.getByRole('button', { name: 'Read schema facts' }).click();
@@ -33,15 +37,16 @@ test('resumes schema facts without source bytes and creates exact local provenan
   await dialog.getByLabel('Virtual path for file 1').fill('api/common.json');
   await dialog.getByLabel('Virtual path for file 2').fill('models/common.json');
   await dialog.getByRole('button', { name: 'Read schema facts' }).click();
-  await expect(dialog.getByText('2 ordinary references checked · 1 unresolved entry · 0 locations with composition or conditionals')).toBeVisible();
+  await expect(dialog.getByText('3 ordinary references checked · 1 unresolved entry · 0 locations with composition or conditionals')).toBeVisible();
   await dialog.getByRole('checkbox', { name: 'api/common.json', exact: true }).check();
   await dialog.getByRole('checkbox', { name: 'pet', exact: true }).check();
   await dialog.getByLabel('Diagram label').nth(1).fill('Pet field');
-  await dialog.getByRole('checkbox', { name: 'models/common.json', exact: true }).check();
+  await dialog.getByRole('checkbox', { name: 'NestedPet', exact: true }).check();
+  await dialog.getByRole('checkbox', { name: 'secondPet', exact: true }).check();
   await dialog.getByRole('checkbox', { name: 'external', exact: true }).check();
   await dialog.getByRole('checkbox', { name: 'Include labeled placeholders in the diagram' }).check();
   await dialog.getByLabel('Find schema facts').fill('external');
-  await expect(dialog.getByRole('status')).toContainText('3 outside visible rows');
+  await expect(dialog.getByRole('status')).toContainText('4 outside visible rows');
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   await expect(dialog).toBeHidden();
   const records = () => page.evaluate(async () => new Promise<unknown[]>((resolve, reject) => {
@@ -83,6 +88,12 @@ test('resumes schema facts without source bytes and creates exact local provenan
   expect(provenance).toContainEqual(expect.objectContaining({
     virtualPath: 'api/common.json', pointer: '/properties/pet', relationship: 'Declared required property',
   }));
+  expect(provenance).toContainEqual(expect.objectContaining({
+    virtualPath: 'api/common.json', pointer: '/properties/secondPet/$ref', relationship: 'Declared schema reference',
+  }));
+  expect(provenance.filter((item: { virtualPath: string; pointer: string }) => (
+    item.virtualPath === 'models/common.json' && item.pointer === '/$defs/NestedPet'
+  ))).toHaveLength(1);
   expect(contents).not.toMatch(/raw-schema-secret|schema\.example/);
   expect(await records()).toHaveLength(0);
   expect(remoteRequests).toEqual([]);
