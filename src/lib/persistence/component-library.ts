@@ -105,3 +105,33 @@ export function restoreComponentDefinition(db: IDBDatabase, removed: ComponentDe
     };
   });
 }
+
+export function replaceComponentDefinition(
+  db: IDBDatabase, expected: ComponentDefinition, replacement: ComponentDefinition,
+): Promise<ComponentDefinition> {
+  const reviewed = structuredClone(validateComponentDefinition(expected));
+  const next = structuredClone(validateComponentDefinition(replacement));
+  if (reviewed.id !== next.id || reviewed.version !== next.version) throw new Error('A replacement must have the same definition ID and version.');
+  const signature = canonicalJson(reviewed);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    const read = store.getAll(undefined, maxDefinitions + 1);
+    let failure: unknown;
+    tx.onabort = () => reject(failure ?? tx.error ?? new Error('The component could not be replaced.'));
+    tx.oncomplete = () => resolve(next);
+    read.onsuccess = () => {
+      try {
+        const local = read.result.map(validateComponentDefinition);
+        if (local.length > maxDefinitions) throw new Error('The local library exceeds its 200-definition limit.');
+        const index = local.findIndex(item => item.id === reviewed.id && item.version === reviewed.version);
+        if (index === -1 || canonicalJson(local[index]) !== signature) {
+          throw new Error('The saved definition changed. Import the file again to compare with the current definition.');
+        }
+        local[index] = next;
+        verifyLibraryBytes(local);
+        store.put(next);
+      } catch (reason) { failure = reason; tx.abort(); }
+    };
+  });
+}

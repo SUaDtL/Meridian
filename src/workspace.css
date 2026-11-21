@@ -813,6 +813,10 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.component-definition-comparison pre {
+  max-height: 16rem;
+  overflow: auto;
+}
 .heading-form select,
 .heading-form textarea {
   min-width: 0;
