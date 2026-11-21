@@ -434,6 +434,56 @@ test('moves a reviewed node between nested groups while preserving its bindings 
   expect(restored.identity).toEqual(original.identity);
 });
 
+test('groups reviewed sibling nodes within an existing nested parent and preserves their connections', async ({ page }, info) => {
+  const source = '\uFEFFflowchart LR\r\n  subgraph m_g1 [Fleet]\r\n    subgraph Team [Team]\r\n'
+    + '      A[First]\r\n      %% Keep this comment\r\n      B[Second]\r\n      C[Neighbor]\r\n'
+    + '    end\r\n  end\r\n  D[Outside]\r\n  B boundary@-->|"Sends"| D\r\n  linkStyle 0 stroke:#446677\r\n';
+  const live = await openProject(page, 'Nest a reviewed group', source);
+  const download = async () => {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing grouped project download.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  };
+  const before = await download();
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  const first = outline.getByRole('treeitem', { name: /^First/ });
+  const second = outline.getByRole('treeitem', { name: /^Second/ });
+  const group = outline.getByRole('button', { name: 'Group selected nodes' });
+  await first.click();
+  await outline.getByRole('treeitem', { name: /^Outside/ }).click({ modifiers: ['Shift'] });
+  await expect(group).toHaveCount(0);
+  await first.click();
+  await second.click({ modifiers: ['Shift'] });
+  const query = outline.getByRole('textbox', { name: 'Find an element' });
+  await query.fill('First');
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 1 hidden');
+  await group.click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await expect(edit.getByRole('region', { name: 'Selected group members' })).toContainText('2 selected · 1 hidden');
+  await edit.getByRole('textbox', { name: 'Group label' }).fill('New batch');
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  const apply = edit.getByRole('button', { name: 'Apply change' });
+  await expect(apply).toBeEnabled();
+  await page.screenshot({ path: info.outputPath('nested-group-creation-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('nested-group-creation-mobile.png') });
+  await apply.click();
+  await expect(outline.getByRole('treeitem', { name: /^New batch/ })).toHaveAttribute('aria-level', '3');
+  await expect(first).toHaveAttribute('aria-level', '4');
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const grouped = await download();
+  expect(grouped.source).toBe(source.replace('      A[First]', '      subgraph m_g2 ["New batch"]\r\n      A[First]')
+    .replace('      C[Neighbor]', '      end\r\n      C[Neighbor]'));
+  expect(grouped.identity.elements.filter((item: { binding: { sourceId: string } }) => item.binding.sourceId !== 'm_g2')).toEqual(before.identity.elements);
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await download();
+  expect(restored).toEqual({ ...before, revision: grouped.revision + 1, updatedAt: restored.updatedAt });
+});
+
 test('groups the complete reviewed outline selection and refuses a mixed selection', async ({ page }, info) => {
   const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  B[Second]\r\n  C[Third]\r\n  A internal@--> B\r\n  B outside@-->|"External"| C\r\n';
   const live = await openProject(page, 'Group outline selection', source);
