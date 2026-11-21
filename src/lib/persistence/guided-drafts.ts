@@ -29,7 +29,7 @@ function expiredGuidedDraft(record: Record<string, unknown>, now: number) {
   const component = record.feature === 'component' && (token === null || validToken) && 'definitionId' in record.payload
     && typeof record.payload.definitionId === 'string' && elementUuidPattern.test(record.payload.definitionId);
   const engineering = token === null && record.feature === 'engineering-facts' && 'adapter' in record.payload
-    && (record.payload.adapter === 'openapi' || record.payload.adapter === 'terraform-show')
+    && (record.payload.adapter === 'openapi' || record.payload.adapter === 'terraform-show' || record.payload.adapter === 'json-schema')
     && 'step' in record.payload && record.payload.step === 'scope';
   if (!guided && !chart && !story && !component && !engineering) return false;
   const created = Date.parse(record.createdAt);

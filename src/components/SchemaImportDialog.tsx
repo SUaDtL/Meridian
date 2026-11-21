@@ -5,6 +5,8 @@ import type { SchemaFacts } from "../lib/authoring/schema-facts";
 import { validateVirtualPath } from "../lib/authoring/openapi-facts";
 import { prepareSchemaProject, schemaScope } from "../lib/authoring/schema-project";
 import { buildExportFrame } from "../lib/export";
+import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
+import { listSchemaCheckpoints, restoreSchemaScope, saveSchemaCheckpoint, type SchemaCheckpoint } from "../lib/persistence/schema-drafts";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import Modal from "./Modal";
 
@@ -12,6 +14,8 @@ type FileMapping = { file: File; path: string };
 type Preview = Awaited<ReturnType<typeof prepareSchemaProject>> & { url: string };
 const chunkSize = 40;
 const saveLabel = "Saving the schema diagram";
+const saveScopeLabel = "Saving the schema scope";
+const discardScopeLabel = "Discarding the schema scope";
 
 export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
   onBack: () => void; onClose: () => void; onCreated: (id: string) => void;
@@ -27,10 +31,24 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(false);
+  const [checkpoints, setCheckpoints] = useState<SchemaCheckpoint[]>([]);
+  const [checkpoint, setCheckpoint] = useState<SchemaCheckpoint>();
+  const [restored, setRestored] = useState(false);
+  const [notice, setNotice] = useState("");
   const controller = useRef<AbortController | null>(null);
 
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+  useEffect(() => {
+    let active = true;
+    void openWorkspaceDatabase().then(async db => {
+      try {
+        const saved = await listSchemaCheckpoints(db);
+        if (active) setCheckpoints(saved);
+      } finally { db.close(); }
+    }).catch(() => { if (active) setNotice("Saved schema scopes are unavailable."); });
+    return () => { active = false; };
+  }, []);
 
   async function run(label: string, action: (signal: AbortSignal) => Promise<void>, canRetry = false) {
     if (controller.current) return;
@@ -38,6 +56,7 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
     controller.current = work;
     setBusy(label);
     setError("");
+    setNotice("");
     setRetry(false);
     try {
       await action(work.signal);
@@ -67,8 +86,59 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
       setQuery("");
       setLimit(chunkSize);
       setIncludeUnresolved(false);
+      setCheckpoint(undefined);
+      setRestored(false);
       setFacts(result);
     }, !extended);
+  }
+
+  function resume(saved: SchemaCheckpoint) {
+    const scope = restoreSchemaScope(saved);
+    setFiles([]);
+    setSelected(new Map(scope.selection));
+    setQuery("");
+    setLimit(chunkSize);
+    setIncludeUnresolved(scope.includeUnresolved);
+    setCheckpoint(saved);
+    setRestored(true);
+    setError("");
+    setRetry(false);
+    setNotice("");
+    setFacts(scope.facts);
+  }
+
+  function saveScope(destination?: "close" | "files") {
+    if (!facts) return;
+    void run(saveScopeLabel, async signal => {
+      const db = await openWorkspaceDatabase();
+      try {
+        signal.throwIfAborted();
+        const saved = await saveSchemaCheckpoint(db, { facts, selection: selected, includeUnresolved }, checkpoint);
+        setCheckpoints(items => [saved, ...items.filter(item => item.id !== saved.id)]);
+        setCheckpoint(saved);
+        setNotice("Schema facts and scope saved in this browser.");
+        if (destination === "files") setFacts(undefined);
+        if (destination === "close") onClose();
+      } finally { db.close(); }
+    });
+  }
+
+  function discard(saved: SchemaCheckpoint, close = false) {
+    void run(discardScopeLabel, async signal => {
+      const db = await openWorkspaceDatabase();
+      try {
+        signal.throwIfAborted();
+        await discardGuidedCheckpoint(db, saved);
+        setCheckpoints(items => items.filter(item => item.id !== saved.id));
+        if (checkpoint?.id === saved.id) setCheckpoint(undefined);
+        if (close) onClose();
+      } finally { db.close(); }
+    });
+  }
+
+  function close() {
+    if (facts && (selected.size || checkpoint) && !busy) saveScope("close");
+    else onClose();
   }
 
   function review() {
@@ -89,6 +159,7 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
       try {
         signal.throwIfAborted();
         await writeWorkspaceProject(db, preview.document, null);
+        if (checkpoint) await discardGuidedCheckpoint(db, checkpoint).catch(() => undefined);
         onCreated(preview.document.id);
       } finally {
         db.close();
@@ -113,9 +184,18 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
   const hidden = selected.size - visible.filter(item => selected.has(item.key)).length;
   const tooLarge = !!scope && (scope.nodes.length > 100 || scope.links.length > 200);
   const needsLabel = Array.from(selected.values()).some(label => !label.trim() || [...label].length > 200);
-  return <Modal title="JSON Schema relationships" wide busy={busy === saveLabel} onClose={onClose}>
+  return <Modal title="JSON Schema relationships" wide busy={[saveLabel, saveScopeLabel, discardScopeLabel].includes(busy)} onClose={close}>
     {!facts && <form className="heading-form" onSubmit={event => { event.preventDefault(); read(); }}>
       <p>Choose draft 2020-12 JSON Schema files. Meridian reads them locally and looks for references among the files you select.</p>
+      {!!checkpoints.length && <ul className="project-list" aria-label="Saved JSON Schema scopes">
+        {checkpoints.map(item => <li className="project-row" key={item.id}>
+          <button type="button" className="project-open" disabled={!!busy} onClick={() => resume(item)}>
+            <strong>Resume {item.payload.virtualPaths[0] ?? "schema scope"}</strong>
+            <small>{item.payload.selectedFactIds.length} selected facts · {new Date(item.createdAt).toLocaleString()}</small>
+          </button>
+          <button type="button" className="button quiet" disabled={!!busy} onClick={() => discard(item)}>Discard scope draft</button>
+        </li>)}
+      </ul>}
       <label>JSON Schema files<input type="file" multiple accept=".json,application/json,application/schema+json" disabled={!!busy} onChange={event => {
         setError("");
         setRetry(false);
@@ -144,7 +224,8 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
       </div>
     </form>}
     {facts && !preview && <div className="heading-form">
-      <p>{facts.checkedReferences} ordinary references checked · {facts.unresolved.length} unresolved {facts.unresolved.length === 1 ? "entry" : "entries"} · {facts.compositionCount} locations with composition or conditionals</p>
+      {restored ? <p>Resumed scope · {facts.unresolved.length} unresolved {facts.unresolved.length === 1 ? "entry" : "entries"}</p>
+        : <p>{facts.checkedReferences} ordinary references checked · {facts.unresolved.length} unresolved {facts.unresolved.length === 1 ? "entry" : "entries"} · {facts.compositionCount} locations with composition or conditionals</p>}
       <p>Properties and references are drawn as declared. Composition, conditionals and dynamic reference semantics are outside this view.</p>
       <label>Find schema facts<input value={query} maxLength={200} disabled={!!busy}
         onChange={event => { setQuery(event.target.value); setLimit(chunkSize); }} /></label>
@@ -177,7 +258,12 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
       {needsLabel && <p>Give each selected fact a display label of 1 to 200 characters.</p>}
       {tooLarge && <p>Choose a scope with at most 100 nodes and 200 connections.</p>}
       <div className="dialog-actions">
-        <button type="button" className="button quiet" disabled={!!busy} onClick={() => setFacts(undefined)}>Choose other files</button>
+        <button type="button" className="button quiet" disabled={!!busy}
+          onClick={() => selected.size || checkpoint ? saveScope("files") : setFacts(undefined)}>Choose other files</button>
+        <button type="button" className="button quiet" disabled={!!busy}
+          onClick={() => checkpoint ? discard(checkpoint, true) : onClose()}>Discard this scope</button>
+        <button type="button" className="button secondary" disabled={!!busy || !selected.size || tooLarge || needsLabel}
+          onClick={() => saveScope()}>Save scope draft</button>
         <button type="button" className="button primary" disabled={!!busy || !selected.size || tooLarge || needsLabel}
           onClick={review}>Preview schema diagram</button>
       </div>
@@ -193,6 +279,7 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
     </section>}
     {busy && <p role="status">{busy}…</p>}
     {error && <p role="alert">{error}</p>}
+    {notice && <p role="status">{notice}</p>}
     {retry && <button type="button" className="button secondary" onClick={() => read(true)}>Retry with more time</button>}
   </Modal>;
 }
