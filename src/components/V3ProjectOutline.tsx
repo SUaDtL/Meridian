@@ -43,7 +43,7 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
 }
 
 export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onFrame, onConnect, onGroup, onBulkText,
-  onDesign, onResetDesign, onSaveComponent, onStory, onDeleteConnections, canUngroup, onUngroup, canMoveInto, onMoveInto, onClose }: {
+  onDesign, onResetDesign, onSaveComponent, onStory, onDeleteConnections, canUngroup, onUngroup, canReviewGroupDeletion, onReviewGroupDeletion, canMoveInto, onMoveInto, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
   onSelection: Dispatch<SetStateAction<ReadonlySet<string>>>;
@@ -61,6 +61,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   onDeleteConnections?: (hidden: number) => void;
   canUngroup: (id: string) => boolean;
   onUngroup: (id: string) => void;
+  canReviewGroupDeletion: (id: string) => boolean;
+  onReviewGroupDeletion: (id: string) => void;
   canMoveInto: (id: string) => boolean;
   onMoveInto: (id: string) => void;
   onClose: () => void;
@@ -234,6 +236,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           {canRename && active.item.kind === "node" && <button type="button" className="button quiet" onClick={() => onRename(active.item.id)}>Rename node</button>}
           {active.item.kind === "group" && canUngroup(active.item.id) && <button type="button" className="button quiet"
             onClick={() => onUngroup(active.item.id)}>Ungroup</button>}
+          {active.item.kind === "group" && canReviewGroupDeletion(active.item.id) && <button type="button" className="button quiet"
+            onClick={() => onReviewGroupDeletion(active.item.id)}>Delete group and contents</button>}
           {active.item.kind === "group" && canMoveInto(active.item.id) && <button type="button" className="button quiet"
             onClick={() => onMoveInto(active.item.id)}>Move node into this group</button>}
           <button type="button" className="button secondary" disabled={!active.item.source}

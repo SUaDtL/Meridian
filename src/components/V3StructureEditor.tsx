@@ -36,7 +36,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   initialTarget?: string;
   deleteConnections?: { ids: string[]; hidden: number };
   groupMembers?: { ids: string[]; hidden: number };
-  groupRemoval?: { memberIds: string[]; connectionIds: string[]; unavailable?: string };
+  groupRemoval?: { members: { id: string; label: string; kind: string }[]; connectionIds: string[]; unavailable?: string };
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
   onClose: () => void;
 }) {
@@ -153,7 +153,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label, direction: edgeDirection }
         : operation === "addGroup" ? { op: operation, memberIds: [...members], label }
         : operation === "moveToGroup" ? { op: operation, targetId: to, groupId: group?.id ?? "" }
-        : operation === "removeGroupContents" ? { op: operation, targetId: to, memberIds: groupRemoval?.memberIds ?? [],
+        : operation === "removeGroupContents" ? { op: operation, targetId: to, memberIds: groupRemoval?.members.map(item => item.id) ?? [],
           incidentEdgeIds: groupRemoval?.connectionIds ?? [] }
         : operation === "removeNode" ? { op: operation, targetId: to, incidentEdgeIds: incident.map(edge => edge.id) }
         : operation === "removeEdges" ? { op: operation, targetIds: deleteConnections?.ids ?? [] }
@@ -347,11 +347,17 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         </fieldset>}
         {ungrouping && <p>Ungroup {group?.label}. Its members and connections will stay in the diagram.</p>}
         {deletingGroup && groupRemoval && <section aria-label="Group contents to delete">
-          <p>Delete {group?.label}, its {groupRemoval.memberIds.length} member nodes and {groupRemoval.connectionIds.length} incident connections.</p>
-          <ul aria-label="Nodes to delete">{nodes.filter(item => groupRemoval.memberIds.includes(item.id)).map(item => <li key={item.id}>{item.label}</li>)}</ul>
-          {!!groupRemoval.connectionIds.length && <ul aria-label="Connections to delete">
-            {edges.filter(item => groupRemoval.connectionIds.includes(item.id)).map(item => <li key={item.id}>{item.label}</li>)}
-          </ul>}
+          {!groupRemoval.unavailable && <>
+            <p>Delete {group?.label} and all listed elements.</p>
+            <ul aria-label="Nodes to delete">{nodes.filter(item => groupRemoval.members.some(member => member.id === item.id))
+              .map(item => <li key={item.id}>{item.label}</li>)}</ul>
+            {groupRemoval.members.some(item => item.kind === "group") && <ul aria-label="Nested groups to delete">
+              {groupRemoval.members.filter(item => item.kind === "group").map(item => <li key={item.id}>{item.label}</li>)}
+            </ul>}
+            {!!groupRemoval.connectionIds.length && <ul aria-label="Connections to delete">
+              {edges.filter(item => groupRemoval.connectionIds.includes(item.id)).map(item => <li key={item.id}>{item.label}</li>)}
+            </ul>}
+          </>}
           {groupRemoval.unavailable && <p role="alert">{groupRemoval.unavailable}</p>}
         </section>}
         {removingEdges && <section aria-label="Connections to delete">

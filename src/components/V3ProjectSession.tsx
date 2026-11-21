@@ -16,7 +16,7 @@ import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-pr
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
-import { flowchartSubsetTopology, supportedGroupMoveTargets, supportedGroupRemovals, supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
+import { flowchartSubsetTopology, groupContentsDeletionScopes, supportedGroupMoveTargets, supportedGroupRemovals, supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
@@ -264,16 +264,32 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     return new Map(targetTable?.targets.filter(target => target.elementKind === "group" && ids.has(target.id))
       .map(target => [target.id, { id: target.id, label: target.label || "Diagram group" }]));
   }, [source, flatFlowchart, identities, targetTable]);
-  const groupRemoval = useMemo(() => {
-    if (!removableGroup) return;
-    const members = new Set(removableGroup.members);
-    const selected = nodes.filter(item => members.has(item.id));
-    const connections = edges.filter(item => members.has(item.sourceId ?? "") || members.has(item.targetId ?? ""));
-    const unavailable = !members.size || selected.length !== members.size ? "The group membership could not be verified."
-      : selected.length === nodes.length ? "Keep at least one node in the diagram."
-      : connections.some(item => !item.explicit) ? "Each incident connection needs an explicit source ID." : undefined;
-    return { memberIds: selected.map(item => item.id), connectionIds: connections.map(item => item.id), unavailable };
-  }, [removableGroup, nodes, edges]);
+  const groupDeletions = useMemo(() => {
+    const scopes = source && !flatFlowchart && targetTable ? [...groupContentsDeletionScopes(source)] : [];
+    const targets = new Map(targetTable?.targets.map(item => [item.id, item]));
+    const bindings = new Map(identities?.flatMap(record => {
+      const target = targets.get(record.id);
+      return record.status === "resolved" && target?.elementKind === record.elementKind
+        && (record.elementKind !== "edge" || record.binding.type === "edge-id")
+        ? [[`${record.elementKind}:${record.binding.sourceId}`, target] as const] : [];
+    }));
+    return new Map(scopes.flatMap(([sourceId, scope]) => {
+      const target = bindings.get(`group:${sourceId}`);
+      if (!target) return [];
+      const members = scope.members.flatMap(id => {
+        const member = bindings.get(`node:${id}`) ?? bindings.get(`group:${id}`);
+        return member ? [{ id: member.id, label: member.label || id, kind: member.elementKind }] : [];
+      });
+      const connectionIds = scope.connections.flatMap(id => {
+        const edge = bindings.get(`edge:${id}`);
+        return edge ? [edge.id] : [];
+      });
+      const unavailable = scope.unavailable ?? (members.length !== scope.members.length || connectionIds.length !== scope.connections.length
+        ? "The full diagram deletion could not be verified." : undefined);
+      return [[target.id, { group: { id: target.id, label: target.label || "Diagram group" }, members, connectionIds, unavailable }] as const];
+    }));
+  }, [source, flatFlowchart, identities, targetTable]);
+  const defaultGroupDeletion = removableGroup && groupDeletions.get(removableGroup.id);
   const groupMoveOptions = useMemo(() => {
     if (!source || flatFlowchart || !targetTable) return new Map<string, { group: { id: string; label: string }; nodes: typeof nodes }>();
     const allowed = supportedGroupMoveTargets(source);
@@ -289,9 +305,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     }));
   }, [source, flatFlowchart, targetTable, identities, nodes]);
   const currentMoveGroup = editFlowchart === "moveToGroup" && editTarget ? groupMoveOptions.get(editTarget) : undefined;
+  const groupRemoval = editTarget ? (editFlowchart === "removeGroupContents" ? groupDeletions.get(editTarget) : undefined) : defaultGroupDeletion;
   const structureGroup = editFlowchart === "removeGroup" && editTarget
-    ? ungroupableGroups.get(editTarget) : currentMoveGroup?.group ?? removableGroup;
-  const singleGroupOperations = !!structureGroup && structureGroup.id === removableGroup?.id;
+    ? ungroupableGroups.get(editTarget) : currentMoveGroup?.group ?? groupRemoval?.group ?? removableGroup;
   const movableNodes = groupMoveOptions.get(structureGroup?.id ?? "")?.nodes ?? [];
   const defaultMoveAvailable = !!removableGroup && groupMoveOptions.has(removableGroup.id);
   const needsRecovery = save?.phase === "conflict" || save?.phase === "error";
@@ -424,9 +440,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: busy ? "Wait for the current action to finish." : ungroupableGroups.size ? undefined : "Choose a supported group in a rendered flowchart.",
       run: () => removableGroup ? setEditFlowchart("removeGroup") : setOutlineOpen(true) },
     { id: "delete-group-contents", title: "Delete group and contents", category: "Diagram",
-      unavailable: busy ? "Wait for the current action to finish." : groupRemoval ? groupRemoval.unavailable
-        : "Open a rendered flowchart with one supported top-level group.",
-      run: () => setEditFlowchart("removeGroupContents") },
+      unavailable: busy ? "Wait for the current action to finish." : groupDeletions.size ? undefined
+        : "Choose a supported group in a rendered flowchart.",
+      run: () => defaultGroupDeletion && !defaultGroupDeletion.unavailable ? setEditFlowchart("removeGroupContents") : setOutlineOpen(true) },
     { id: "move-into-group", title: "Move node into group", category: "Diagram",
       unavailable: busy ? "Wait for the current action to finish." : groupMoveOptions.size ? undefined
         : "Choose a group with an eligible standalone node to move into it.",
@@ -494,7 +510,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                 <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
               )}
               {removableGroup && <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("removeGroup")}>Ungroup</button>}
-              {groupRemoval && !groupRemoval.unavailable && <button className="button secondary" disabled={busy}
+              {defaultGroupDeletion && !defaultGroupDeletion.unavailable && <button className="button secondary" disabled={busy}
                 onClick={() => setEditFlowchart("removeGroupContents")}>Delete group and contents</button>}
               {defaultMoveAvailable && <button className="button secondary" disabled={busy}
                 onClick={() => setEditFlowchart("moveToGroup")}>Move node into group</button>}
@@ -547,6 +563,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setOutlineOpen(false);
           setEditTarget(id);
           setEditFlowchart("removeGroup");
+        }}
+        canReviewGroupDeletion={id => !busy && groupDeletions.has(id)} onReviewGroupDeletion={id => {
+          setOutlineOpen(false);
+          setEditTarget(id);
+          setEditFlowchart("removeGroupContents");
         }}
         canMoveInto={id => !busy && groupMoveOptions.has(id)} onMoveInto={id => {
           setOutlineOpen(false);
@@ -696,7 +717,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           canUngroup={!!structureGroup && ungroupableGroups.has(structureGroup.id)}
           flatFlowchart={flatFlowchart} canEditLabels={!labelEditingUnavailable}
           initialOperation={editFlowchart} initialTarget={editFlowchart === "moveToGroup" ? undefined : editTarget}
-          deleteConnections={deleteConnections} groupMembers={groupMembers} groupRemoval={singleGroupOperations ? groupRemoval : undefined}
+          deleteConnections={deleteConnections} groupMembers={groupMembers} groupRemoval={groupRemoval}
           onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); setGroupMembers(undefined); }}
           onApply={proposal => {
             const current = editor.current!;
