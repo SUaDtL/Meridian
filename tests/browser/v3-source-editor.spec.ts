@@ -397,3 +397,103 @@ test('keeps failed candidates unapplied and lets an accepted drawing recover aft
   const undone = await download(page, live);
   expect(undone).toEqual({ ...original, revision: accepted.revision + 1, updatedAt: undone.updatedAt });
 });
+
+test('keeps a native composition together and defers source review until it is committed', async ({ page, context }) => {
+  const source = 'flowchart LR\n  A["First"]\n  B["Second"]\n';
+  const project = { ...createDocument(), title: 'Source composition', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+    version: 2, activeId: project.id, documents: [project],
+  })), { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Source composition' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  await expect(live.getByRole('img', { name: /Diagram preview for/ })).toBeVisible();
+  const before = await download(page, live);
+  await live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source', exact: true });
+  const input = editor.getByRole('textbox', { name: 'Mermaid source' });
+  await expect(input).toBeFocused();
+  const preview = editor.getByRole('button', { name: 'Preview source' });
+
+  const session = await context.newCDPSession(page);
+  const compose = (text: string) => session.send('Input.imeSetComposition', {
+    text, selectionStart: text.length, selectionEnd: text.length,
+  });
+  try {
+    await input.press('Control+End');
+    await input.press('Control+Space');
+    await expect(editor.getByRole('option', { name: /^node/ })).toBeVisible();
+    await input.press('Escape');
+    await compose('no');
+    await expect(input).toContainText('no');
+    await expect(preview).toBeDisabled();
+    await input.press('Control+Space');
+    await expect(editor.getByRole('listbox')).toHaveCount(0);
+    await compose('');
+
+    await input.press('Control+Home');
+    await input.press('ArrowDown');
+    await input.press('End');
+    await input.press('ArrowLeft');
+    await input.press('ArrowLeft');
+    await compose('に');
+    await expect(input).toContainText('Firstに');
+    await expect(preview).toBeDisabled();
+    await compose('日本');
+    await expect(input).toContainText('First日本');
+    await expect(preview).toBeDisabled();
+    await session.send('Input.insertText', { text: '日本' });
+    await expect(preview).toBeEnabled();
+
+    await input.press('Control+z');
+    await expect(input).toContainText('A["First"]');
+    await expect(input).not.toContainText('日本');
+    await expect(preview).toBeDisabled();
+    await input.press('Control+y');
+    await expect(input).toContainText('A["First日本"]');
+    await preview.click();
+    await editor.getByRole('button', { name: 'Apply source' }).click();
+  } finally { await session.detach(); }
+
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const accepted = await download(page, live);
+  expect(accepted.source).toBe(source.replace('First', 'First日本'));
+  expect(accepted.identity).toEqual(before.identity);
+
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const second = page.getByRole('treeitem', { name: /^Second/ });
+  await second.click();
+  await second.press('F2');
+  const rename = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await rename.getByRole('textbox', { name: 'Node label' }).fill('Reviewed second');
+  await rename.getByRole('button', { name: 'Preview change' }).click();
+  await rename.getByRole('button', { name: 'Apply change' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const renamed = await download(page, live);
+  expect(renamed.source).toBe(accepted.source.replace('Second', 'Reviewed second'));
+  expect(renamed.identity).toEqual(accepted.identity);
+
+  await live.getByRole('button', { name: 'Explore designs', exact: true }).click();
+  const designs = page.getByRole('dialog', { name: 'Explore designs' });
+  await designs.getByRole('group', { name: 'Design recipes' }).getByRole('button', { name: /^Presentation/ }).click();
+  await designs.getByRole('button', { name: 'Preview Presentation' }).click();
+  await designs.getByRole('button', { name: 'Apply Presentation' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const styled = await download(page, live);
+  expect(styled.source).toBe(renamed.source);
+  expect(styled.identity).toEqual(renamed.identity);
+  expect(styled.design.recipe).toMatchObject({ id: 'presentation' });
+
+  let revision = styled.revision;
+  for (const [action, states] of [['Undo', [renamed, accepted, before]], ['Redo', [accepted, renamed, styled]]] as const) {
+    for (const state of states) {
+      await live.getByRole('button', { name: action, exact: true }).click();
+      await expect(live.getByText('Saved in this browser.')).toBeVisible();
+      const restored = await download(page, live);
+      expect(restored).toEqual({ ...state, revision: ++revision, updatedAt: restored.updatedAt });
+    }
+  }
+});

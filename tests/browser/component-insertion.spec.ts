@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 import { createScene } from '../../src/lib/storyboard';
 import type { ComponentDefinition } from '../../src/lib/authoring/component-definition';
@@ -353,6 +353,125 @@ test('reviews a same-version replacement and rejects an already prepared inserti
   expect(after.componentInstances[0]).toEqual(before.componentInstances[0]);
   expect(after.componentInstances[1]).toMatchObject({ definitionId: definition.id, definitionVersion: definition.version });
   expect(after.componentInstances[1].definitionHash).not.toBe(before.componentInstances[0].definitionHash);
+});
+
+test('requires an explicit new attachment when another tab reuses its Mermaid source ID', async ({ page }) => {
+  const source = 'flowchart LR\n  A[Intake]\n  B[Fallback]\n';
+  const project = { ...createDocument(), title: 'Component target race', source };
+  const definition: ComponentDefinition = {
+    schema: 'meridian-component/v1', family: 'flowchart', id: crypto.randomUUID(), version: '1.0.0',
+    name: 'Durable worker', description: '', tags: [],
+    provenance: { author: 'Meridian test', source: 'Browser fixture', license: '', licenseText: '' },
+    fragment: { nodes: [{ id: 'worker', label: 'Worker', shape: 'rect', role: 'service' }], edges: [], groups: [] },
+    ports: [{ id: 'request', nodeId: 'worker', label: 'Request input', direction: 'in' }],
+    parameters: [{ id: 'label', type: 'text', label: 'Worker name', default: 'Worker', maxLength: 40, required: true }],
+    labelBindings: [{ nodeId: 'worker', parameterId: 'label', prefix: '', suffix: '' }],
+  };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+    version: 2, activeId: project.id, documents: [project],
+  })), { key: STORAGE_KEY, project });
+
+  async function open(tab: Page, prepare: boolean) {
+    await tab.goto('/');
+    await tab.getByRole('button', { name: 'Manage projects' }).click();
+    await tab.getByRole('button', { name: 'Project migration and recovery' }).click();
+    if (prepare) await tab.getByRole('button', { name: 'Prepare v3 copies' }).click();
+    await tab.getByRole('button', { name: 'Open v3 project Component target race' }).click();
+    const panel = tab.getByRole('dialog', { name: project.title, exact: true });
+    await expect(panel.getByRole('img', { name: /Diagram preview for/ })).toBeVisible();
+    return panel;
+  }
+
+  async function snapshot(tab: Page, panel: Locator) {
+    const [file] = await Promise.all([
+      tab.waitForEvent('download'), panel.getByRole('button', { name: 'Download v3 project' }).click(),
+    ]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing component target download.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  }
+
+  const live = await open(page, true);
+  const before = await snapshot(page, live);
+  await live.getByRole('button', { name: 'Commands', exact: true }).click();
+  const search = page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox');
+  await search.fill('Insert component');
+  await search.press('Enter');
+  const component = page.getByRole('dialog', { name: 'Insert component' });
+  await component.getByLabel('Import a component definition or library').setInputFiles({
+    name: 'durable-worker.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(definition)),
+  });
+  const workerName = component.getByRole('textbox', { name: 'Worker name' });
+  await workerName.fill('Reviewed durable worker');
+  const target = component.getByRole('group', { name: 'Request input' }).getByRole('combobox', { name: 'Attachment target' });
+  await target.selectOption({ label: 'Intake (A)' });
+  const oldTarget = await target.inputValue();
+  const review = component.getByRole('button', { name: 'Preview component' });
+  const insert = component.getByRole('button', { name: 'Insert reviewed component' });
+  await review.click();
+  await expect(insert).toBeEnabled();
+
+  const second = await page.context().newPage();
+  try {
+    const other = await open(second, false);
+    await other.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+    const edit = second.getByRole('dialog', { name: 'Edit flowchart' });
+    await edit.getByRole('combobox', { name: 'Operation' }).selectOption('removeNode');
+    await edit.getByRole('combobox', { name: 'Node to delete' }).selectOption({ label: 'Intake (A)' });
+    await edit.getByRole('button', { name: 'Preview change' }).click();
+    await edit.getByRole('button', { name: 'Apply change' }).click();
+    await expect(other.getByText('Saved in this browser.')).toBeVisible();
+    const removed = await snapshot(second, other);
+    await other.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+    const sourceEditor = second.getByRole('dialog', { name: 'Edit Mermaid source' });
+    await sourceEditor.getByRole('textbox', { name: 'Mermaid source' }).fill(removed.source + '  A[Intake]\n');
+    await sourceEditor.getByRole('button', { name: 'Preview source' }).click();
+    await sourceEditor.getByRole('button', { name: 'Apply source' }).click();
+    await expect(other.getByText('Saved in this browser.')).toBeVisible();
+    const changed = await snapshot(second, other);
+    const replacement = changed.identity.elements.find((item: { status: string; binding: { sourceId: string } }) =>
+      item.status === 'resolved' && item.binding.sourceId === 'A');
+    expect(replacement.id).not.toBe(oldTarget);
+    expect(before.identity.elements.map((item: { id: string }) => item.id)).toContain(oldTarget);
+
+    await insert.click();
+    await expect(component.getByRole('alert')).toHaveText('The diagram changed. Review the current attachment targets.');
+    expect(await snapshot(second, other)).toEqual(changed);
+    await expect(workerName).toHaveValue('Reviewed durable worker');
+    await expect(target).toHaveValue(oldTarget);
+    await review.click();
+    await expect(target.getByRole('option', { name: 'Intake (A)', exact: true })).toHaveAttribute('value', replacement.id);
+    await expect(review).toBeDisabled();
+    await expect(insert).toHaveCount(0);
+    await target.selectOption(replacement.id);
+    await review.click();
+    await expect(component.getByRole('list', { name: 'Reviewed attachments' })).toContainText('Request input · From Intake (A)');
+    await insert.click();
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const accepted = await snapshot(page, live);
+    expect(accepted.source).toBe(changed.source + '  m_n1["Reviewed durable worker"]\n  A m_e1@--> m_n1\n');
+    const instance = accepted.componentInstances[0];
+    expect(instance).toMatchObject({ definitionId: definition.id, definitionVersion: definition.version, definitionHash: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    await live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+    const sourceDialog = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+    await sourceDialog.getByRole('textbox', { name: 'Mermaid source' }).fill(accepted.source.replace('Reviewed durable worker', 'Renamed worker'));
+    await sourceDialog.getByRole('button', { name: 'Preview source' }).click();
+    await sourceDialog.getByRole('button', { name: 'Apply source' }).click();
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const renamed = await snapshot(page, live);
+    expect(renamed.source).toContain('Renamed worker');
+    expect(renamed.source).not.toContain('Reviewed durable worker');
+    expect(renamed.componentInstances).toEqual([instance]);
+    expect(JSON.stringify(renamed.componentInstances)).not.toContain('Reviewed durable worker');
+
+    const undo = live.getByRole('button', { name: 'Undo', exact: true });
+    await undo.click();
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    await undo.click();
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const restored = await snapshot(page, live);
+    expect(restored).toEqual({ ...changed, revision: renamed.revision + 2, updatedAt: restored.updatedAt });
+  } finally { await second.close(); }
 });
 
 test('refuses an expansion beyond 100 instances before altering the saved project', async ({ page }) => {

@@ -17,7 +17,9 @@ import { downloadText } from "../lib/storage";
 import Modal from "./Modal";
 
 type Preview = Awaited<ReturnType<typeof buildComponentProject>> & { url: string; proposal?: ReadyProposal; attachments?: number };
-type Insertion = { editor: Awaited<ReturnType<typeof openStoredProjectEditor>>; nodes: readonly { id: string; label: string }[]; onApplied: () => void };
+type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
+type Insertion = { snapshot: Editor["snapshot"]; prepare: Editor["prepareInsertion"]; apply: Editor["applyInsertion"];
+  nodes: readonly { id: string; label: string }[]; onApplied: () => void };
 type DraftAttachment = { targetId: string; direction: "in" | "out" | null } | null;
 type ImportConflict = { saved: ComponentDefinition; incoming: ComponentDefinition };
 const count = (value: number, label: string) => `${value} ${label}${value === 1 ? "" : "s"}`;
@@ -55,7 +57,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
   const conflictHeading = useRef<HTMLHeadingElement>(null);
   const importInput = useRef<HTMLInputElement>(null);
   const undoRemoval = useRef<HTMLButtonElement>(null);
-  const projectId = insertion?.editor.snapshot().id ?? null;
+  const projectId = insertion?.snapshot().id ?? null;
   const targetIds = new Set(insertion?.nodes.map(node => node.id));
   const choices = [...(insertion ? [] : sessionComponents), ...library, ...curatedComponents].filter(component =>
     [component.name, component.description, ...component.tags].join(" ").toLowerCase().includes(query.trim().toLowerCase()));
@@ -125,7 +127,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
       setError("The component definition changed. Review and explicitly use the current definition to continue.");
       return;
     }
-    const currentToken = insertion && await projectBaseToken(insertion.editor.snapshot());
+    const currentToken = insertion && await projectBaseToken(insertion.snapshot());
     signal.throwIfAborted();
     select(current);
     setCheckpoint(digest === state.definitionHash ? saved : undefined);
@@ -157,7 +159,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
   async function keepDraft(signal: AbortSignal) {
     if (!definition) return;
     materializeComponent(definition, values);
-    const base = insertion ? await projectBaseToken(insertion.editor.snapshot()) : null;
+    const base = insertion ? await projectBaseToken(insertion.snapshot()) : null;
     const draft: ComponentDraft = {
       step: preview ? "review" : definition.ports.length ? "connections" : "parameters",
       definitionId: definition.id, definitionVersion: definition.version,
@@ -281,7 +283,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
       if (assignment === null) requested.set(key, null);
       else if (assignment.direction) requested.set(key, { targetId: assignment.targetId, direction: assignment.direction });
     }
-    const next = insertion ? await insertion.editor.prepareInsertion(definition, values, requested, signal)
+    const next = insertion ? await insertion.prepare(definition, values, requested, signal)
       : await buildComponentProject(definition, values, signal);
     const svg = buildExportFrame(next.rendered, next.document).svg;
     signal.throwIfAborted();
@@ -297,9 +299,9 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
     }
     signal.throwIfAborted();
     if (insertion && preview.proposal) {
-      let status: Awaited<ReturnType<Insertion["editor"]["applyInsertion"]>>;
+      let status: Awaited<ReturnType<Insertion["apply"]>>;
       try {
-        status = await insertion.editor.applyInsertion(preview.proposal, signal);
+        status = await insertion.apply(preview.proposal, signal);
       } catch (reason) {
         setPreview(undefined);
         throw reason;

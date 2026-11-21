@@ -2,8 +2,8 @@ import { routeSegmentLimit, type RoutePoint } from './route-geometry';
 
 type Segment = { edge: string; a: RoutePoint; b: RoutePoint; minX: number; maxX: number; minY: number; maxY: number };
 export type CrossingFinding = { rule: 'QC-07'; targets: [string, string]; count: number; first: RoutePoint };
-export type CrossingEvidence = { checked: number; skipped: number; count: number; findingsOmitted: boolean };
-export type CrossingSummary = { count: number; measured: number; unknown: number; checked: number; skipped: number };
+export type CrossingEvidence = { checked: number; skipped: number; routesOverSegmentLimit: number; count: number; findingsOmitted: boolean };
+export type CrossingSummary = { count: number; measured: number; unknown: number; checked: number; skipped: number; routesOverSegmentLimit: number };
 export type LayoutCrossingComparison = { current: CrossingSummary; proposed: CrossingSummary };
 
 const pairLimit = 100_000;
@@ -34,13 +34,19 @@ function lastCandidate(segments: readonly Segment[], index: number) {
 }
 
 /** Review proper intersections only, with explicit accounting for incomplete coverage. */
-export function analyzeCrossings(targets: readonly { id: string; kind: string; measuredRoute?: RoutePoint[] }[]) {
+export function analyzeCrossings(targets: readonly { id: string; kind: string; measuredRoute?: RoutePoint[]; routeOverSegmentLimit?: boolean }[]) {
   const coverage = { rule: 'QC-07' as const, measured: 0, unknown: 0, inapplicable: 0 };
   const segments: Segment[] = [];
+  let routesOverSegmentLimit = 0;
   for (const target of targets) {
     if (target.kind !== 'edge') { coverage.inapplicable++; continue; }
     const route = target.measuredRoute;
-    if (!route || route.length < 2 || route.length - 1 > routeSegmentLimit - segments.length) { coverage.unknown++; continue; }
+    if (target.routeOverSegmentLimit || (route && route.length - 1 > routeSegmentLimit - segments.length)) {
+      routesOverSegmentLimit++;
+      coverage.unknown++;
+      continue;
+    }
+    if (!route || route.length < 2) { coverage.unknown++; continue; }
     const start = segments.length;
     for (let index = 1; index < route.length; index++) {
       const a = route[index - 1], b = route[index];
@@ -75,6 +81,6 @@ export function analyzeCrossings(targets: readonly { id: string; kind: string; m
       else findingsOmitted = true;
     }
   }
-  const evidence: CrossingEvidence = { checked, skipped: candidates - checked, count, findingsOmitted };
+  const evidence: CrossingEvidence = { checked, skipped: candidates - checked, routesOverSegmentLimit, count, findingsOmitted };
   return { coverage, evidence, findings: [...found.values()] };
 }

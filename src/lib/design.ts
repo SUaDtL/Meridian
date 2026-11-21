@@ -438,7 +438,7 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
   const labels = new Map<string, SVGElement>();
   const contrast = new Map<string, MeasuredSolidText>();
   const canMeasurePaint = !elements.some(item => item.kind === 'group' || (item.kind === 'edge' && item.capabilities.includes('typography')));
-  const routeBudget = { remaining: routeSegmentLimit };
+  const routeBudget = { remaining: routeSegmentLimit, skipped: 0 };
   for (const label of svg.querySelectorAll<SVGElement>('g.edgeLabel[data-element-owner]')) labels.set(label.getAttribute('data-element-owner')!, label);
   const positive = (value: string | undefined) => {
     const number = Number.parseFloat(value ?? '');
@@ -452,7 +452,7 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
       const shapes = shapesFor(target, item.kind);
       const [shape] = shapes;
       const shapeStyle = shape ? view.getComputedStyle(shape) : undefined;
-      if (routeBudget.remaining && item.kind === 'edge' && target.localName === 'path' && shapeStyle?.stroke !== 'none'
+      if (item.kind === 'edge' && target.localName === 'path' && shapeStyle?.stroke !== 'none'
         && shapeStyle?.visibility === 'visible' && shapeStyle.display !== 'none' && shapeStyle.clipPath === 'none'
         && Number(shapeStyle.strokeOpacity) > 0 && Number(shapeStyle.opacity) > 0) {
         routePath = target.getAttribute('d');
@@ -490,7 +490,11 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
       const box = target.getBBox(), matrix = target.getScreenCTM();
       if (!matrix) continue;
       const transform = inverse.multiply(matrix);
-      if (routePath && transform.is2D !== false) item.measuredRoute = flattenRoute(routePath, transform, routeBudget);
+      if (routePath && transform.is2D !== false) {
+        const skipped = routeBudget.skipped;
+        item.measuredRoute = flattenRoute(routePath, transform, routeBudget);
+        if (routeBudget.skipped > skipped) item.routeOverSegmentLimit = true;
+      }
       const corners = [[box.x, box.y], [box.x + box.width, box.y], [box.x, box.y + box.height], [box.x + box.width, box.y + box.height]].map(([x, y]) => new DOMPoint(x, y).matrixTransform(transform));
       const x = Math.min(...corners.map(point => point.x)), y = Math.min(...corners.map(point => point.y));
       item.bounds = { x, y, width: Math.max(...corners.map(point => point.x)) - x, height: Math.max(...corners.map(point => point.y)) - y };

@@ -18,6 +18,7 @@ export type ReadabilityTarget = {
   measuredLabelSize?: number;
   labelOverflowInDiagram?: number;
   measuredRoute?: RoutePoint[];
+  routeOverSegmentLimit?: boolean;
   solidTextPaint?: SolidTextPaint;
   solidConnectorPaint?: SolidConnectorPaint;
   rolePaint?: RolePaint;

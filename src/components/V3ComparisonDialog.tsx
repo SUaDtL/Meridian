@@ -9,6 +9,7 @@ import type { SemanticRole } from "../lib/authoring/mermaid-project";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import { viewingScale, type FrameGeometry } from "../lib/authoring/readability";
 import { buildExportFrame } from "../lib/export";
+import { renderMemoryBudget, type RenderFootprint, type RenderReservation } from "../lib/render-cache";
 import type { RenderResult } from "../types";
 import Modal from "./Modal";
 
@@ -17,11 +18,10 @@ type Choice = DesignRecipeId | LayoutAlternativeId;
 type ComparisonMode = "design" | "layout";
 type ReadabilityEvidence = { smallest: number | null; measured: number; unknown: number };
 type ScopeSummary = NonNullable<NonNullable<ReturnType<Editor["readDesignPreview"]>>["scope"]>;
-type Preview = { scope?: ScopeSummary; proposal: ReadyProposal; changes: { label: string; before: unknown; after: unknown }[]; url: string; width: number; height: number; estimatedBytes: number;
+type Preview = { scope?: ScopeSummary; proposal: ReadyProposal; changes: { label: string; before: unknown; after: unknown }[]; url: string; width: number; height: number;
   evidence?: { current: ReadabilityEvidence; proposed: ReadabilityEvidence; crossings?: LayoutCrossingComparison | null } };
 
-type Candidate = { preview: Preview; error?: never } | { preview?: never; error: string };
-const candidateCacheBytes = 8 * 1024 * 1024;
+type Candidate = { preview: Preview; error?: never; reservation?: RenderReservation } | { preview?: never; error: string };
 const viewingProfile = { width: 1280, height: 720, padding: 32 };
 function labelEvidence(result: RenderResult, frame: FrameGeometry): ReadabilityEvidence {
   const scale = viewingScale(viewingProfile, frame);
@@ -31,7 +31,7 @@ function labelEvidence(result: RenderResult, frame: FrameGeometry): ReadabilityE
 }
 
 function connectionRoutes(result: RenderResult) {
-  return result.elements?.filter(item => item.kind === "edge").map(({ key, kind, measuredRoute }) => ({ id: key, kind, measuredRoute })) ?? [];
+  return result.elements?.filter(item => item.kind === "edge").map(({ key, kind, measuredRoute, routeOverSegmentLimit }) => ({ id: key, kind, measuredRoute, routeOverSegmentLimit })) ?? [];
 }
 
 export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDesign, selection, selectedRoleCounts, currentUrl, currentSize, editor, onApply, onClose }: {
@@ -54,6 +54,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   const [applyScopedShapes, setApplyScopedShapes] = useState(false);
   const [role, setRole] = useState<SemanticRole | "">(selectedRoleCounts[0]?.[0] ?? "");
   const [choice, setChoice] = useState<Choice>(layout ? "balanced" : "clear");
+  const selectedChoice = useRef(choice);
   const [direction, setDirection] = useState<LayoutIntent["direction"]>("keep");
   const decisionIds = new Set(editor.snapshot().roles.filter(item => item.role === "decision").map(item => item.elementId));
   const scopedDecision = scopeKind === "role" ? role === "decision" : selection?.ids.some(id => decisionIds.has(id));
@@ -69,33 +70,43 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   const [view, setView] = useState<"current" | "proposed">("current");
   const active = useRef<AbortController | undefined>(undefined);
   const previewButton = useRef<HTMLButtonElement>(null);
+  function releaseCandidate(candidate?: Candidate) {
+    if (!candidate?.preview) return;
+    candidate.reservation?.release();
+    URL.revokeObjectURL(candidate.preview.url);
+  }
+
   useEffect(() => () => {
     const work = active.current;
     active.current = undefined;
     work?.abort();
-    for (const candidate of retained.current.values()) if (candidate.preview) URL.revokeObjectURL(candidate.preview.url);
+    for (const candidate of retained.current.values()) releaseCandidate(candidate);
+    retained.current.clear();
   }, []);
 
-  function saveCandidate(option: Choice, candidate?: Candidate) {
+  function saveCandidate(option: Choice, candidate?: Candidate, footprint?: RenderFootprint) {
+    releaseCandidate(retained.current.get(option));
     const next = new Map(retained.current);
-    const old = next.get(option)?.preview;
-    if (old) URL.revokeObjectURL(old.url);
     next.delete(option);
-    if (candidate) next.set(option, candidate);
-    let estimated = Array.from(next.values()).reduce((total, item) => total + (item.preview?.estimatedBytes ?? 0), 0);
-    for (const [id, older] of next) {
-      if (estimated <= candidateCacheBytes) break;
-      if (id === option || !older.preview) continue;
-      estimated -= older.preview.estimatedBytes;
-      URL.revokeObjectURL(older.preview.url);
-      next.delete(id);
+    if (candidate?.preview && footprint) {
+      candidate.reservation = renderMemoryBudget.reserve(footprint, "selected", () => queueMicrotask(() => {
+        if (retained.current.get(option) !== candidate) return;
+        // A visible drawing can outlive its cache entry. Drop it when the
+        // author switches away, and release inactive drawings immediately.
+        if (selectedChoice.current === option) {
+          candidate.reservation = undefined;
+          return;
+        }
+        saveCandidate(option);
+      }));
     }
+    if (candidate) next.set(option, candidate);
     retained.current = next;
     setCandidates(next);
   }
 
   function resetPreview() {
-    for (const candidate of retained.current.values()) if (candidate.preview) URL.revokeObjectURL(candidate.preview.url);
+    for (const candidate of retained.current.values()) releaseCandidate(candidate);
     retained.current = new Map();
     setCandidates(retained.current);
     setPainted(false);
@@ -106,10 +117,17 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
 
   function chooseOption(next: Choice) {
     if (next === choice) return;
-    if (preview && preview.estimatedBytes > candidateCacheBytes) saveCandidate(choice);
+    selectedChoice.current = next;
+    const previous = retained.current.get(choice);
+    if (previous?.preview) {
+      if (previous.reservation) previous.reservation.touch("optional");
+      else saveCandidate(choice);
+    }
+    const candidate = retained.current.get(next);
+    if (candidate?.preview) candidate.reservation?.touch("selected");
     setChoice(next);
     setPainted(false);
-    setView(retained.current.get(next)?.preview ? "proposed" : "current");
+    setView(candidate?.preview ? "proposed" : "current");
     setError("");
     setCancelled(false);
   }
@@ -165,11 +183,13 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
         }
       }
       work.signal.throwIfAborted();
+      const image = new Blob([svg], { type: "image/svg+xml" });
       saveCandidate(choice, { preview: { proposal, changes: candidate.changes, ...geometry, scope: designCandidate?.scope,
-        estimatedBytes: (svg.length + candidate.rendered.result.svg.length) * 2,
         evidence: layoutCandidate ? { current: labelEvidence(layoutCandidate.current.result, currentSize),
           proposed: labelEvidence(candidate.rendered.result, geometry), crossings } : undefined,
-        url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) } });
+        url: URL.createObjectURL(image) } }, {
+        parts: [proposal.id, candidate.rendered.result.svg, { object: image, bytes: Math.max(image.size, svg.length * 2) }],
+      });
       setView("proposed");
     } catch (reason) {
       if (!work.signal.aborted) saveCandidate(choice, { error: reason instanceof Error ? reason.message : "This option could not be previewed." });
@@ -202,13 +222,16 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   }
   function routeSummary(summary: CrossingSummary) {
     return `${summary.count} crossing ${summary.count === 1 ? "candidate" : "candidates"} in checked routes · ${summary.measured} measured · ${summary.unknown} unknown · ${summary.checked.toLocaleString()} pairs checked`
-      + (summary.skipped ? ` · ${summary.skipped.toLocaleString()} pairs skipped` : "");
+      + (summary.skipped ? ` · ${summary.skipped.toLocaleString()} pairs skipped` : "")
+      + (summary.routesOverSegmentLimit ? ` · ${summary.routesOverSegmentLimit.toLocaleString()} ${summary.routesOverSegmentLimit === 1 ? "route" : "routes"} skipped at the segment limit` : "");
   }
   function crossingComparison({ current, proposed, crossings }: NonNullable<Preview["evidence"]>) {
     if (!crossings) return null;
     const complete = [crossings.current, crossings.proposed].every(item => item.measured > 0 && !item.unknown && !item.skipped);
     if (!complete || crossings.current.measured !== crossings.proposed.measured) {
-      return "Crossing coverage is incomplete for this comparison.";
+      return crossings.current.skipped || crossings.proposed.skipped || crossings.current.routesOverSegmentLimit || crossings.proposed.routesOverSegmentLimit
+        ? "Not fully measured. Crossing coverage is incomplete for this comparison."
+        : "Crossing coverage is incomplete for this comparison.";
     }
     if (crossings.current.count === crossings.proposed.count) return "The checked routes have the same crossing candidate count.";
     if (crossings.proposed.count < crossings.current.count && current.smallest !== null && proposed.smallest !== null
@@ -340,7 +363,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
           <p>Current · {routeSummary(preview.evidence.crossings.current)}</p>
           <p>Proposed · {routeSummary(preview.evidence.crossings.proposed)}</p>
           {comparisonNote && <p>{comparisonNote}</p>}
-        </> : <p>The route comparison did not produce measurements.</p>}
+        </> : <p>Not fully measured. The route comparison did not produce measurements.</p>}
       </section>}
       {busy && <p role="status">Rendering the {title} {mode}…</p>}
       {cancelled && <p role="status">Preview cancelled. Your choices are ready to preview again.</p>}

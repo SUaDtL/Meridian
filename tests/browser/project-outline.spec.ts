@@ -587,3 +587,32 @@ test('applies one reviewed text color to eligible labels across an outline filte
   const restored = await readProject();
   expect(restored).toEqual({ ...before, revision: after.revision + 1, updatedAt: restored.updatedAt });
 });
+
+test('explains a blocked node deletion and opens its proven source location without writing it', async ({ page }) => {
+  const source = '\uFEFFflowchart LR\r\n  A[Intake]\r\n  B[Archive]\r\n  A -->|"Sends"| B\r\n';
+  const live = await openProject(page, 'Blocked source deletion', source);
+  await expect(live.getByRole('img', { name: /Diagram preview for/ })).toBeVisible();
+  async function saveCopy() {
+    const [file] = await Promise.all([
+      page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click(),
+    ]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing source-location project download.');
+    return readFile(path, 'utf8');
+  }
+  const before = await saveCopy();
+  await live.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await editor.getByRole('combobox', { name: 'Operation' }).selectOption('removeNode');
+  await editor.getByRole('combobox', { name: 'Node to delete' }).selectOption({ label: 'Intake (A)' });
+  const block = editor.getByRole('region', { name: 'Blocked node deletion' });
+  await expect(block.getByRole('status')).toContainText('Each incident connection needs an explicit source ID');
+  await expect(block.getByRole('list', { name: 'Connections that need a source ID' })).toContainText('Sends');
+  await expect(editor.getByRole('button', { name: 'Preview change' })).toBeDisabled();
+  await block.getByRole('button', { name: 'Open node source' }).press('Enter');
+  await expect(editor).toHaveCount(0);
+  await expect(live.locator('mark')).toHaveText('Intake');
+  await expect(live.locator('mark')).toBeFocused();
+  expect(await live.locator('pre').textContent()).toBe(source);
+  expect(await saveCopy()).toBe(before);
+});

@@ -449,3 +449,75 @@ test('downloads 1× and 2× PNGs with identical label findings at the same docum
   expect(await measureLabel()).toBe(firstFinding);
   expect(await downloadProject(page, live)).toEqual(approved);
 });
+
+test('reports both crossing limits from the worker without ranking an incomplete result', async ({ page }) => {
+  await page.addInitScript(() => {
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (value, transfer) {
+      if (Array.isArray(value?.targets) && value.frame && value.profile) {
+        let route = 0;
+        value = { ...value, targets: value.targets.map((target: { kind: string }) => {
+          if (target.kind !== 'edge') return target;
+          const index = route++;
+          if (index === 3) return { ...target, measuredRoute: undefined, routeOverSegmentLimit: true };
+          const segments = index === 0 ? 166 : 167;
+          return { ...target, measuredRoute: Array.from({ length: segments + 1 }, (_, point) => [(point % 2) * 100, index]) };
+        }) };
+      }
+      Reflect.apply(post, this, transfer === undefined ? [value] : [value, transfer]);
+    };
+  });
+  const live = await openProject(page, { ...createDocument(), title: 'Bounded crossing evidence', source: crossingSource });
+  const before = await downloadProject(page, live);
+  await live.getByRole('button', { name: 'Check readability' }).click();
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  const result = check.getByRole('region', { name: 'Readability results' });
+  await expect(result).toContainText('Crossing candidates · 3 measured · 1 unknown · 4 not applicable');
+  await expect(result).toContainText('100,000 segment pairs checked. Not fully measured. 1 route skipped at the segment limit. 24,750 segment pairs skipped.');
+  await expect(result.getByText(/no issues|best layout/i)).toHaveCount(0);
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+  expect(await downloadProject(page, live)).toEqual(before);
+});
+
+test('terminates both timed-out readability workers and requires narrower input after the retry', async ({ page }) => {
+  await page.addInitScript(() => {
+    const post = Worker.prototype.postMessage;
+    const terminate = Worker.prototype.terminate;
+    const blocked = new WeakSet<Worker>();
+    let started = 0;
+    let stopped = 0;
+    Worker.prototype.postMessage = function (value, transfer) {
+      if (Array.isArray(value?.targets) && value.frame && value.profile && started < 2) {
+        blocked.add(this);
+        document.documentElement.dataset.readabilityWorkersStarted = String(++started);
+        return;
+      }
+      Reflect.apply(post, this, transfer === undefined ? [value] : [value, transfer]);
+    };
+    Worker.prototype.terminate = function () {
+      if (blocked.delete(this)) document.documentElement.dataset.readabilityWorkersStopped = String(++stopped);
+      return terminate.call(this);
+    };
+  });
+  const live = await openProject(page, { ...createDocument(), title: 'Readability deadline', source: crossingSource });
+  await live.getByRole('button', { name: 'Check readability' }).click();
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  const results = check.getByRole('region', { name: 'Readability results' });
+  const html = page.locator('html');
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  await expect(check.getByRole('alert')).toHaveText('Not fully measured. Checking the diagram timed out.');
+  await expect(html).toHaveAttribute('data-readability-workers-stopped', '1');
+  await expect(results).toHaveCount(0);
+  await check.getByRole('button', { name: 'Retry for five seconds' }).click();
+  await expect(check.getByRole('alert')).toHaveText('Not fully measured. The retry timed out. Try a smaller diagram before rechecking.', { timeout: 8000 });
+  await expect(html).toHaveAttribute('data-readability-workers-started', '2');
+  await expect(html).toHaveAttribute('data-readability-workers-stopped', '2');
+  await expect(check.getByRole('button', { name: 'Check diagram' })).toBeDisabled();
+  await expect(results).toHaveCount(0);
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('button', { name: 'Check readability' }).click();
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  await expect(results).toBeVisible();
+  await expect(check.getByRole('alert')).toHaveCount(0);
+});

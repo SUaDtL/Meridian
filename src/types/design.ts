@@ -61,4 +61,5 @@ export interface RenderElement {
   to?: string;
   bounds?: { x: number; y: number; width: number; height: number };
   measuredRoute?: RoutePoint[];
+  routeOverSegmentLimit?: boolean;
 }

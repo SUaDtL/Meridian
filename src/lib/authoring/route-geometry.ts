@@ -24,8 +24,12 @@ function quadraticControl(endpoint: RoutePoint, control: RoutePoint): RoutePoint
 }
 
 /** Flatten one open absolute SVG route after transforming it into diagram space. */
-export function flattenRoute(path: string, matrix: Affine, budget: { remaining: number }): RoutePoint[] | undefined {
-  if (!budget.remaining || path.length > 25_000 || ![matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f].every(Number.isFinite)) return undefined;
+export function flattenRoute(path: string, matrix: Affine, budget: { remaining: number; skipped: number }): RoutePoint[] | undefined {
+  if (!budget.remaining) {
+    budget.skipped++;
+    return undefined;
+  }
+  if (path.length > 25_000 || ![matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f].every(Number.isFinite)) return undefined;
   const parts = Array.from(path.matchAll(token), match => match[0]).filter(part => !/^[\s,]/.test(part));
   if (parts[0] !== 'M') return undefined;
   const points: RoutePoint[] = [];
@@ -39,7 +43,10 @@ export function flattenRoute(path: string, matrix: Affine, budget: { remaining: 
   }
   function add(point: RoutePoint) {
     if (points.length) {
-      if (budget.remaining <= 0) throw invalidRoute;
+      if (budget.remaining <= 0) {
+        budget.skipped++;
+        throw invalidRoute;
+      }
       budget.remaining--;
     }
     points.push(point);

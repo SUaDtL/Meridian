@@ -85,6 +85,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   async function check() {
     if (active.current || retry === "narrow") return;
     const extended = retry === "once";
+    setResult(undefined);
     const work = new AbortController();
     active.current = work;
     setPhase("check");
@@ -106,7 +107,8 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     } catch (reason) {
       if (!work.signal.aborted) {
         if (reason instanceof AuthoringWorkerTimeout) setRetry(extended ? "narrow" : "once");
-        setError(extended && reason instanceof AuthoringWorkerTimeout ? "Try a smaller diagram before rechecking."
+        setError(extended && reason instanceof AuthoringWorkerTimeout ? "Not fully measured. The retry timed out. Try a smaller diagram before rechecking."
+          : reason instanceof AuthoringWorkerTimeout ? "Not fully measured. " + reason.message
           : reason instanceof Error ? reason.message : "The diagram could not be checked.");
       }
     } finally {
@@ -269,7 +271,9 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
         {!!targets.some(item => item.kind === "edge") && <p>
           Crossing candidates count intersections inside route segments with a {routeTolerance} diagram unit approximation.
           {" "}{result.report.crossings.checked.toLocaleString()} segment pairs checked.
-          {result.report.crossings.skipped > 0 && <> Partial coverage. {result.report.crossings.skipped.toLocaleString()} segment pairs skipped.</>}
+          {(result.report.crossings.skipped > 0 || result.report.crossings.routesOverSegmentLimit > 0) && <> Not fully measured.</>}
+          {result.report.crossings.routesOverSegmentLimit > 0 && <> {result.report.crossings.routesOverSegmentLimit.toLocaleString()} {result.report.crossings.routesOverSegmentLimit === 1 ? "route" : "routes"} skipped at the segment limit.</>}
+          {result.report.crossings.skipped > 0 && <> {result.report.crossings.skipped.toLocaleString()} segment pairs skipped.</>}
           {result.report.crossings.findingsOmitted && <> Additional crossing findings exceed the display limit.</>}
         </p>}
         <h3>Findings</h3>

@@ -5,7 +5,8 @@ type Routes = Parameters<typeof analyzeCrossings>[0];
 function summarize(routes: Routes): CrossingSummary {
   if (routes.length > 2_000) throw new Error('A diagram exceeds the route comparison limit.');
   const { coverage, evidence } = analyzeCrossings(routes);
-  return { count: evidence.count, measured: coverage.measured, unknown: coverage.unknown, checked: evidence.checked, skipped: evidence.skipped };
+  return { count: evidence.count, measured: coverage.measured, unknown: coverage.unknown, checked: evidence.checked,
+    skipped: evidence.skipped, routesOverSegmentLimit: evidence.routesOverSegmentLimit };
 }
 
 self.onmessage = ({ data }: MessageEvent<{ version: 1; id: string; current: Routes; proposed: Routes }>) => {
