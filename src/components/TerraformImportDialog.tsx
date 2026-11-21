@@ -33,6 +33,7 @@ export default function TerraformImportDialog({ onBack, onClose, onCreated }: {
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState("");
+  const committing = [savingScope, discardingScope, savingInventory].includes(busy);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [retry, setRetry] = useState(false);
@@ -68,8 +69,10 @@ export default function TerraformImportDialog({ onBack, onClose, onCreated }: {
         setRetry(canRetry && reason instanceof AuthoringWorkerTimeout);
       }
     } finally {
-      controller.current = null;
-      if (!work.signal.aborted) setBusy("");
+      if (controller.current === work) {
+        controller.current = null;
+        if (!work.signal.aborted) setBusy("");
+      }
     }
   }
 
@@ -138,7 +141,10 @@ export default function TerraformImportDialog({ onBack, onClose, onCreated }: {
   }
 
   function close() {
-    if (facts && (selected.size || checkpoint) && !busy) saveScope("close");
+    if (committing) return;
+    controller.current?.abort();
+    controller.current = null;
+    if (facts && (selected.size || checkpoint)) saveScope("close");
     else onClose();
   }
 
@@ -181,7 +187,7 @@ export default function TerraformImportDialog({ onBack, onClose, onCreated }: {
   const matches = facts?.resources.filter(item => item.address.toLowerCase().includes(query.trim().toLowerCase())) ?? [];
   const visible = matches.slice(0, limit);
   const hiddenSelected = selected.size - visible.filter(item => selected.has(item.address)).length;
-  return <Modal title="Terraform inventory" wide busy={[savingScope, discardingScope, savingInventory].includes(busy)} onClose={close}>
+  return <Modal title="Terraform inventory" wide busy={committing} onClose={close}>
     {!facts && <form className="heading-form" onSubmit={event => { event.preventDefault(); read(); }}>
       <p>Open a Terraform show JSON plan or state file. Meridian reads it locally and keeps selected resource addresses and declared configuration references in the new diagram.</p>
       {!!checkpoints.length && <ul className="project-list" aria-label="Saved Terraform scopes">

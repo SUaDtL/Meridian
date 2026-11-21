@@ -29,6 +29,7 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState("");
+  const committing = [saveLabel, saveScopeLabel, discardScopeLabel].includes(busy);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(false);
   const [checkpoints, setCheckpoints] = useState<SchemaCheckpoint[]>([]);
@@ -66,8 +67,10 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
         setRetry(canRetry && reason instanceof AuthoringWorkerTimeout);
       }
     } finally {
-      controller.current = null;
-      if (!work.signal.aborted) setBusy("");
+      if (controller.current === work) {
+        controller.current = null;
+        if (!work.signal.aborted) setBusy("");
+      }
     }
   }
 
@@ -137,7 +140,10 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
   }
 
   function close() {
-    if (facts && (selected.size || checkpoint) && !busy) saveScope("close");
+    if (committing) return;
+    controller.current?.abort();
+    controller.current = null;
+    if (facts && (selected.size || checkpoint)) saveScope("close");
     else onClose();
   }
 
@@ -184,7 +190,7 @@ export default function SchemaImportDialog({ onBack, onClose, onCreated }: {
   const hidden = selected.size - visible.filter(item => selected.has(item.key)).length;
   const tooLarge = !!scope && (scope.nodes.length > 100 || scope.links.length > 200);
   const needsLabel = Array.from(selected.values()).some(label => !label.trim() || [...label].length > 200);
-  return <Modal title="JSON Schema relationships" wide busy={[saveLabel, saveScopeLabel, discardScopeLabel].includes(busy)} onClose={close}>
+  return <Modal title="JSON Schema relationships" wide busy={committing} onClose={close}>
     {!facts && <form className="heading-form" onSubmit={event => { event.preventDefault(); read(); }}>
       <p>Choose draft 2020-12 JSON Schema files. Meridian reads them locally and looks for references among the files you select.</p>
       {!!checkpoints.length && <ul className="project-list" aria-label="Saved JSON Schema scopes">

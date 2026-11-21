@@ -35,6 +35,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   const [review, setReview] = useState<Review>();
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState("");
+  const committing = ["Saving the new diagram", draftSave, "Discarding the saved scope"].includes(busy);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(false);
   const controller = useRef<AbortController | null>(null);
@@ -70,8 +71,10 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
         setRetry(canRetry && reason instanceof AuthoringWorkerTimeout);
       }
     } finally {
-      controller.current = null;
-      if (!action.signal.aborted) setBusy("");
+      if (controller.current === action) {
+        controller.current = null;
+        if (!action.signal.aborted) setBusy("");
+      }
     }
   }
 
@@ -165,7 +168,10 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   }
 
   function close() {
-    if (facts && !busy) checkpointScope(true);
+    if (committing) return;
+    controller.current?.abort();
+    controller.current = null;
+    if (facts) checkpointScope(true);
     else onClose();
   }
 
@@ -230,7 +236,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   const totalNodes = choices.size + new Set(selected.flatMap(item => item.tag === null ? [] : [item.tag])).size;
   const selectedHidden = choices.size - visible.filter(item => choices.has(item.key)).length;
 
-  return <Modal title="Engineering file" wide busy={["Saving the new diagram", draftSave, "Discarding the saved scope"].includes(busy)} onClose={close}>
+  return <Modal title="Engineering file" wide busy={committing} onClose={close}>
     <h3 ref={heading} tabIndex={-1}>{review ? "Review your new diagram" : facts
       ? schemaFacts ? "Choose schema scope" : "Choose operation scope" : "New diagram from file"}</h3>
     {!facts && <form className="heading-form" onSubmit={event => { event.preventDefault(); extract(); }}>
