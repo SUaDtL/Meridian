@@ -54,9 +54,12 @@ function label(value: string, limit: number) {
   return !/[\uD800-\uDFFF]/u.test(value) && [...value].length <= limit;
 }
 
-export function confirmChartColumns(input: ChartInput, columns: ColumnConfirmation[]): ConfirmedChartInput {
-  checkSize(input.rows.length, columns.length);
-  if (input.headings.length !== columns.length) throw new Error('Confirm every column.');
+export function confirmChartColumns(input: ChartInput, choices: (ColumnConfirmation | null)[]): ConfirmedChartInput {
+  checkSize(input.rows.length, choices.length);
+  if (input.headings.length !== choices.length) throw new Error('Confirm every column.');
+  const kept = choices.flatMap((column, sourceIndex) => column ? [{ column, sourceIndex }] : []);
+  if (!kept.length) throw new Error('Keep at least one column in the typed dataset.');
+  const columns = kept.map(({ column }) => column);
   const names = columns.map(column => column.name.trim());
   if (names.some(name => !name || !label(name, 200)) || new Set(names).size !== names.length) {
     throw new Error('Give every column a unique name of 1 to 200 characters.');
@@ -71,8 +74,9 @@ export function confirmChartColumns(input: ChartInput, columns: ColumnConfirmati
   const conversions = fields.map(field => ({ fieldId: field.id, invalid: 0, empty: 0 }));
   const rows = input.rows.map(({ line, cells }) => ({
     id: crypto.randomUUID(),
-    cells: cells.map((cell, index) => {
-      const { type, emptyIsNull, invalidToNull, numeric } = columns[index];
+    cells: kept.map(({ column, sourceIndex }, index) => {
+      const cell = cells[sourceIndex];
+      const { type, emptyIsNull, invalidToNull, numeric } = column;
       if (emptyIsNull && cell === '') {
         conversions[index].empty++;
         return null;
