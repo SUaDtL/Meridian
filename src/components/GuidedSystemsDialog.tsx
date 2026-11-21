@@ -5,9 +5,10 @@ import { systemRoles } from "../lib/authoring/relationship-table";
 import { normalizeSystemsDraft, type SystemConnection, type SystemRow, type SystemsDraft } from "../lib/authoring/systems-draft";
 import { emptySystemsSession, type SystemsSession } from "../lib/authoring/systems-session";
 import { buildExportFrame } from "../lib/export";
-import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
-import { listSystemsDrafts, resumeSystemsDraft, saveSystemsDraft, type SystemsCheckpoint } from "../lib/persistence/systems-drafts";
+import { discardGuidedCheckpoint, saveGuidedCheckpoint } from "../lib/persistence/guided-drafts";
+import { listSystemsDrafts, makeSystemsCheckpoint, resumeSystemsDraft, type SystemsCheckpoint } from "../lib/persistence/systems-drafts";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
+import { downloadText } from "../lib/storage";
 import Modal from "./Modal";
 
 const shapes = Object.keys(shapeDelimiters) as SystemRow["shape"][];
@@ -27,6 +28,7 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [recoveryExport, setRecoveryExport] = useState<SystemsCheckpoint>();
   const [nodeStart, setNodeStart] = useState(0);
   const [edgeStart, setEdgeStart] = useState(0);
   const controller = useRef<AbortController | null>(null);
@@ -42,6 +44,7 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
 
   function change(update: Partial<SystemsDraft>) {
     setError("");
+    setRecoveryExport(undefined);
     onSession(current => ({ ...current, values: { ...current.values, ...update }, dirty: true }));
   }
   function editNode(id: string, update: Partial<SystemRow>) {
@@ -68,7 +71,15 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
 
   function checkpointDraft() {
     void run("Saving draft", async () => {
-      const record = await withDatabase(db => saveSystemsDraft(db, values, checkpoint));
+      setRecoveryExport(undefined);
+      const now = Date.now();
+      const record = makeSystemsCheckpoint(values, checkpoint?.id ?? crypto.randomUUID(), now);
+      try {
+        await withDatabase(db => saveGuidedCheckpoint(db, record, checkpoint, now));
+      } catch (reason) {
+        setRecoveryExport(record);
+        throw reason;
+      }
       onSession(current => ({ ...current, checkpoint: record, dirty: false }));
       setSaved(current => [record, ...current.filter(item => item.id !== record.id)]);
     });
@@ -120,6 +131,7 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
           {saved.map(record => <li className="project-row" key={record.id}>
             <button className="project-open" disabled={!!busy} onClick={() => {
               onSession({ values: resumeSystemsDraft(record), checkpoint: record, dirty: false });
+              setRecoveryExport(undefined);
               setNodeStart(0);
               setEdgeStart(0);
             }}><span><strong>Resume {record.payload.title || "Untitled systems diagram"}</strong>
@@ -206,6 +218,10 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
       {busy && <p role="status">{busy}…</p>}
       {!busy && (checkpoint || dirty) && <p role="status">{dirty ? "Session-only changes" : "Draft saved locally"}</p>}
       {error && <p role="alert">{error}</p>}
+      {recoveryExport && dirty && <button type="button" className="button quiet" disabled={!!busy}
+        onClick={() => downloadText(JSON.stringify(recoveryExport, null, 2), "systems.meridian-draft.json")}>
+        Download normalized draft
+      </button>}
     </div>
   </Modal>;
 }

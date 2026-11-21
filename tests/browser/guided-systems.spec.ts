@@ -67,3 +67,34 @@ test('keeps duplicate systems distinct, resumes explicit directions, and creates
     { elementId: bindings.get('m_n2'), role: 'database' },
   ]);
 });
+
+test('exports a normalized unsaved systems draft without creating a project', async ({ page }) => {
+  await page.addInitScript(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (...args) {
+      if (this.name === 'drafts') throw new DOMException('Draft storage is full.', 'QuotaExceededError');
+      return put.apply(this, args);
+    };
+  });
+  await page.goto('/');
+  const dialog = await openSystems(page);
+  await dialog.getByLabel('Project title').fill('Unsaved systems');
+  await dialog.getByRole('button', { name: 'Add system', exact: true }).click();
+  await dialog.getByRole('group', { name: 'System 1' }).getByRole('textbox', { name: 'Label' }).fill('  Intake  ');
+  await dialog.getByRole('group', { name: 'System 1' }).getByRole('combobox', { name: 'Role' }).selectOption('service');
+  await dialog.getByRole('button', { name: 'Review relationships' }).click();
+  await dialog.getByRole('button', { name: 'Save systems draft' }).click();
+  await expect(dialog.getByRole('alert')).toHaveText('Draft storage is full.');
+  await expect(dialog.getByRole('status')).toHaveText('Session-only changes');
+  const [file] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('button', { name: 'Download normalized draft' }).click()]);
+  expect(file.suggestedFilename()).toBe('systems.meridian-draft.json');
+  const path = await file.path();
+  if (!path) throw new Error('Missing normalized systems draft.');
+  const record = JSON.parse(await readFile(path, 'utf8'));
+  expect(record).toMatchObject({ schema: 'meridian-draft/v1', feature: 'guided', baseToken: null, payload: {
+    title: 'Unsaved systems', intent: 'systems', mode: 'connections',
+    nodes: [{ label: '  Intake  ', role: 'service', shape: 'rect', sourceRow: null }], edges: [],
+  } });
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.getByRole('region', { name: 'Continue working' })).toHaveCount(0);
+});
