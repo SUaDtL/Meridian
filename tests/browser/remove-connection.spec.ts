@@ -61,7 +61,7 @@ test('reviews a connection deletion, preserves retired scene references, and res
   expect(restored.design).toEqual(original.design);
 });
 
-test('reviews incident deletion and keeps a recreated source ID separate from its retired scene and style', async ({ page }) => {
+test('reviews hidden incident edges and keeps a recreated source ID separate from its retired scene and style', async ({ page }) => {
   const source = 'flowchart LR\nA[First]\nB[Middle]\nC[Last]\nA incoming@-->|"Enter"| B\nA kept@--> C\nB outgoing@-->|"Leave"| C\nlinkStyle 0,1,2 stroke:#123456\n';
   const middle = 'node:B';
   const incoming = 'edge:id:incoming';
@@ -81,6 +81,17 @@ test('reviews incident deletion and keeps a recreated source ID separate from it
   await expect(live.getByRole('img', { name: 'Diagram preview for Delete a node' })).toBeVisible();
   const original = await downloadProject(page, live);
   const ids = new Map<string, string>(original.identity.elements.map((item: { id: string; binding: { sourceId: string } }) => [item.binding.sourceId, item.id]));
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('button', { name: 'Relationships', exact: true }).click();
+  const filter = outline.getByRole('textbox', { name: 'Find an element' });
+  await filter.fill('Middle');
+  await outline.getByRole('button', { name: 'Select visible results' }).click();
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 0 hidden');
+  await filter.fill('Enter');
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 1 hidden');
+  await expect(outline.getByRole('option', { name: /Leave/ })).toHaveCount(0);
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
   await live.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
   const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
   await edit.getByRole('combobox', { name: 'Operation' }).selectOption('removeNode');
@@ -91,6 +102,7 @@ test('reviews incident deletion and keeps a recreated source ID separate from it
   await expect(impact.getByRole('listitem').filter({ hasText: 'Enter' })).toBeVisible();
   await expect(impact.getByRole('listitem').filter({ hasText: 'Leave' })).toBeVisible();
   await expect(impact).toContainText('7 scene references will be kept as unresolved annotations.');
+  await expect(impact.getByRole('listitem').filter({ hasText: 'Middle scene' })).toBeVisible();
   await edit.getByRole('button', { name: 'Apply change' }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const removed = await downloadProject(page, live);
@@ -136,8 +148,5 @@ test('reviews incident deletion and keeps a recreated source ID separate from it
   await live.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const restored = await downloadProject(page, live);
-  expect(restored.source).toBe(original.source);
-  expect(restored.identity).toEqual(original.identity);
-  expect(restored.storyboard).toEqual(original.storyboard);
-  expect(restored.design).toEqual(original.design);
+  expect(restored).toEqual({ ...original, revision: beforeRecreation.revision + 1, updatedAt: restored.updatedAt });
 });
