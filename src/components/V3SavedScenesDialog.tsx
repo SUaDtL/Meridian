@@ -6,7 +6,7 @@ import { createScene } from "../lib/storyboard";
 import { getTheme } from "../lib/themes";
 import type { StoryScene } from "../types/storyboard";
 import Modal from "./Modal";
-import StoryPreviewPlayer from "./StoryPreviewPlayer";
+import ResponsiveStoryPreview from "./StoryPreviewPlayer";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Review = { proposal: ReadyProposal; scene: StoryScene; svg: string; result: NonNullable<ReturnType<Editor["readStoryPreview"]>> };
@@ -226,7 +226,7 @@ export default function V3SavedScenesDialog({ editor, startNew, initialScope, on
           <p>Shown · Nodes {coverage.node.shown} · Connections {coverage.edge.shown} · Groups {coverage.group.shown}</p>
           <p>Omitted · Nodes {coverage.node.omitted} · Connections {coverage.edge.omitted} · Groups {coverage.group.omitted}</p>
         </>}
-        <StoryPreviewPlayer svg={review.svg} story={previewScenes} table={review.result.rendered.targetTable!}
+        <ResponsiveStoryPreview svg={review.svg} story={previewScenes} table={review.result.rendered.targetTable!}
           accent={getTheme(base.settings.theme).accent} onReady={setReady} />
       </section>}
       <div className="dialog-actions">
