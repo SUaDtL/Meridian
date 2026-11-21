@@ -35,6 +35,59 @@ describe('JSON Schema local facts', () => {
     expect(new Set(result.facts.map(item => item.key)).size).toBe(result.facts.length);
   });
 
+  it('uses a single logical fact for nested anchors, physical pointers, and cyclic aliases', () => {
+    const rootId = 'https://schema.example/api/root.json';
+    const nestedId = 'https://schema.example/api/parts/child.json';
+    const root = file('definitions/root.json', {
+      $id: rootId,
+      $anchor: 'Shared',
+      $defs: {
+        'child/~': {
+          $id: 'parts/./child.json',
+          $anchor: 'Shared',
+          type: 'object',
+          properties: {
+            parent: { $ref: '../root.json#Shared' },
+            literal: { $ref: '#/$defs/%252F' },
+          },
+          $defs: { '%2F': { type: 'object' } },
+          prefixItems: [{ type: 'object' }],
+        },
+      },
+      properties: {
+        physical: { $ref: '#/$defs/child~1~0' },
+        logical: { $ref: nestedId + '#Shared' },
+        registeredArrayIndex: { $ref: nestedId + '#/prefixItems/0' },
+        noncanonicalArrayIndex: { $ref: nestedId + '#/prefixItems/00' },
+        appendArrayIndex: { $ref: nestedId + '#/prefixItems/-' },
+        rootAnchor: { $ref: '#Shared' },
+        inheritedProperty: { $ref: '#/properties/constructor' },
+        outsideFile: { $ref: 'file:///unregistered/schema.json' },
+        missingAnchor: { $ref: nestedId + '#Missing' },
+      },
+    });
+    const result = readSchemaFacts([root]);
+    expect(readSchemaFacts([root])).toEqual(result);
+    const targetsByPointer = Object.fromEntries(result.links.filter(item => item.kind === 'Declared schema reference')
+      .map(item => [item.pointer, item.to]));
+    expect(targetsByPointer).toEqual({
+      '/$defs/child~1~0/properties/parent/$ref': rootId + '#',
+      '/$defs/child~1~0/properties/literal/$ref': nestedId + '#/$defs/%2F',
+      '/properties/physical/$ref': nestedId + '#',
+      '/properties/logical/$ref': nestedId + '#',
+      '/properties/registeredArrayIndex/$ref': nestedId + '#/prefixItems/0',
+      '/properties/rootAnchor/$ref': rootId + '#',
+    });
+    expect(result.facts.filter(item => item.key === nestedId + '#')).toEqual([
+      expect.objectContaining({ virtualPath: 'definitions/root.json', pointer: '/$defs/child~1~0' }),
+    ]);
+    expect(result.unresolved.map(item => [item.pointer, item.reason])).toEqual([
+      'noncanonicalArrayIndex', 'appendArrayIndex', 'inheritedProperty', 'outsideFile', 'missingAnchor',
+    ].map(name => [`/properties/${name}/$ref`, 'Target is not a registered schema location in the supplied files']));
+    expect(result.checkedReferences).toBe(11);
+    expect(JSON.stringify(result)).not.toContain('file:///unregistered');
+  });
+
   it('retains coverage limitations without copying examples, raw references, or nested IDs in annotations', () => {
     const result = readSchemaFacts([file('root.json', {
       $id: 'https://example.invalid/schema',
