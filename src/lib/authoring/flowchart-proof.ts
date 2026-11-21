@@ -3,7 +3,7 @@ import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram } from '../render';
 import { canonicalJson } from './base-token';
 import { flowchartEngineConnections, flowchartEngineShapes, type ConnectionDirection, type Shape } from './flowchart-source';
-import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planEdgeSelectionRemoval, planFlowchartFragment, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval, type FlowchartFragment, type SourcePatch } from './source-patches';
+import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planEdgeSelectionRemoval, planFlowchartFragment, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, type FlowchartFragment, type SourcePatch } from './source-patches';
 
 export type SourceIntent =
   | { op: 'addNode'; label: string; shape?: Shape }
@@ -12,6 +12,7 @@ export type SourceIntent =
   | { op: 'addEdge'; from: string; to: string; label?: string; direction?: ConnectionDirection }
   | { op: 'addGroup'; members: readonly string[]; label: string }
   | { op: 'removeGroup'; sourceId: string }
+  | { op: 'moveToGroup'; sourceId: string; groupId: string }
   | { op: 'removeNode'; sourceId: string; incidentEdgeIds: readonly string[] }
   | { op: 'removeEdges'; sourceIds: readonly string[] }
   | { op: 'removeEdge'; sourceId: string };
@@ -46,13 +47,16 @@ function readModel(model: FlowModel | undefined, allowGroup = false) {
 
 type SemanticGraph = ReturnType<typeof readModel>;
 
-function planSourceEdit(source: string, intent: SourceIntent): { sourceId: string; patches: SourcePatch[]; edgeId?: string; from?: string; to?: string; memberIds?: string[] } {
+function planSourceEdit(source: string, intent: SourceIntent): {
+  sourceId: string; patches: SourcePatch[]; edgeId?: string; from?: string; to?: string; memberIds?: string[]; flatSource?: string;
+} {
   switch (intent.op) {
     case 'addNode': return planNodeAddition(source, intent.label, intent.shape);
     case 'addNext': return planAddNext(source, intent.anchor, intent.label, intent.shape, intent.edgeLabel, intent.incoming);
     case 'addEdge': return planEdgeAddition(source, intent.from, intent.to, intent.label, intent.direction);
     case 'addGroup': return planGroupCreation(source, intent.members, intent.label);
     case 'removeGroup': return planGroupRemoval(source, intent.sourceId);
+    case 'moveToGroup': return planMoveToGroup(source, intent.sourceId, intent.groupId);
     case 'removeNode': return { sourceId: intent.sourceId, patches: planNodeRemoval(source, intent.sourceId, intent.incidentEdgeIds) };
     case 'removeEdge': return { sourceId: intent.sourceId, patches: planEdgeRemoval(source, intent.sourceId) };
     case 'removeEdges': return { sourceId: intent.sourceIds[0], patches: planEdgeSelectionRemoval(source, intent.sourceIds) };
@@ -91,6 +95,9 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
       return { ...graph, groups: [{ id: sourceId, label: intent.label, members: [...intent.members].sort() }] };
     case 'removeGroup':
       return { ...graph, groups: [] };
+    case 'moveToGroup':
+      return { ...graph, groups: graph.groups.map(group => group.id === intent.groupId
+        ? { ...group, members: [...group.members, sourceId].sort() } : group) };
     case 'removeEdge': return { ...graph, edges: graph.edges.filter(edge => edge.id !== sourceId) };
     case 'removeEdges': {
       const removed = new Set(intent.sourceIds);
@@ -109,7 +116,7 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
 
 function verifyVisibleLabel(result: RenderResult, intent: Exclude<SourceIntent, { op: 'addNext' }>, id: string) {
   if ((intent.op === 'addEdge' && !intent.label) || intent.op === 'removeEdge' || intent.op === 'removeEdges'
-    || intent.op === 'removeNode' || intent.op === 'removeGroup') return;
+    || intent.op === 'removeNode' || intent.op === 'removeGroup' || intent.op === 'moveToGroup') return;
   const svg = new DOMParser().parseFromString(result.svg, 'image/svg+xml');
   if (intent.op === 'addGroup') {
     const clusters = Array.from(svg.querySelectorAll('g.cluster[data-element-key]'))
@@ -175,16 +182,16 @@ export async function proveFlowchartEdit(
 ) {
   const plan = planSourceEdit(document.source, intent);
   const source = applySourcePatches(document.source, plan.patches);
-  const removingGroup = intent.op === 'removeGroup';
-  const sourceTopology = flowchartSubsetTopology(removingGroup ? source : document.source);
+  const groupId = intent.op === 'removeGroup' ? intent.sourceId : intent.op === 'moveToGroup' ? intent.groupId : undefined;
+  const sourceTopology = flowchartSubsetTopology(plan.flatSource ?? document.source);
   const render = (text: string) => renderDiagram(text, document.settings, document.nodeAccents ?? {}, document.design, { signal });
   const initial = await render(document.source);
-  const before = readModel(flowchartModelFor(initial), removingGroup);
-  if (removingGroup && (before.groups.length !== 1 || before.groups[0].id !== intent.sourceId
+  const before = readModel(flowchartModelFor(initial), !!groupId);
+  if (groupId && (before.groups.length !== 1 || before.groups[0].id !== groupId
     || canonicalJson(before.groups[0].members) !== canonicalJson(plan.memberIds?.sort()))) throw mismatch();
   if (canonicalJson(sourceTopology) !== canonicalJson(semanticTopology(before))) throw mismatch();
   const output = source === document.source ? initial : await render(source);
-  const actual = readModel(flowchartModelFor(output), intent.op === 'addGroup');
+  const actual = readModel(flowchartModelFor(output), intent.op === 'addGroup' || intent.op === 'moveToGroup');
   let expected: SemanticGraph;
   let addedEdgeId: string | undefined;
   if (intent.op === 'addNext') {
@@ -199,6 +206,8 @@ export async function proveFlowchartEdit(
     verifyVisibleLabel(output, intent, plan.sourceId);
     expected = expectedEdit(before, intent, plan.sourceId, source !== document.source);
   }
-  if (canonicalJson(actual) !== canonicalJson(expected)) throw mismatch();
+  const orderNodes = (graph: SemanticGraph) => intent.op === 'moveToGroup'
+    ? { ...graph, nodes: [...graph.nodes].sort((a, b) => a.id.localeCompare(b.id)) } : graph;
+  if (canonicalJson(orderNodes(actual)) !== canonicalJson(orderNodes(expected))) throw mismatch();
   return { source, sourceId: plan.sourceId, render: output, addedEdgeId };
 }

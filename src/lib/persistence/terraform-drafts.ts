@@ -105,3 +105,9 @@ export function saveTerraformCheckpoint(db: IDBDatabase, scope: Scope, previous?
   const now = Date.now();
   return saveGuidedCheckpoint(db, record(scope, previous?.id ?? crypto.randomUUID(), now), previous, now);
 }
+
+export function exportTerraformScope(scope: Scope) {
+  const draft = record(scope, crypto.randomUUID(), Date.now());
+  if (draftBytes(draft) > maxDraftBytes) throw new Error('This scope exceeds the draft size limit.');
+  return JSON.stringify(draft);
+}

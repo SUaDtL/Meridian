@@ -6,8 +6,9 @@ import { validateVirtualPath } from "../lib/authoring/openapi-facts";
 import { prepareTerraformProject, terraformScope } from "../lib/authoring/terraform-project";
 import { buildExportFrame } from "../lib/export";
 import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
-import { listTerraformCheckpoints, restoreTerraformScope, saveTerraformCheckpoint, type TerraformCheckpoint } from "../lib/persistence/terraform-drafts";
+import { exportTerraformScope, listTerraformCheckpoints, restoreTerraformScope, saveTerraformCheckpoint, type TerraformCheckpoint } from "../lib/persistence/terraform-drafts";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
+import { downloadText } from "../lib/storage";
 import Modal from "./Modal";
 
 type Preview = Awaited<ReturnType<typeof prepareTerraformProject>> & { url: string };
@@ -141,6 +142,17 @@ export default function TerraformImportDialog({ onBack, onClose, onCreated }: {
     else onClose();
   }
 
+  function downloadScope() {
+    if (!facts) return;
+    setError("");
+    try {
+      const scope = exportTerraformScope({ facts, selection: selected, includeReferences });
+      downloadText(scope, "terraform-scope.meridian-draft.json");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The scope draft could not be downloaded.");
+    }
+  }
+
   function review() {
     if (!facts) return;
     void run("Rendering the proposed inventory", async signal => {
@@ -226,6 +238,7 @@ export default function TerraformImportDialog({ onBack, onClose, onCreated }: {
         <button type="button" className="button quiet" disabled={!!busy}
           onClick={() => checkpoint ? discard(checkpoint, true) : onClose()}>Discard this scope</button>
         <button type="button" className="button secondary" disabled={!!busy} onClick={() => saveScope()}>Save scope draft</button>
+        <button type="button" className="button quiet" disabled={!!busy} onClick={downloadScope}>Download scope draft</button>
         <button type="button" className="button primary" disabled={!!busy || !selected.size || (scope?.references.length ?? 0) > 200}
           onClick={review}>Preview inventory</button>
       </div>
