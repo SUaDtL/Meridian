@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 
-test('maps supplied schema files, reviews references without fetching, and keeps exact local provenance', async ({ page }) => {
+test('resumes schema facts without source bytes and creates exact local provenance', async ({ page }) => {
   const remoteRequests: string[] = [];
   await page.context().route(/schema\.example/, route => {
     remoteRequests.push(route.request().url());
@@ -25,7 +25,7 @@ test('maps supplied schema files, reviews references without fetching, and keeps
     },
     {
       name: 'common.json', mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify({ $anchor: 'Pet', type: 'object' })),
+      buffer: Buffer.from(JSON.stringify({ $id: 'https://schema.example/private-id', $anchor: 'Pet', type: 'object' })),
     },
   ]);
   await dialog.getByRole('button', { name: 'Read schema facts' }).click();
@@ -36,11 +36,36 @@ test('maps supplied schema files, reviews references without fetching, and keeps
   await expect(dialog.getByText('2 ordinary references checked · 1 unresolved entry · 0 locations with composition or conditionals')).toBeVisible();
   await dialog.getByRole('checkbox', { name: 'api/common.json', exact: true }).check();
   await dialog.getByRole('checkbox', { name: 'pet', exact: true }).check();
+  await dialog.getByLabel('Diagram label').nth(1).fill('Pet field');
   await dialog.getByRole('checkbox', { name: 'models/common.json', exact: true }).check();
   await dialog.getByRole('checkbox', { name: 'external', exact: true }).check();
   await dialog.getByRole('checkbox', { name: 'Include labeled placeholders in the diagram' }).check();
   await dialog.getByLabel('Find schema facts').fill('external');
   await expect(dialog.getByRole('status')).toContainText('3 outside visible rows');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(dialog).toBeHidden();
+  const records = () => page.evaluate(async () => new Promise<unknown[]>((resolve, reject) => {
+    const opening = indexedDB.open('meridian-workspace');
+    opening.onerror = () => reject(opening.error);
+    opening.onsuccess = () => {
+      const db = opening.result;
+      const tx = db.transaction('drafts', 'readonly');
+      const request = tx.objectStore('drafts').getAll();
+      request.onsuccess = () => { db.close(); resolve(request.result); };
+      request.onerror = () => { db.close(); reject(request.error); };
+    };
+  }));
+  const saved = await records();
+  expect(saved).toHaveLength(1);
+  expect(JSON.stringify(saved)).toContain('Pet field');
+  expect(JSON.stringify(saved)).not.toMatch(/raw-schema-secret|schema\.example/);
+  await page.reload();
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Engineering file' }).click();
+  await page.getByRole('button', { name: 'Import JSON Schema' }).click();
+  await dialog.getByRole('button', { name: /Resume api\/common\.json/ }).click();
+  await expect(dialog.getByRole('checkbox', { name: 'Pet field', exact: true })).toBeChecked();
+  await expect(dialog.getByRole('checkbox', { name: 'Include labeled placeholders in the diagram' })).toBeChecked();
   await dialog.getByRole('button', { name: 'Preview schema diagram' }).click();
   await expect(dialog.getByRole('img', { name: 'Proposed JSON Schema diagram' })).toBeVisible();
   await dialog.getByRole('button', { name: 'Create schema project' }).click();
@@ -59,5 +84,6 @@ test('maps supplied schema files, reviews references without fetching, and keeps
     virtualPath: 'api/common.json', pointer: '/properties/pet', relationship: 'Declared required property',
   }));
   expect(contents).not.toMatch(/raw-schema-secret|schema\.example/);
+  expect(await records()).toHaveLength(0);
   expect(remoteRequests).toEqual([]);
 });
