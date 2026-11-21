@@ -69,6 +69,7 @@ test('frames measured outline targets with the keyboard and preserves hidden sel
   expect(await readFrame()).toEqual(full);
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
   await openOutline.click();
   await query.fill('First step');
   await outline.getByRole('button', { name: 'Select multiple' }).click();
@@ -183,6 +184,7 @@ test('uses touch checkboxes across filters and refuses selection beyond the inte
     const nodes = Array.from({ length: 200 }, (_, index) => `N${index}[Regular ${String(index).padStart(3, '0')}]`);
     const source = ['flowchart LR', ...nodes, 'Final[Last system]', ''].join('\n');
     const live = await openProject(page, 'Touch outline', source);
+    await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).tap();
     await live.getByRole('button', { name: 'Outline', exact: true }).tap();
     const outline = page.getByRole('dialog', { name: 'Diagram outline' });
     const multi = outline.getByRole('button', { name: 'Select multiple', exact: true });
@@ -325,6 +327,7 @@ test('removes one nested container while keeping the parent, member identities, 
   expect(applied.source).toBe(source.replace('    subgraph Rack [Rack]\r\n', '').replace('    end\r\n', ''));
   expect(applied.identity.elements.filter((item: { status: string }) => item.status === 'resolved'))
     .toEqual(original.identity.elements.filter((item: { binding: { sourceId: string } }) => item.binding.sourceId !== 'Rack'));
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
   await openOutline.click();
   await expect(member).toHaveAttribute('aria-level', '2');
   await expect(outline.getByRole('treeitem', { name: /Rack/ })).toHaveCount(0);
@@ -420,6 +423,7 @@ test('moves a reviewed node between nested groups while preserving its bindings 
   const moved = await download();
   expect(moved.source).toBe(source.replace(declaration, '').replace('    end\r\n', declaration + '    end\r\n'));
   expect(moved.identity).toEqual(original.identity);
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
   await openOutline.click();
   await expect(worker).toBeVisible();
   await rack.click();

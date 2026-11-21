@@ -64,6 +64,7 @@ test('reviews explicit connection direction and requires consent for an identica
   const saved = await download();
   expect(saved.source).toBe(source + '  B m_e1@---|"Exchange"| A\r\n');
   await expect(live.getByRole('img', { name: 'Diagram preview for Connection review' })).toBeVisible();
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
   await live.getByRole('button', { name: 'Outline', exact: true }).click();
   await outline.getByRole('button', { name: 'Relationships' }).click();
   await expect(outline.getByRole('option', { name: /Client ↔ Service.*exchange/ })).toBeVisible();

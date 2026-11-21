@@ -107,6 +107,7 @@ test('reviews a filtered selection recipe and keeps protected overrides and glob
   const undone = await downloadProject(page, live);
   expect(undone).toEqual({ ...before, revision: after.revision + 1, updatedAt: undone.updatedAt });
 
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
   await live.getByRole('button', { name: 'Outline', exact: true }).click();
   await outline.getByRole('button', { name: 'Explore designs for selection' }).click();
   await design.getByRole('group', { name: 'Design recipes' }).getByRole('button', { name: /Technical/ }).click();

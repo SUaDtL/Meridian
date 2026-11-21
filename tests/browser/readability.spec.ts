@@ -58,11 +58,13 @@ test('checks the accepted drawing and shows the exact finding targets without ed
   await check.getByRole('button', { name: 'Check diagram' }).click();
   await expect(report.getByText(/Service measures .* CSS pixels/).first()).toBeVisible();
   await check.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Design', exact: true }).click();
   await live.getByRole('button', { name: 'Check readability', exact: true }).click();
   await expect(check.getByRole('combobox', { name: 'Viewing profile' })).toHaveValue('document');
   await expect(check.getByRole('spinbutton', { name: 'Allocated width in CSS pixels' })).toHaveValue('125');
   await expect(report).toHaveCount(0);
   await check.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
   await live.getByText('Mermaid source', { exact: true }).click();
   expect(await live.locator('pre').textContent()).toBe(source);
   await expect(live.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
@@ -329,7 +331,9 @@ test('reviews separate regions and keeps an ignored name finding across unrelate
   const result = await downloadProject(page, live);
   expect(result.source).toBe(source.replace('B[Service]', 'B["Payments"]'));
   expect(JSON.stringify(result)).not.toContain('ignored');
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Canvas', exact: true }).click();
   await expect(live.getByRole('img', { name: 'Diagram preview for Updated name review' })).toBeVisible();
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Design', exact: true }).click();
   await reviewNames();
   await expect(duplicate).toHaveCount(0);
 });

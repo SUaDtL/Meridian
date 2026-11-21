@@ -952,3 +952,23 @@
   z-index: 1;
   padding-block: 4px 10px;
 }
+
+.v3-panel-nav { display: none; }
+@media (max-width: 800px) {
+  .v3-panel-nav {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .25rem;
+    padding-block: .2rem .65rem;
+    background: #142127;
+  }
+  .v3-panel-nav .button { min-height: 44px; padding-inline: .3rem; }
+  .v3-panel-nav [aria-pressed="true"] { border-color: #80b89b; }
+  .v3-panel-workspace[data-active-panel="Build"] [data-v3-panel]:not([data-v3-panel="Build"]),
+  .v3-panel-workspace[data-active-panel="Canvas"] [data-v3-panel]:not([data-v3-panel="Canvas"]),
+  .v3-panel-workspace[data-active-panel="Design"] [data-v3-panel]:not([data-v3-panel="Design"]),
+  .v3-panel-workspace[data-active-panel="Story"] [data-v3-panel]:not([data-v3-panel="Story"]) { display: none; }
+}
