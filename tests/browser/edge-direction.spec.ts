@@ -75,3 +75,71 @@ test('reviews explicit connection direction and requires consent for an identica
   const undone = await download();
   expect(undone).toEqual({ ...original, revision: saved.revision + 1, updatedAt: undone.updatedAt });
 });
+
+test('makes the same searchable connection with keyboard and touch without dragging', async ({ page, browser }, info) => {
+  const source = '\uFEFFflowchart LR\r\n  A[Intake]\r\n  B[Service]\r\n  C[Service]\r\n  D[Archive]\r\n';
+  const project = { ...createDocument(), title: 'Searchable connection parity', source };
+  async function connect(at: typeof page, touch: boolean) {
+    await at.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+      version: 2, activeId: project.id, documents: [project],
+    })), { key: STORAGE_KEY, project });
+    await at.goto('/');
+    await at.getByRole('button', { name: 'Manage projects' }).click();
+    await at.getByRole('button', { name: 'Project migration and recovery' }).click();
+    await at.getByRole('button', { name: 'Prepare v3 copies' }).click();
+    await at.getByRole('button', { name: 'Open v3 project Searchable connection parity' }).click();
+    const live = at.getByRole('dialog', { name: project.title, exact: true });
+    await expect(live.getByRole('img', { name: /Diagram preview for/ })).toBeVisible();
+    if (touch) await live.getByRole('button', { name: 'Commands', exact: true }).tap();
+    else await at.keyboard.press('Control+k');
+    const commands = at.getByRole('dialog', { name: 'Commands' });
+    const command = commands.getByRole('combobox');
+    await command.fill('Connect nodes');
+    if (touch) await commands.getByRole('option', { name: /Connect nodes/ }).tap();
+    else await command.press('Enter');
+
+    const form = at.getByRole('dialog', { name: 'Edit flowchart' });
+    const search = form.getByRole('textbox', { name: 'Find connection endpoints' });
+    const from = form.getByRole('combobox', { name: 'From', exact: true });
+    const to = form.getByRole('combobox', { name: 'To', exact: true });
+    await search.fill('Intake');
+    if (touch) await from.selectOption({ label: 'Intake (A)' });
+    else await from.press('End');
+    await expect(from.locator('option:checked')).toHaveText('Intake (A)');
+    await search.fill('Service (C)');
+    await expect(to.getByRole('option', { name: 'Service (B)', exact: true })).toHaveCount(0);
+    if (touch) await to.selectOption({ label: 'Service (C)' });
+    else await to.press('End');
+    await expect(from.locator('option:checked')).toHaveText('Intake (A)');
+    await expect(to.locator('option:checked')).toHaveText('Service (C)');
+    await form.getByRole('textbox', { name: 'Connection label (optional)' }).fill('Sends');
+    const preview = form.getByRole('button', { name: 'Preview change' });
+    if (touch) await preview.tap();
+    else await preview.press('Enter');
+    await expect(form.getByRole('img', { name: 'Proposed diagram' })).toBeVisible();
+    await at.screenshot({ path: info.outputPath(touch ? 'connection-search-touch.png' : 'connection-search-keyboard.png') });
+    const apply = form.getByRole('button', { name: 'Apply change' });
+    if (touch) await apply.tap();
+    else await apply.press('Enter');
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const [file] = await Promise.all([
+      at.waitForEvent('download'),
+      live.getByRole('button', { name: 'Download v3 project' }).click(),
+    ]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing reviewed connection project.');
+    const accepted = JSON.parse(await readFile(path, 'utf8'));
+    expect(accepted.revision).toBe(1);
+    expect(accepted.identity.elements).toHaveLength(5);
+    return accepted.source as string;
+  }
+
+  const keyboardSource = await connect(page, false);
+  expect(keyboardSource).toBe(source + '  A m_e1@-->|"Sends"| C\r\n');
+  const touch = await browser.newPage({
+    baseURL: new URL(page.url()).origin, viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, acceptDownloads: true,
+  });
+  try {
+    expect(await connect(touch, true)).toBe(keyboardSource);
+  } finally { await touch.close(); }
+});
