@@ -204,7 +204,7 @@ export function planAddNext(source: string, anchor: string, label: string, shape
 export type FragmentEndpoint = { key: string } | { current: string };
 export type FlowchartFragment = {
   nodes: readonly { key: string; label: string; shape: Shape }[];
-  edges: readonly { key: string; from: FragmentEndpoint; to: FragmentEndpoint; label: string }[];
+  edges: readonly { key: string; from: FragmentEndpoint; to: FragmentEndpoint; label: string; direction?: ConnectionDirection }[];
 };
 
 /** Append verified fragment declarations while retaining all authored bytes and indices. */
@@ -237,7 +237,7 @@ export function planFlowchartFragment(source: string, fragment: FlowchartFragmen
     edgeIds.add(sourceId);
     const from = endpoint(item.from);
     const to = endpoint(item.to);
-    statements.push(writeEdgeDeclaration(sourceId, from, to, item.label));
+    statements.push(writeEdgeDeclaration(sourceId, from, to, item.label, item.direction));
     return { ...item, sourceId, from, to };
   });
   return { nodes: insertedNodes, edges: insertedEdges, patches: [appendStatements(source, ...statements)] };

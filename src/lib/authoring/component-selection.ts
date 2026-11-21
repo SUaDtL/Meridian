@@ -8,6 +8,7 @@ type RenderedProject = Awaited<ReturnType<typeof renderMermaidProject>>;
 type Node = ComponentDefinition['fragment']['nodes'][number];
 type Edge = ComponentDefinition['fragment']['edges'][number];
 type Port = ComponentDefinition['ports'][number];
+const connectors = { forward: '→', both: '↔', none: '–' } as const;
 
 export async function readComponentSelection(document: MermaidProjectV3, frame: RenderedProject, selected: ReadonlySet<string>) {
   const table = frame.targetTable;
@@ -39,11 +40,13 @@ export async function readComponentSelection(document: MermaidProjectV3, frame: 
     const to = local.get(item.targetId);
     if (!from && !to) continue;
     const label = frame.edgeLabels.get(item.id);
-    if (label === undefined || item.direction !== 'forward') throw new Error('A selected connection needs a verified authored label and direction.');
-    const summary = `${names.get(item.sourceId)} → ${names.get(item.targetId)}${label ? ` · ${label}` : ''}`;
+    const direction = item.direction;
+    if (label === undefined || !direction) throw new Error('A selected connection needs a verified authored label and direction.');
+    const summary = `${names.get(item.sourceId)} ${connectors[direction]} ${names.get(item.targetId)}${label ? ` · ${label}` : ''}`;
     if (from && to) {
-      edges.push({ id: `edge-${edges.length + 1}`, sourceId: from, targetId: to, label, direction: 'forward', summary });
+      edges.push({ id: `edge-${edges.length + 1}`, sourceId: from, targetId: to, label, direction, summary });
     } else {
+      if (direction !== 'forward') throw new Error(`The boundary connection ${summary} cannot be represented as a directed port. Select both endpoints to keep it inside the component.`);
       boundaries.push({
         id: `port-${boundaries.length + 1}`,
         nodeId: from ?? to!,

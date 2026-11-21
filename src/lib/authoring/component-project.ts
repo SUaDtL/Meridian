@@ -29,14 +29,14 @@ export function materializeComponent(definition: ComponentDefinition, values: Re
     encodeMermaidLabel(next);
     return { key: id, label: next, role, shape };
   });
-  return { nodes, edges: component.fragment.edges.map(edge => ({ from: edge.sourceId, to: edge.targetId, label: edge.label })) };
+  return { nodes, edges: component.fragment.edges.map(edge => ({ from: edge.sourceId, to: edge.targetId, label: edge.label, direction: edge.direction })) };
 }
 
 export async function buildComponentProject(definition: ComponentDefinition, values: Readonly<Record<string, string | number>>, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const component = structuredClone(validateComponentDefinition(definition));
-  if (component.fragment.groups.length || component.fragment.edges.some(edge => edge.direction !== 'forward')) {
-    throw new Error('Component creation currently supports ungrouped fragments with forward connections.');
+  if (component.fragment.groups.length) {
+    throw new Error('Component creation currently supports ungrouped fragments.');
   }
   const graph = materializeComponent(component, values);
   const definitionHash = await canonicalDigest('meridian-component/v1', [component]);
