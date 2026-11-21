@@ -2,11 +2,12 @@ import { projectBaseToken, sameBaseToken } from './base-token';
 import { validateComponentDefinition, type ComponentDefinition } from './component-definition';
 import type { MermaidProjectV3 } from './mermaid-project';
 import type { renderMermaidProject } from './project-render';
-import { flowchartSubsetTopology } from './source-patches';
+import { componentSelectionTopology } from './source-patches';
 
 type RenderedProject = Awaited<ReturnType<typeof renderMermaidProject>>;
 type Node = ComponentDefinition['fragment']['nodes'][number];
 type Edge = ComponentDefinition['fragment']['edges'][number];
+type Group = ComponentDefinition['fragment']['groups'][number];
 type Port = ComponentDefinition['ports'][number];
 const connectors = { forward: '→', both: '↔', none: '–' } as const;
 
@@ -16,21 +17,59 @@ export async function readComponentSelection(document: MermaidProjectV3, frame: 
   if (!table || !frame.edgeLabels || !sameBaseToken(token, table.baseToken)) {
     throw new Error('Open a current verified diagram before saving a component.');
   }
-  const topology = flowchartSubsetTopology(document.source);
+  const topology = componentSelectionTopology(document.source);
   const shapes = new Map(topology.nodes.map(item => [item.id, item.shape]));
   const bindings = new Map(document.identity.elements
     .filter(item => item.status === 'resolved').map(item => [item.id, item.binding.sourceId]));
   const role = new Map(document.roles.map(item => [item.elementId, item.role]));
-  const names = new Map(table.targets.map(item => [item.id, item.label]));
-  const chosen = table.targets.filter(item => item.elementKind === 'node' && selected.has(item.id));
-  if (!chosen.length || chosen.length > 100 || chosen.length !== selected.size) {
-    throw new Error('Select between one and 100 current nodes. Connections are reviewed separately.');
+  const targets = new Map(table.targets.map(item => [item.id, item]));
+  if (!selected.size || selected.size > 100 || [...selected].some(id => {
+    const item = targets.get(id);
+    return !item || item.elementKind === 'edge';
+  })) {
+    throw new Error('Select up to 100 current nodes or groups. Connections are reviewed separately.');
   }
-  const local = new Map(chosen.map((item, index) => [item.id, `node-${index + 1}`]));
+  const included = new Set(selected);
+  const fullGroups = new Set<string>();
+  const pending = [...selected];
+  for (let index = 0; index < pending.length; index++) {
+    const item = targets.get(pending[index]);
+    if (!item) throw new Error('A selected group member could not be verified.');
+    if (item.elementKind !== 'group' || fullGroups.has(item.id)) continue;
+    fullGroups.add(item.id);
+    for (const member of item.members) {
+      included.add(member);
+      pending.push(member);
+    }
+  }
+  for (const id of included) {
+    const parent = targets.get(id)?.parentId;
+    if (parent) included.add(parent);
+  }
+  const chosen = table.targets.filter(item => item.elementKind === 'node' && included.has(item.id));
+  const containers = table.targets.filter(item => item.elementKind === 'group' && included.has(item.id));
+  if (!chosen.length || chosen.length > 100 || containers.length > 10) {
+    throw new Error('Review a component with 1 to 100 nodes and up to 10 groups.');
+  }
+  const local = new Map([
+    ...chosen.map((item, index) => [item.id, `node-${index + 1}`] as const),
+    ...containers.map((item, index) => [item.id, `group-${index + 1}`] as const),
+  ]);
   const nodes: Node[] = chosen.map(item => {
     const shape = shapes.get(bindings.get(item.id) ?? '');
     if (!shape || !item.label.trim()) throw new Error('Each selected node needs a verified source shape and a nonempty label.');
     return { id: local.get(item.id)!, label: item.label, shape, role: role.get(item.id) ?? null };
+  });
+  const groups: Group[] = containers.map(item => {
+    const sourceMembers = topology.groups.get(bindings.get(item.id) ?? '');
+    const observed = new Set(item.members.map(id => bindings.get(id)));
+    const members = item.members.flatMap(id => local.has(id) ? [local.get(id)!] : []);
+    if (!sourceMembers || sourceMembers.length !== observed.size || sourceMembers.some(id => !observed.has(id))
+      || !members.length || !item.label.trim()) {
+      throw new Error('Each component group needs verified membership and a nonempty label.');
+    }
+    return { id: local.get(item.id)!, label: item.label, members,
+      parentId: item.parentId ? local.get(item.parentId) ?? null : null };
   });
   const edges: (Edge & { summary: string })[] = [];
   const boundaries: (Port & { summary: string })[] = [];
@@ -42,10 +81,18 @@ export async function readComponentSelection(document: MermaidProjectV3, frame: 
     const label = frame.edgeLabels.get(item.id);
     const direction = item.direction;
     if (label === undefined || !direction) throw new Error('A selected connection needs a verified authored label and direction.');
-    const summary = `${names.get(item.sourceId)} ${connectors[direction]} ${names.get(item.targetId)}${label ? ` · ${label}` : ''}`;
+    const source = targets.get(item.sourceId)!;
+    const target = targets.get(item.targetId)!;
+    const summary = `${source.label} ${connectors[direction]} ${target.label}${label ? ` · ${label}` : ''}`;
     if (from && to) {
+      if ([source, target].some(endpoint => endpoint.elementKind === 'group' && !fullGroups.has(endpoint.id))) {
+        throw new Error(`Select the whole group to include its connection ${summary}.`);
+      }
       edges.push({ id: `edge-${edges.length + 1}`, sourceId: from, targetId: to, label, direction, summary });
     } else {
+      if ((from ? source : target).elementKind === 'group') {
+        throw new Error(`The boundary connection ${summary} attaches to a group. Select both endpoints to keep the connection inside the component.`);
+      }
       if (direction !== 'forward') throw new Error(`The boundary connection ${summary} cannot be represented as a directed port. Select both endpoints to keep it inside the component.`);
       boundaries.push({
         id: `port-${boundaries.length + 1}`,
@@ -56,7 +103,7 @@ export async function readComponentSelection(document: MermaidProjectV3, frame: 
       });
     }
   }
-  return { nodes, edges, boundaries };
+  return { nodes, groups, edges, boundaries };
 }
 
 type Selection = Awaited<ReturnType<typeof readComponentSelection>>;
@@ -85,6 +132,6 @@ export function componentFromSelection(
   return validateComponentDefinition({
     id, name: name.trim(), schema: 'meridian-component/v1', version: '1.0.0', family: 'flowchart', description: '', tags: [],
     provenance: { author: '', source: 'Created from a Meridian selection', license: '', licenseText: '' },
-    fragment: { nodes: selection.nodes, edges, groups: [] }, parameters, labelBindings, ports,
+    fragment: { nodes: selection.nodes, edges, groups: selection.groups }, parameters, labelBindings, ports,
   });
 }
