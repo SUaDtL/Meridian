@@ -112,6 +112,8 @@ export default function TerraformImportDialog({ onBack, onClose, onCreated }: {
       <p>{facts.planned ? "Planned resource inventory" : "State resource inventory"} · {facts.virtualPath}</p>
       <p>{facts.resources.length} available resources · {facts.omitted} unsupported entries · {facts.unresolved} unresolved references</p>
       {!facts.hasConfiguration && <p>Declared configuration references are unavailable for this inventory.</p>}
+      {facts.unmatchedConfiguration > 0 && <p>{count(facts.unmatchedConfiguration, "inventory address")} without an exact configuration address.
+        Declared outgoing reference coverage is unavailable for those resources.</p>}
       <label>Find resources<input value={query} maxLength={200} disabled={!!busy} onChange={event => { setQuery(event.target.value); setLimit(50); }} /></label>
       <p role="status">{count(selected.size, "selected resource")} · {hiddenSelected} outside visible rows · {count(scope?.references.length ?? 0, "selected reference")}</p>
       {!visible.length && <p>No resource addresses match this view.</p>}
@@ -139,6 +141,7 @@ export default function TerraformImportDialog({ onBack, onClose, onCreated }: {
     </div>}
     {preview && <section className="migration-preview" aria-label="Proposed inventory">
       <p>{count(selected.size, "resource")} · {count(scope?.references.length ?? 0, "declared configuration reference")}</p>
+      {scope?.resources.some(item => item.address.includes("[")) && <p>Diagram labels show numeric instance indexes with full-width brackets, such as ［0］.</p>}
       <img src={preview.url} alt="Proposed Terraform inventory" onLoad={() => setPainted(true)}
         onError={() => setError("The proposed inventory could not be displayed.")} />
       <div className="dialog-actions">

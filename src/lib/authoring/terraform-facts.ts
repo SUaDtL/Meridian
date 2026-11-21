@@ -2,8 +2,9 @@ import { decodeJson } from './decode-json';
 import { validateVirtualPath } from './openapi-facts';
 
 const name = '[A-Za-z_][A-Za-z_0-9-]*';
-const moduleAddress = new RegExp(`^(?:module\\.${name}\\.)*module\\.${name}$`);
-const resourceAddress = new RegExp(`^(?:module\\.${name}\\.)*(?:data\\.)?${name}\\.${name}$`);
+const numericIndex = '(?:\\[(?:0|[1-9][0-9]*)\\])?';
+const moduleStep = new RegExp(`^module\\.${name}${numericIndex}$`);
+const resourceStep = new RegExp(`^(?:data\\.)?${name}\\.${name}${numericIndex}$`);
 const attribute = new RegExp(`^(?:\\.${name})*$`);
 const bounded = (value: string) => value.length > 0 && value.length <= 200 && value === value.trim();
 const identifier = new RegExp(`^${name}$`);
@@ -16,6 +17,7 @@ export type TerraformFacts = {
   virtualPath: string;
   planned: boolean;
   hasConfiguration: boolean;
+  unmatchedConfiguration: number;
   omitted: number;
   unresolved: number;
   resources: { address: string; module: string | null; pointer: string }[];
@@ -38,14 +40,15 @@ export function readTerraformFacts(bytes: ArrayBuffer, virtualPath: string): Ter
   const resources: TerraformFacts['resources'] = [];
   const references: TerraformFacts['references'] = [];
   const addresses = new Set<string>();
+  const modules = new Set<string>();
   let omitted = 0;
   let unresolved = 0;
 
   function inventoryModule(module: Record<string, unknown>, prefix: string, pointer: string) {
     list(module.resources).forEach((value, index) => {
       const { address } = at(value) ?? {};
-      if (typeof address !== 'string' || !bounded(address) || !resourceAddress.test(address)
-        || !address.startsWith(prefix) || address.slice(prefix.length).startsWith('module.')) {
+      if (typeof address !== 'string' || !bounded(address) || !address.startsWith(prefix)
+        || !resourceStep.test(address.slice(prefix.length)) || address.slice(prefix.length).startsWith('module.')) {
         omitted++;
         return;
       }
@@ -57,11 +60,12 @@ export function readTerraformFacts(bytes: ArrayBuffer, virtualPath: string): Ter
       const child = at(value);
       if (!child) return;
       const { address } = child;
-      if (typeof address !== 'string' || !bounded(address) || !moduleAddress.test(address)
-        || !address.startsWith(prefix) || address.slice(prefix.length).split('.').length !== 2) {
+      if (typeof address !== 'string' || !bounded(address) || !address.startsWith(prefix) || !moduleStep.test(address.slice(prefix.length))) {
         omitted++;
         return;
       }
+      if (modules.has(address)) throw new Error('The inventory has duplicate module addresses.');
+      modules.add(address);
       inventoryModule(child, address + '.', `${pointer}/child_modules/${index}`);
     });
   }
@@ -69,6 +73,7 @@ export function readTerraformFacts(bytes: ArrayBuffer, virtualPath: string): Ter
   inventoryModule(inventory, '', `/${valuesKey}/root_module`);
 
   const pairs = new Set<string>();
+  const configured = new Set<string>();
   function addReference(value: unknown, source: string, prefix: string, pointer: string) {
     if (typeof value !== 'string' || value.length > 400 || value !== value.trim() || pointer.length > 1000) { unresolved++; return; }
     const qualified = prefix + value;
@@ -89,6 +94,7 @@ export function readTerraformFacts(bytes: ArrayBuffer, virtualPath: string): Ter
       if (!item || typeof item.address !== 'string') return;
       const source = prefix + item.address;
       if (!addresses.has(source)) return;
+      configured.add(source);
       const resourcePointer = `${pointer}/resources/${index}`;
       list(item.depends_on).forEach((value, i) => addReference(value, source, prefix, `${resourcePointer}/depends_on/${i}`));
       for (const [key, expression] of Object.entries(at(item.expressions) ?? {})) {
@@ -104,5 +110,6 @@ export function readTerraformFacts(bytes: ArrayBuffer, virtualPath: string): Ter
     }
   }
   if (config) configurationModule(config, '', '/configuration/root_module');
-  return { virtualPath, planned, hasConfiguration: !!config, resources, references, omitted, unresolved };
+  return { virtualPath, planned, hasConfiguration: !!config, unmatchedConfiguration: config ? addresses.size - configured.size : 0,
+    resources, references, omitted, unresolved };
 }

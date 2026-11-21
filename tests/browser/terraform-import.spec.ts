@@ -12,21 +12,23 @@ test('creates a reviewed Terraform import with declared references and address-o
       format_version: '1.2',
       planned_values: { root_module: { resources: [
         { address: 'aws_a.app', values: { password: 'private-test-password' } },
-        { address: 'aws_b.data' },
+        { address: 'aws_b.data[0]' },
       ] }, outputs: { secret: { value: 'private-test-output' } } },
       configuration: { root_module: { resources: [
-        { address: 'aws_a.app', expressions: { database: { references: ['aws_b.data.id'] }, secret: { constant_value: 'private-test-constant' } } },
+        { address: 'aws_a.app', expressions: { database: { references: ['aws_b.data[0].id'] }, secret: { constant_value: 'private-test-constant' } } },
         { address: 'aws_b.data' },
       ] } },
     })),
   });
   await dialog.getByRole('button', { name: 'Read Terraform facts' }).click();
   await dialog.getByRole('checkbox', { name: 'aws_a.app', exact: true }).check();
-  await dialog.getByRole('checkbox', { name: 'aws_b.data', exact: true }).check();
+  await expect(dialog.getByText(/1 inventory address without an exact configuration address/)).toBeVisible();
+  await dialog.getByRole('checkbox', { name: 'aws_b.data[0]', exact: true }).check();
   await dialog.getByRole('checkbox', { name: 'Show declared references between selected resources' }).check();
   await expect(dialog.getByRole('status')).toHaveText('2 selected resources · 0 outside visible rows · 1 selected reference');
   await dialog.getByRole('button', { name: 'Preview inventory' }).click();
   await expect(dialog.getByRole('img', { name: 'Proposed Terraform inventory' })).toBeVisible();
+  await expect(dialog.getByText(/numeric instance indexes with full-width brackets/)).toBeVisible();
   await dialog.getByRole('button', { name: 'Create inventory project' }).click();
   const live = page.getByRole('dialog', { name: 'Terraform planned resource inventory' });
   const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
@@ -35,6 +37,7 @@ test('creates a reviewed Terraform import with declared references and address-o
   const body = await readFile(path, 'utf8');
   const project = JSON.parse(body);
   expect(project.source).toContain('Declared reference');
+  expect(project.source).toContain('aws_b.data［0］');
   expect(project.provenance).toContainEqual(expect.objectContaining({
     virtualPath: 'plan.json', pointer: '/configuration/root_module/resources/0/expressions/database/references/0',
     relationship: 'Declared Terraform configuration reference',
