@@ -370,3 +370,53 @@ test('allows one new solid connection through a reviewed attachment with one wri
   const restored = JSON.parse(await download(page, backup));
   expect(restored).toEqual({ ...original, revision: applied.revision + 1, updatedAt: restored.updatedAt });
 });
+
+test('allows one standalone assistant node with read-only scope and forgets the consumed request', async ({ page, context }) => {
+  const source = 'flowchart LR\n A[Current service]\n';
+  const live = await openProject(page, 'Standalone node proposal', source);
+  const backup = live.getByRole('button', { name: 'Download v3 project' });
+  const original = JSON.parse(await download(page, backup));
+  const dialog = await openExchange(page, live);
+  await context.setOffline(true);
+  await dialog.getByLabel('Instruction').fill('Suggest an independent queue to review.');
+  await dialog.getByRole('combobox', { name: 'Current service', exact: true }).selectOption('context');
+  const reviewRequest = dialog.getByRole('button', { name: 'Review what will be shared' });
+  await expect(reviewRequest).toBeDisabled();
+  await dialog.getByRole('checkbox', { name: 'Allow one new standalone node' }).check();
+  await reviewRequest.click();
+  const disclosure = dialog.getByRole('region', { name: 'What will be shared' });
+  await expect(disclosure).toContainText('A proposal may add one standalone node with a label and shape.');
+  await expect(disclosure).toContainText('Current service · Read-only context');
+  const request = JSON.parse(await download(page, dialog.getByRole('button', { name: 'Download request' })));
+  expect(request.allowedOperations).toEqual(['addNode']);
+  expect(request.scope).toEqual({ readContextIds: [request.graph.nodes[0].id], writableElementIds: [], attachmentPointIds: [] });
+  const proposal = {
+    schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'ai',
+    requestId: request.requestId, requestHash: await canonicalDigest('meridian-assist-request/v1', request),
+    baseToken: request.baseToken,
+  };
+  const operation = { op: 'addNode', ref: 'new:queue', shape: 'cylinder', label: 'Review queue', parentGroupId: null };
+  await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+  await review(dialog, { ...proposal, operations: [{ op: 'setNodeLabel', targetId: request.graph.nodes[0].id, label: 'Unauthorized' }] });
+  await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
+  await review(dialog, { ...proposal, operations: [{ ...operation, parentGroupId: request.graph.nodes[0].id }] });
+  await expect(dialog.getByRole('alert')).toContainText('one supported edit');
+  await review(dialog, { ...proposal, operations: [operation] });
+  const preview = dialog.getByRole('region', { name: 'Unverified suggestion' });
+  await expect(preview).toContainText('Add Review queue as a standalone cylinder node.');
+  await preview.getByRole('button', { name: 'Apply reviewed new node' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const applied = JSON.parse(await download(page, backup));
+  expect(applied.source).toBe(source + '  m_n1[("Review queue")]\n');
+  expect(applied.identity.elements.filter((item: { binding: { sourceId: string } }) => item.binding.sourceId !== 'm_n1'))
+    .toEqual(original.identity.elements);
+  const reopened = await openExchange(page, live);
+  await reopened.getByRole('button', { name: 'Review a proposal' }).click();
+  await review(reopened, { ...proposal, operations: [operation] });
+  await expect(reopened.getByRole('alert')).toContainText('no longer matches a live request');
+  await reopened.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = JSON.parse(await download(page, backup));
+  expect(restored).toEqual({ ...original, revision: applied.revision + 1, updatedAt: restored.updatedAt });
+});

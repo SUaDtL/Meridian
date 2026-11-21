@@ -205,7 +205,7 @@ function appendStatements(source: string, ...statements: string[]): SourcePatch 
   return { from: source.length, to: source.length, expectedText: '', replacement: separator + statements.map(statement => '  ' + statement + newline).join('') };
 }
 
-function allocateSourceId(prefix: string, nodes: Pick<ReadonlyMap<string, unknown>, 'has'>, edges: ReadonlySet<string>): string {
+function allocateSourceId(prefix: string, nodes: ReadonlyMap<string, unknown>, edges: ReadonlySet<string>): string {
   let ordinal = 1;
   while (nodes.has(prefix + ordinal) || edges.has(prefix + ordinal)) ordinal++;
   return prefix + ordinal;
@@ -275,8 +275,7 @@ export function planFlowchartFragment(source: string, fragment: FlowchartFragmen
   });
   const groups = (fragment.groups ?? []).map(item => {
     if (!item.key || allocated.has(item.key)) throw new Error('Each inserted group needs a distinct fragment key.');
-    const occupied = new Set([...nodes.keys(), ...groups.keys()]);
-  const sourceId = allocateSourceId('m_g', occupied, edgeIds);
+    const sourceId = allocateSourceId('m_g', nodes, edgeIds);
     allocated.set(item.key, sourceId);
     edgeIds.add(sourceId);
     return { ...item, sourceId };
@@ -334,8 +333,8 @@ export function planGroupCreation(source: string, members: readonly string[], ti
     throw new Error('Choose consecutive declarations with the first and last declarations on their own lines.');
   }
   const newline = source.match(/\r?\n/)?.[0] ?? '\n';
-  const occupied = new Set([...nodes.keys(), ...groups.keys()]);
-  const sourceId = allocateSourceId('m_g', occupied, edgeIds);
+  for (const id of groups.keys()) edgeIds.add(id);
+  const sourceId = allocateSourceId('m_g', nodes, edgeIds);
   return { sourceId, patches: [
     { from: first.start, to: first.start, expectedText: '', replacement: `${writeGroupDeclaration(sourceId, title)}${newline}${indentation}` },
     { from: insertion, to: insertion, expectedText: '', replacement: `${lastSeparator === -1 ? newline : ''}${indentation}end${newline}` },

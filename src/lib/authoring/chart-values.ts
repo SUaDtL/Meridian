@@ -180,7 +180,7 @@ export function projectChartValues(project: ChartProject) {
     });
   }
   return {
-    unitScale: spec.unitScale,
+    unitScale: spec.unitScale, aggregation: spec.aggregation,
     x, y, series, xDomain, yDomain, observations, seriesKeys: [...seriesKeys], filterExclusions: exclusions,
     counts: { input: dataset.rows.length, retained: rows.length, excludedMissing, nullX, nullY,
       outside: observations.filter(point => point.outside).length, plotted: observations.filter(point => point.y !== null).length,

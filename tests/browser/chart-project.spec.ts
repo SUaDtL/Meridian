@@ -87,6 +87,10 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
   await chart.getByRole('button', { name: 'Review chart' }).click();
   await expect(chart.getByRole('img', { name: 'Requests by team' })).toBeVisible();
   const table = chart.getByRole('table', { name: 'Displayed values' });
+  await expect(chart.getByRole('img', { name: 'Requests by team' })).toHaveAccessibleDescription(
+    /Bar chart of Requests \(requests\) by Team.*Aggregation is sum/);
+  await expect(table.getByRole('columnheader', { name: 'Requests (requests)' })).toBeVisible();
+  await expect(table.getByRole('rowheader', { name: 'North' })).toBeVisible();
   const storage = chart.getByRole('region', { name: 'Chart storage' });
   const datasetSize = await storage.getByText(/^Typed dataset /).textContent();
   const projectSize = await storage.getByText(/^Complete project /).textContent();
@@ -124,7 +128,13 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
   await page.context().setOffline(true);
   await page.setContent(html);
   await expect(page.getByRole('img', { name: 'Requests by team' })).toBeVisible();
-  await expect(page.getByRole('table', { name: /Displayed values/ }).getByRole('cell', { name: '0.3' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Requests by team' })).toHaveAccessibleDescription(
+    /Bar chart of Requests \(requests\) by Team.*Aggregation is sum/);
+  const offline = page.getByRole('table', { name: /Displayed values/ });
+  await expect(offline.getByRole('columnheader', { name: 'Requests (requests)' })).toBeVisible();
+  const north = offline.getByRole('row', { name: 'North 0.3 2 2 Included' });
+  await expect(north.getByRole('rowheader', { name: 'North' })).toBeVisible();
+  await expect(north.getByRole('cell', { name: '0.3', exact: true })).toBeVisible();
   await expect(page.getByRole('paragraph').filter({ hasText: /Bar chart of Requests/ })).toBeVisible();
 });
 
