@@ -1,13 +1,18 @@
 import { canonicalJson } from '../authoring/base-token';
-import { maxComponentLibraryBytes, validateComponentDefinition, type ComponentDefinition } from '../authoring/component-definition';
+import { maxComponentLibraryBytes, serializeComponentLibrary, validateComponentDefinition, type ComponentDefinition } from '../authoring/component-definition';
 
 const storeName = 'library';
 const maxDefinitions = 200;
 const encoder = new TextEncoder();
 
-function verifyLibraryBytes(definitions: readonly ComponentDefinition[]) {
-  const bytes = encoder.encode(JSON.stringify({ schema: 'meridian-library/v1', definitions })).byteLength;
-  if (bytes > maxComponentLibraryBytes) throw new Error('The local library exceeds its 10,000,000-byte limit.');
+function verifyLibrarySize(definitions: readonly ComponentDefinition[]) {
+  if (definitions.length > maxDefinitions) {
+    throw new Error(`The library would contain ${definitions.length} definitions. The limit is ${maxDefinitions}.`);
+  }
+  const bytes = encoder.encode(serializeComponentLibrary(definitions)).byteLength;
+  if (bytes > maxComponentLibraryBytes) {
+    throw new Error(`The library would use ${bytes.toLocaleString()} bytes. The limit is ${maxComponentLibraryBytes.toLocaleString()} bytes.`);
+  }
 }
 
 export function readComponentLibrary(db: IDBDatabase): Promise<ComponentDefinition[]> {
@@ -40,6 +45,7 @@ export function saveComponentDefinitions(db: IDBDatabase, values: readonly Compo
     read.onsuccess = () => {
       try {
         const local = read.result.map(validateComponentDefinition);
+        const initialCount = local.length;
         for (const input of inputs) {
           const signature = canonicalJson(input);
           const known = [...local, ...bundled].filter(candidate => candidate.id === input.id && candidate.version === input.version);
@@ -49,12 +55,11 @@ export function saveComponentDefinitions(db: IDBDatabase, values: readonly Compo
             continue;
           }
           const definition = known.length ? { ...input, id: crypto.randomUUID() } : input;
-          if (local.length >= maxDefinitions) throw new Error('The local library can contain at most 200 definitions.');
           local.push(definition);
-          store.add(definition);
           results.push({ status: known.length ? 'copied' : 'saved', definition });
         }
-        verifyLibraryBytes(local);
+        verifyLibrarySize(local);
+        for (const definition of local.slice(initialCount)) store.add(definition);
       } catch (reason) { failure = reason; tx.abort(); }
     };
   });
@@ -98,8 +103,7 @@ export function restoreComponentDefinition(db: IDBDatabase, removed: ComponentDe
           if (canonicalJson(occupied) === canonicalJson(definition)) return;
           throw new Error('Another definition uses this ID and version. Download the removed definition to keep a copy.');
         }
-        if (local.length >= maxDefinitions) throw new Error('The local library can contain at most 200 definitions.');
-        verifyLibraryBytes([...local, definition]);
+        verifyLibrarySize([...local, definition]);
         store.add(definition);
       } catch (reason) { failure = reason; tx.abort(); }
     };
@@ -129,7 +133,7 @@ export function replaceComponentDefinition(
           throw new Error('The saved definition changed. Import the file again to compare with the current definition.');
         }
         local[index] = next;
-        verifyLibraryBytes(local);
+        verifyLibrarySize(local);
         store.put(next);
       } catch (reason) { failure = reason; tx.abort(); }
     };

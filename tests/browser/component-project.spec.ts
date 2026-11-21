@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const serviceComponent = {
   schema: 'meridian-component/v1', family: 'flowchart', version: '1.0.0',
@@ -197,3 +197,71 @@ test('imports library conflicts as copies and restores an explicitly removed def
   await openShelf();
   expect(await readDownload('Download component library')).toEqual(result);
 });
+
+for (const limit of ['definition count', 'serialized bytes'] as const) {
+  test(`refuses a component library over its ${limit} limit before writing and keeps the export portable`, async ({ page, browser }) => {
+    const pack = (definitions: object[]) => Buffer.from(JSON.stringify({ schema: 'meridian-library/v1', definitions }));
+    const definition = (index: number) => ({ ...serviceComponent, id: crypto.randomUUID(), name: `Capacity fixture ${String(index).padStart(3, '0')}` });
+    const additions = [definition(201), definition(202)];
+    const definitions = Array.from({ length: 200 }, (_, index) => definition(index));
+    if (limit === 'serialized bytes') {
+      const limitBytes = 10_000_000;
+      const edges = Array.from({ length: 200 }, (_, index) => ({
+        id: `edge-${index}`, sourceId: 'api', targetId: 'queue', direction: 'forward', label: '界'.repeat(160),
+      }));
+      const materialize = (item: ReturnType<typeof definition>) => {
+        item.fragment = { ...item.fragment, edges };
+      };
+      materialize(definitions[0]);
+      const maxCount = Math.floor((limitBytes - 100 - pack([]).length) / (Buffer.byteLength(JSON.stringify(definitions[0])) + 1));
+      definitions.splice(maxCount);
+      definitions.forEach(materialize);
+      let remaining = limitBytes - 100 - pack(definitions).length;
+      for (const item of definitions) {
+        const fill = Math.min(remaining, 8000);
+        item.provenance = { ...item.provenance, licenseText: 'A'.repeat(fill) };
+        remaining -= fill;
+        if (!remaining) break;
+      }
+      expect(remaining).toBe(0);
+      expect(pack(definitions).length).toBe(limitBytes - 100);
+      expect(Buffer.byteLength(JSON.stringify(JSON.parse(pack(definitions).toString()), null, 2))).toBeGreaterThan(limitBytes);
+    }
+    const total = pack([...definitions, ...additions]).length;
+    const failure = limit === 'definition count' ? 'The library would contain 202 definitions. The limit is 200.'
+      : `The library would use ${total.toLocaleString('en-US')} bytes. The limit is 10,000,000 bytes.`;
+
+    async function openShelf(page: Page) {
+      await page.goto('/');
+      await page.getByRole('button', { name: 'Build with guidance' }).click();
+      await page.getByRole('button', { name: 'Browse components' }).click();
+      return page.getByRole('dialog', { name: 'Components' });
+    }
+    async function importPack(shelf: Awaited<ReturnType<typeof openShelf>>, buffer: Buffer, expected: string | RegExp) {
+      await shelf.getByLabel('Import a component definition or library').setInputFiles({ name: 'library.meridian-library.json', mimeType: 'application/json', buffer });
+      const done = shelf.getByText(expected, { exact: typeof expected === 'string' });
+      const retry = shelf.getByRole('button', { name: 'Retry for five seconds' });
+      await expect(done.or(retry)).toBeVisible({ timeout: 15_000 });
+      if (await retry.isVisible()) await retry.click();
+      await expect(done).toBeVisible({ timeout: 15_000 });
+    }
+    const shelf = await openShelf(page);
+    await importPack(shelf, pack(definitions), `${definitions.length} components saved locally.`);
+    async function downloadLibrary() {
+      const [file] = await Promise.all([page.waitForEvent('download'), shelf.getByRole('button', { name: 'Download component library' }).click()]);
+      const path = await file.path();
+      if (!path) throw new Error('Missing capacity fixture backup.');
+      return readFile(path);
+    }
+    const before = await downloadLibrary();
+    expect(before.equals(pack(definitions))).toBe(true);
+    await importPack(shelf, pack(additions), new RegExp(failure.replaceAll('.', '\\.')));
+    expect((await downloadLibrary()).equals(before)).toBe(true);
+    await expect(shelf.getByRole('button', { name: 'Download session components' })).toBeVisible();
+    const fresh = await browser.newContext({ baseURL: new URL(page.url()).origin });
+    try {
+      const destination = await openShelf(await fresh.newPage());
+      await importPack(destination, before, `${definitions.length} components saved locally.`);
+    } finally { await fresh.close(); }
+  });
+}

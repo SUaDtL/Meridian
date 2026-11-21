@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken } from "../lib/authoring/base-token";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
-import { maxComponentLibraryBytes, type ComponentDefinition, type parseComponentFile } from "../lib/authoring/component-definition";
+import { maxComponentLibraryBytes, serializeComponentLibrary, type ComponentDefinition, type parseComponentFile } from "../lib/authoring/component-definition";
 import ComponentFileWorker from "../lib/authoring/component-file.worker?worker&inline";
 import type { PortAssignment } from "../lib/authoring/component-insertion";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
@@ -427,14 +427,14 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
         }} /></label>
         {retryFile && <button className="button secondary" disabled={!!busy} onClick={() => void run("read", signal => importFile(retryFile, signal, true))}>Retry for five seconds</button>}
         {library.length > 0 && <button className="button secondary" disabled={!!busy}
-          onClick={() => downloadText(JSON.stringify({ schema: "meridian-library/v1", definitions: library }, null, 2), "Meridian-component-library.json")}>Download component library</button>}
+          onClick={() => downloadText(serializeComponentLibrary(library), "Meridian-component-library.json")}>Download component library</button>}
         {sessionComponents.length > 0 && <button className="button secondary" disabled={!!busy}
-          onClick={() => downloadText(JSON.stringify({ schema: "meridian-library/v1", definitions: sessionComponents }, null, 2), "Meridian-session-components.json")}>Download session components</button>}
+          onClick={() => downloadText(serializeComponentLibrary(sessionComponents), "Meridian-session-components.json")}>Download session components</button>}
         {removedDefinition && <div className="dialog-actions" role="group" aria-label="Library removal recovery">
           <button ref={undoRemoval} className="button secondary" disabled={!!busy}
             onClick={() => void run("library", restoreDefinition)}>Undo library removal</button>
           <button className="button quiet" disabled={!!busy} onClick={() =>
-            downloadText(JSON.stringify(removedDefinition, null, 2), "Meridian-removed-component.json")}>Download removed definition</button>
+            downloadText(JSON.stringify(removedDefinition), "Meridian-removed-component.json")}>Download removed definition</button>
         </div>}
         <ul className="project-list">{choices.map((component, index) => <li key={`${component.id}-${index}`} className="project-row">
           <button id={`component-${component.id}-${component.version}`} className="project-open" disabled={!!busy} onClick={() => select(component)}>
@@ -451,7 +451,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
       {definition && !preview && <div className="heading-form">
         <h3>{definition.name}</h3><p>{definition.description}</p>
         {sessionComponents.includes(definition) && <button className="button secondary" disabled={!!busy}
-          onClick={() => downloadText(JSON.stringify(definition, null, 2), "Meridian-component.json")}>Download session component</button>}
+          onClick={() => downloadText(JSON.stringify(definition), "Meridian-component.json")}>Download session component</button>}
         {definition.parameters.map(parameter => <label key={parameter.id}>{parameter.label}
           {parameter.type === "enum" ? <select value={values[parameter.id] ?? parameter.default} disabled={!!busy}
             onChange={event => setValues(current => ({ ...current, [parameter.id]: event.target.value }))}>

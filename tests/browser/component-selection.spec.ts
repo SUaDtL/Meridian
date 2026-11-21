@@ -121,3 +121,46 @@ test('extracts reviewed groups and keeps contextual ancestors free of unselected
   await outline.getByRole('button', { name: 'Close dialog' }).click();
   expect(await download(page, live.getByRole('button', { name: 'Download v3 project' }))).toBe(before);
 });
+
+test('keeps the reviewed component downloadable after an IndexedDB quota failure', async ({ page }) => {
+  const project = { ...createDocument(), title: 'Quota component example', source: 'flowchart LR\n A[Worker]\n' };
+  await page.addInitScript(({ key, project }) => {
+    localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] }));
+    const add = IDBObjectStore.prototype.add;
+    IDBObjectStore.prototype.add = function (value, key) {
+      if (this.name === 'library') throw new DOMException('Fixture quota reached', 'QuotaExceededError');
+      return add.call(this, value, key);
+    };
+  }, { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Quota component example' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  const projectFile = live.getByRole('button', { name: 'Download v3 project' });
+  const original = await download(page, projectFile);
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^Worker/ }).click();
+  await outline.getByRole('button', { name: 'Save as component' }).click();
+  const review = page.getByRole('dialog', { name: 'Save selection as component' });
+  await review.getByRole('textbox', { name: 'Component name' }).fill('Quota review worker');
+  await review.getByRole('button', { name: 'Preview component' }).click();
+  const componentFile = review.getByRole('button', { name: 'Download component' });
+  const reviewed = await download(page, componentFile);
+  await review.getByRole('button', { name: 'Save to component library' }).click();
+  await expect(review.getByRole('alert')).toHaveText('Browser storage is full. Download the reviewed component to keep it.');
+  await expect(review.getByText('Component saved in this browser.')).toHaveCount(0);
+  expect(await download(page, componentFile)).toBe(reviewed);
+  expect(JSON.parse(reviewed).fragment.nodes).toEqual([{ id: 'node-1', label: 'Worker', shape: 'rect', role: null }]);
+  await review.getByRole('button', { name: 'Close dialog' }).click();
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
+  expect(await download(page, projectFile)).toBe(original);
+  await page.reload();
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Browse components' }).click();
+  const shelf = page.getByRole('dialog', { name: 'Components' });
+  await shelf.getByLabel('Search components').fill('Quota review worker');
+  await expect(shelf.getByRole('button', { name: /^Quota review worker/ })).toHaveCount(0);
+});

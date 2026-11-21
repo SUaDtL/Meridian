@@ -54,7 +54,11 @@ export default function SaveComponentDialog({ editor, frame, selection, hidden, 
     setError("");
     try { await action(controller.signal); }
     catch (reason) {
-      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "The component could not be saved.");
+      if (!controller.signal.aborted) {
+        setError(reason instanceof DOMException && reason.name === "QuotaExceededError"
+          ? "Browser storage is full. Download the reviewed component to keep it."
+          : reason instanceof Error ? reason.message : "The component could not be saved.");
+      }
     } finally {
       pending.current = null;
       if (!controller.signal.aborted) setBusy("");
@@ -151,7 +155,7 @@ export default function SaveComponentDialog({ editor, frame, selection, hidden, 
       <div className="dialog-actions">
         {!saved && <button className="button quiet" disabled={!!busy} onClick={() => setReview(undefined)}>Back to contents</button>}
         <button className="button secondary" disabled={!!busy || !painted} onClick={() =>
-          downloadText(JSON.stringify(review.definition, null, 2), `${safeFilename(review.definition.name)}.meridian-component.json`)
+          downloadText(JSON.stringify(review.definition), `${safeFilename(review.definition.name)}.meridian-component.json`)
         }>Download component</button>
         {!saved && <button className="button primary" disabled={!!busy || !painted} onClick={save}>Save to component library</button>}
       </div>

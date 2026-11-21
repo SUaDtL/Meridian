@@ -27,6 +27,10 @@ const maxComponentBytes = 200_000;
 export const maxComponentLibraryBytes = 10_000_000;
 const encoder = new TextEncoder();
 
+export function serializeComponentLibrary(definitions: readonly ComponentDefinition[]) {
+  return JSON.stringify({ schema: 'meridian-library/v1', definitions });
+}
+
 function literal(value: string) {
   if (/<\/?[a-z][^>]*>/i.test(value)) throw new Error('Component labels use plain text.');
   if (value) encodeMermaidLabel(value);
