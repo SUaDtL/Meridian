@@ -401,7 +401,17 @@ test('keeps a dismissed role paint finding across a heading edit and rechecks ne
   expect(accepted.design).toEqual({ ...project.design, elements: { [target]: { color: changedColor } } });
 });
 
-test('downloads 1× and 2× PNGs with identical label findings at the same document width', async ({ page }) => {
+test('keeps fixed-profile findings identical across canvas zoom and PNG density', async ({ page }) => {
+  await page.addInitScript(() => {
+    const frames = new Map<string, Blob>();
+    Object.defineProperty(window, 'readabilityFixtureFrames', { value: frames });
+    const create = URL.createObjectURL;
+    URL.createObjectURL = value => {
+      const url = create(value);
+      if (value instanceof Blob && value.type === 'image/svg+xml') frames.set(url, value);
+      return url;
+    };
+  });
   const source = 'flowchart LR\r\n  A[Service] --> B[Warehouse]\r\n';
   const live = await openProject(page, { ...createDocument(), title: 'Readability export density', source });
   const check = page.getByRole('dialog', { name: 'Check readability' });
@@ -418,7 +428,7 @@ test('downloads 1× and 2× PNGs with identical label findings at the same docum
     await expect(report.getByText('Viewed label size · 2 measured · 0 unknown · 1 not applicable')).toBeVisible();
     const finding = report.getByText(/Service measures [\d.]+ CSS pixels in this viewing area/);
     await expect(finding).toBeVisible();
-    const result = await finding.textContent();
+    const result = await report.innerText();
     await check.getByRole('button', { name: 'Close dialog' }).click();
     return result;
   }
@@ -439,14 +449,32 @@ test('downloads 1× and 2× PNGs with identical label findings at the same docum
     await presentation.getByRole('button', { name: 'Close dialog' }).click();
     return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
   }
+  const image = live.getByRole('img', { name: 'Diagram preview for Readability export density' });
+  const canvasWidth = () => image.evaluate(async (element: HTMLImageElement) => {
+    const frames = (window as Window & { readabilityFixtureFrames: ReadonlyMap<string, Blob> }).readabilityFixtureFrames;
+    const source = await frames.get(element.src)?.text();
+    if (!source) throw new Error('Missing canvas preview.');
+    const svg = new DOMParser().parseFromString(source, 'image/svg+xml');
+    const box = svg.querySelector('svg[data-meridian-export] > svg')?.getAttribute('viewBox');
+    return Number(box?.trim().split(/[ ,]+/)[2]);
+  });
+  const fullWidth = await canvasWidth();
+  expect(fullWidth).toBeGreaterThan(0);
   const standard = await downloadPngAt('1');
   const firstFinding = await measureLabel();
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^Service/ }).click();
+  await outline.getByRole('button', { name: 'Frame selected elements' }).click();
+  await expect(live.getByText('Framed around 1 element.')).toBeVisible();
+  await expect.poll(canvasWidth).toBeLessThan(fullWidth);
   const dense = await downloadPngAt('2');
   expect(dense.width).toBeGreaterThanOrEqual(standard.width * 2);
   expect(dense.width).toBeLessThanOrEqual(standard.width * 2 + 1);
   expect(dense.height).toBeGreaterThanOrEqual(standard.height * 2);
   expect(dense.height).toBeLessThanOrEqual(standard.height * 2 + 1);
   expect(await measureLabel()).toBe(firstFinding);
+  await expect.poll(canvasWidth).toBeLessThan(fullWidth);
   expect(await downloadProject(page, live)).toEqual(approved);
 });
 
