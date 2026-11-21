@@ -130,6 +130,14 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   await dialog.getByRole('button', { name: 'Preview diagram' }).click();
   await expect(dialog.getByRole('img', { name: 'Proposed OpenAPI schema diagram' })).toBeVisible();
   await expect(dialog.getByText('2 nodes · 2 connections · 1 schema omitted')).toBeVisible();
+  await expect(dialog.getByText('0 unresolved placeholders included · 1 unresolved reference omitted from selected schemas.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Back to scope' }).click();
+  await dialog.getByText('See unresolved locations', { exact: true }).click();
+  await expect(dialog.getByText('services/models.yaml · /components/schemas/Account/properties/remote/$ref · Unsupported reference form')).toBeVisible();
+  await dialog.getByRole('checkbox', { name: 'Include labeled placeholders in the diagram' }).check();
+  await dialog.getByRole('button', { name: 'Preview diagram' }).click();
+  await expect(dialog.getByText('3 nodes · 3 connections · 1 schema omitted')).toBeVisible();
+  await expect(dialog.getByText('1 unresolved placeholder included · 0 unresolved references omitted from selected schemas.')).toBeVisible();
   await page.screenshot({ path: info.outputPath('openapi-schema-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: info.outputPath('openapi-schema-mobile.png') });
@@ -141,11 +149,18 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   const text = await readFile(path, 'utf8');
   const project = JSON.parse(text);
   expect(project.source).toContain('Account record');
+  expect(project.source).toContain('Unresolved schema reference');
   expect(project.provenance).toContainEqual(expect.objectContaining({
     adapter: 'openapi-schemas', virtualPath: 'services/models.yaml',
     pointer: '/components/schemas/Account/properties/customer~1id/$ref', relationship: 'Declared OpenAPI schema reference',
   }));
   expect(project.provenance).toContainEqual(expect.objectContaining({ pointer: '/components/schemas/Customer/allOf/0/$ref' }));
+  const unresolved = project.provenance.filter((item: { relationship: string }) => item.relationship.startsWith('Unresolved OpenAPI reference'));
+  expect(unresolved).toHaveLength(2);
+  expect(unresolved).toEqual(unresolved.map((item: { elementId: string }) => ({
+    elementId: item.elementId, adapter: 'openapi-schemas', adapterVersion: '1.0.0', virtualPath: 'services/models.yaml',
+    pointer: '/components/schemas/Account/properties/remote/$ref', relationship: 'Unresolved OpenAPI reference · Unsupported reference form',
+  })));
   expect(text).not.toMatch(/private-schema|example\.invalid|Audit/);
   expect(requested).toEqual([]);
 });

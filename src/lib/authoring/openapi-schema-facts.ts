@@ -4,13 +4,16 @@ type RecordValue = Record<string, unknown>;
 type Location = { virtualPath: string; pointer: string };
 type OpenApiSchema = Location & { key: string; name: string };
 type OpenApiReference = Location & { from: string; to: string };
+type UnresolvedReason = 'Unsupported reference form' | 'Target component unavailable in supplied files'
+  | 'Unsupported target schema semantics' | 'Unsupported dynamic or recursive reference';
+type UnresolvedReference = Location & { from: string; reason: UnresolvedReason };
 export type OpenApiSchemaSource = { virtualPath: string; version: string; schemas: RecordValue; dialect: unknown };
 
 export type OpenApiSchemaFacts = {
   schemas: OpenApiSchema[];
   references: OpenApiReference[];
   files: string[];
-  unresolved: number;
+  unresolved: UnresolvedReference[];
   omitted: number;
 };
 
@@ -40,8 +43,8 @@ function referenceKey(value: unknown, base: string) {
 
 /** Extract direct reference evidence without expanding a target or inspecting annotations. */
 export function readOpenApiSchemaFacts(sources: readonly OpenApiSchemaSource[]): OpenApiSchemaFacts {
-  const result: OpenApiSchemaFacts = { schemas: [], references: [], files: sources.map(source => source.virtualPath), unresolved: 0, omitted: 0 };
-  const eligible = new Map<string, boolean>();
+  const result: OpenApiSchemaFacts = { schemas: [], references: [], files: sources.map(source => source.virtualPath), unresolved: [], omitted: 0 };
+  const definitions = new Map<string, boolean | null>();
   const pending: { fact: OpenApiSchema; value: unknown; modern: boolean }[] = [];
   let count = 0;
   for (const { virtualPath, version, schemas, dialect } of sources) {
@@ -57,12 +60,25 @@ export function readOpenApiSchemaFacts(sources: readonly OpenApiSchemaSource[]):
       const key = virtualPath + '#' + pointer;
       const fact = { key, name, virtualPath, pointer };
       result.schemas.push(fact);
+      definitions.set(key, null);
       if (!supportsDialect) { result.omitted++; continue; }
-      if (!modern || !record(value) || (!Object.hasOwn(value, '$id') && !Object.hasOwn(value, '$schema'))) eligible.set(key, modern);
+      if (!modern || !record(value) || (!Object.hasOwn(value, '$id') && !Object.hasOwn(value, '$schema'))) definitions.set(key, modern);
       pending.push({ fact, value, modern });
     }
   }
   let visits = 0;
+
+  function requireReferenceBudget() {
+    if (result.references.length + result.unresolved.length >= maxVisits) {
+      throw new Error('Schema reference analysis exceeded 10,000 extracted references.');
+    }
+  }
+
+  function unresolved(fact: OpenApiSchema, pointer: string, reason: UnresolvedReason) {
+    if (pointer.length > 1_000) { result.omitted++; return; }
+    requireReferenceBudget();
+    result.unresolved.push({ from: fact.key, virtualPath: fact.virtualPath, pointer, reason });
+  }
 
   function visit(value: unknown, fact: OpenApiSchema, pointer: string, modern: boolean) {
     if (++visits > maxVisits) throw new Error('Schema reference analysis exceeded 10,000 visited locations.');
@@ -77,14 +93,16 @@ export function readOpenApiSchemaFacts(sources: readonly OpenApiSchemaSource[]):
     }
     if (Object.hasOwn(value, '$ref')) {
       const to = referenceKey(value.$ref, fact.virtualPath);
-      if (to && eligible.get(to) === modern) {
+      if (to && definitions.get(to) === modern) {
+        requireReferenceBudget();
         result.references.push({ from: fact.key, to, virtualPath: fact.virtualPath, pointer: pointer + '/$ref' });
       }
-      else result.unresolved++;
+      else unresolved(fact, pointer + '/$ref', !to ? 'Unsupported reference form'
+        : definitions.has(to) ? 'Unsupported target schema semantics' : 'Target component unavailable in supplied files');
       if (!modern) return;
     }
     for (const keyword of ['$dynamicRef', '$recursiveRef']) {
-      if (Object.hasOwn(value, keyword)) result.unresolved++;
+      if (Object.hasOwn(value, keyword)) unresolved(fact, `${pointer}/${keyword}`, 'Unsupported dynamic or recursive reference');
     }
     const singleKeywords = modern ? modernSingle : commonSingle;
     for (const keyword of singleKeywords) {
