@@ -222,7 +222,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       }) : [];
       return { id: target.id, kind: target.elementKind, label: target.label, sourceId: sourceIds.get(target.id), from: target.sourceId, to: target.targetId,
         typography: !!element?.capabilities.includes("typography"), measuredLabelSize: element?.appearance?.labelSizeInDiagram,
-        solidTextPaint: element?.appearance?.solidTextPaint, labelOverflowInDiagram: element?.appearance?.labelOverflowInDiagram,
+        solidTextPaint: paint?.solidTextPaint, solidConnectorPaint: paint?.solidConnectorPaint, labelOverflowInDiagram: paint?.labelOverflowInDiagram,
         measuredRoute: element?.measuredRoute, rolePaint: role && tokens.length ? { role, tokens } : undefined };
     });
   }, [readabilityOpen, currentFrame, targetTable]);

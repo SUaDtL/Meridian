@@ -462,7 +462,7 @@ async function performRender({ settings, nodeAccents, design: inputDesign, prepa
     host.replaceChildren(svg);
     // Measure authored visibility without inheriting the offscreen host's hidden state.
     host.style.visibility = 'visible';
-    measureDesignElements(svg, elements);
+    measureDesignElements(svg, elements, settings);
     const otherEdges = svg.querySelectorAll('[data-et="message"], .relationshipLine, .messageLine0, .messageLine1').length;
     const result = { svg: new XMLSerializer().serializeToString(svg), diagramType: rendered.diagramType, nodes, elements, edgeCount: uniqueEdges.length || otherEdges, width, height, warnings };
     if (model) resultModels.set(result, model);

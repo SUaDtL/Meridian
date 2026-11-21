@@ -3,6 +3,8 @@ import type { DesignPresetId, DesignState, ElementCapability, ElementStyle, Rend
 import { DEFAULT_SETTINGS, getTheme } from './themes';
 import { boxesOverlap, measureSolidNodeText, svgTextFragments, type MeasuredSolidText } from './authoring/measure-solid-text';
 import { measureLabelOverflow } from './authoring/measure-label-containment';
+import { measureSolidConnectors } from './authoring/measure-solid-connector';
+import { readSrgbPaint } from './authoring/solid-text-color';
 import { flattenRoute, routeSegmentLimit } from './authoring/route-geometry';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -413,7 +415,7 @@ function labelSizeInDiagram(label: SVGElement | undefined, view: Window, inverse
 }
 
 /** Capture bounds in the diagram's own coordinate system while it is mounted. */
-export function measureDesignElements(svg: SVGSVGElement, elements: RenderElement[]): void {
+export function measureDesignElements(svg: SVGSVGElement, elements: RenderElement[], settings: StudioSettings): void {
   const rootMatrix = svg.getScreenCTM();
   if (!rootMatrix) return;
   const inverse = rootMatrix.inverse();
@@ -485,6 +487,11 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
     if (!candidate || !item.appearance) continue;
     if (elements.some(other => other !== item && (++pairs > 100_000 || !other.bounds || boxesOverlap(other.bounds, candidate.bounds)))) continue;
     item.appearance.solidTextPaint = candidate.paint;
+  }
+  if (view && canMeasurePaint && !settings.ambient && settings.background === 'none' && settings.motion === 'none'
+    && !settings.shadow && !settings.glow && elements.some(item => item.kind === 'edge')) {
+    const canvas = readSrgbPaint(getTheme(settings.theme).canvas);
+    if (canvas) measureSolidConnectors(svg, elements, targets, canvas, inverse, view);
   }
 }
 

@@ -1,4 +1,4 @@
-import type { SolidTextPaint } from '../lib/authoring/solid-text-color';
+import type { SolidConnectorPaint, SolidTextPaint } from '../lib/authoring/solid-text-color';
 import type { RoutePoint } from '../lib/authoring/route-geometry';
 
 export type ElementKind = 'node' | 'edge' | 'group';
@@ -42,6 +42,7 @@ export interface RenderedAppearance {
   labelSizeInDiagram?: number;
   labelOverflowInDiagram?: number;
   solidTextPaint?: SolidTextPaint;
+  solidConnectorPaint?: SolidConnectorPaint;
 }
 
 export interface RenderElement {
