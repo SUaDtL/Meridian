@@ -3,6 +3,7 @@ import { decodeJson } from './decode-json';
 import { authoringLimits, encodeMermaidLabel, type ConnectionDirection, type Shape } from './flowchart-source';
 import { elementUuidPattern } from './identities';
 import type { MermaidProjectV3 } from './mermaid-project';
+import type { NativeFlowchartEdit } from './project-flowchart';
 import type { RenderTargetTable } from './project-render';
 import common from './schemas/common.schema.json';
 import { flowchartSubsetTopology } from './source-patches';
@@ -57,12 +58,14 @@ export type PendingAssistRequest = {
   scope: Scope;
   allowedOperations: AssistOperation[];
   expiresAt: number;
+  connectedNode?: true;
 };
 type AssistantEdit = { op: 'setNodeLabel' | 'setEdgeLabel'; targetId: string; label: string }
   | { op: 'removeEdge'; targetId: string; annotationPolicy: 'preserve-orphans' }
   | { op: 'removeNode'; targetId: string; incidentEdgeIds: string[]; annotationPolicy: 'preserve-orphans' }
   | { op: 'addEdge'; ref: string; sourceId: string; targetId: string; label: string; direction: ConnectionDirection; lineStyle: 'solid' }
   | { op: 'addNode'; ref: string; label: string; shape: Shape; parentGroupId: null };
+type ConnectedAssistEdit = Extract<NativeFlowchartEdit, { op: 'addNext' }>;
 export type AssistSelection = 'context' | 'writable' | 'attachment';
 
 export function assistWritableEdges(document: MermaidProjectV3, table: RenderTargetTable, selected: ReadonlyMap<string, AssistSelection>) {
@@ -93,7 +96,7 @@ export async function buildAssistRequest(
   instruction: string,
   writableEdges: ReadonlySet<string> = new Set(),
   edgeOperation: AssistConnectionOperation = 'setEdgeLabel',
-  permissions: { removeNode?: boolean; addEdge?: boolean; addNode?: boolean } = {},
+  permissions: { removeNode?: boolean; addEdge?: boolean; addNode?: boolean; addConnectedNode?: boolean } = {},
   now = Date.now(),
 ) {
   const token = await projectBaseToken(document);
@@ -108,18 +111,22 @@ export async function buildAssistRequest(
   }
   const editable = assistWritableEdges(document, table, chosen).filter(item => writableEdges.has(item.id)).map(item => item.id);
   if (editable.length !== writableEdges.size) throw new Error('Choose writable connections with an explicit source ID and both endpoints in scope.');
-  if (!writableNodes.length && !editable.length && !permissions.addNode) {
+  const connectedNode = permissions.addConnectedNode;
+  const attachmentPointIds = permissions.addEdge || connectedNode
+    ? currentNodes.filter(item => chosen.get(item.id) === 'attachment').map(item => item.id) : [];
+  if (connectedNode && !writableNodes.length && !attachmentPointIds.length) {
+    throw new Error('Choose a writable node or read-only attachment for the new node.');
+  }
+  if (!writableNodes.length && !editable.length && !permissions.addNode && !connectedNode) {
     throw new Error('Choose at least one writable node or connection, or explicitly allow a new node.');
   }
   const allowedOperations: AssistOperation[] = [];
   if (writableNodes.length) allowedOperations.push('setNodeLabel');
   if (editable.length) allowedOperations.push(edgeOperation);
-  if (permissions.addEdge) {
-    if (!writableNodes.length) throw new Error('Choose at least one writable node to allow a new connection.');
+  if (permissions.addEdge || connectedNode) {
+    if (!connectedNode && !writableNodes.length) throw new Error('Choose at least one writable node to allow a new connection.');
     allowedOperations.push('addEdge');
   }
-  const attachmentPointIds = permissions.addEdge
-    ? currentNodes.filter(item => chosen.get(item.id) === 'attachment').map(item => item.id) : [];
   const selected = new Set(currentNodes.map(item => item.id));
   const edges = table.targets.filter(item => item.elementKind === 'edge');
   const scopedEdges = edges.filter(item => item.sourceId && item.targetId && selected.has(item.sourceId) && selected.has(item.targetId));
@@ -127,7 +134,7 @@ export async function buildAssistRequest(
   const scopedEdgeIds = new Set(scopedEdges.map(item => item.id));
   const byId = new Map(document.identity.elements.map(item => [item.id, item]));
   const shapes = new Map(flowchartSubsetTopology(document.source).nodes.map(item => [item.id, item.shape]));
-  if (permissions.addNode) {
+  if (permissions.addNode || connectedNode) {
     if (shapes.size >= authoringLimits.graphNodes) throw new Error('The diagram is too large to allow a new node.');
     allowedOperations.push('addNode');
   }
@@ -181,6 +188,7 @@ export async function buildAssistRequest(
   const pending: PendingAssistRequest = {
     id: request.requestId, requestHash: await canonicalDigest(requestDomain, request), baseToken: token,
     scope: request.scope, allowedOperations: request.allowedOperations, expiresAt: now + day,
+    ...(connectedNode ? { connectedNode: true } : {}),
   };
   return { request, pending, text, removableNodes };
 }
@@ -206,11 +214,12 @@ const nodeRemovalSchema = {
     incidentEdgeIds: { type: 'array', maxItems: 200, items: common.$defs.UUID },
   },
 };
+const endpointReference = { oneOf: [common.$defs.UUID, common.$defs.NewRef] };
 const edgeAdditionSchema = {
   type: 'object', additionalProperties: false,
   required: ['op', 'ref', 'sourceId', 'targetId', 'label', 'direction', 'lineStyle'],
   properties: {
-    op: { const: 'addEdge' }, ref: common.$defs.NewRef, sourceId: common.$defs.UUID, targetId: common.$defs.UUID,
+    op: { const: 'addEdge' }, ref: common.$defs.NewRef, sourceId: endpointReference, targetId: endpointReference,
     label: { type: 'string', maxLength: 200 }, direction: { enum: ['forward', 'both', 'none'] }, lineStyle: { const: 'solid' },
   },
 };
@@ -227,25 +236,25 @@ const proposalSchema = {
     schema: { const: 'meridian-proposal/v1' }, id: common.$defs.UUID, documentKind: { const: 'mermaid' },
     baseToken: common.$defs.BaseToken, origin: { const: 'ai' }, requestHash: common.$defs.Sha256,
     requestId: { type: 'string', pattern: requestIdPattern.source },
-    operations: { type: 'array', minItems: 1, maxItems: 1, items: { oneOf: [renameSchema, edgeLabelSchema, edgeRemovalSchema, nodeRemovalSchema, edgeAdditionSchema, nodeAdditionSchema] } },
+    operations: { type: 'array', minItems: 1, maxItems: 2, items: { oneOf: [renameSchema, edgeLabelSchema, edgeRemovalSchema, nodeRemovalSchema, edgeAdditionSchema, nodeAdditionSchema] } },
     explanation: { type: 'string', maxLength: 2000 },
   },
 };
-type ImportedEdit = { requestId: string; requestHash: string; baseToken: BaseToken; operations: [AssistantEdit] };
+type ImportedEdit = { requestId: string; requestHash: string; baseToken: BaseToken; operations: [AssistantEdit] | [AssistantEdit, AssistantEdit] };
 
 export function parseAssistSuggestion(text: string) {
   if (encoder.encode(text).byteLength > assistFileLimit) throw new Error('Choose a proposal no larger than 128 KiB.');
   const value = decodeJson(text);
   if (!matchesBundledContract(value, proposalSchema)) {
-    throw new Error('Choose a Meridian assistant proposal with one supported edit that preserves annotations.');
+    throw new Error('Choose a Meridian assistant proposal with one supported edit or a reviewed node and connection that preserves annotations.');
   }
   return value as ImportedEdit;
 }
 
 export function authorizeAssistEdit(
   suggestion: ImportedEdit, pending: PendingAssistRequest, token: BaseToken, now = Date.now(),
-): AssistantEdit {
-  const edit = suggestion.operations[0];
+): AssistantEdit | ConnectedAssistEdit {
+  const [edit, second] = suggestion.operations;
   if (pending.expiresAt <= now || suggestion.requestId !== pending.id || suggestion.requestHash !== pending.requestHash
     || !sameBaseToken(pending.baseToken, suggestion.baseToken)) {
     throw new Error('This suggestion does not match a live request from this browser. Export a fresh request.');
@@ -253,8 +262,25 @@ export function authorizeAssistEdit(
   if (!sameBaseToken(pending.baseToken, token)) throw new Error('The project changed since this request was exported. Export a fresh request.');
   const writable = new Set(pending.scope.writableElementIds);
   const readable = new Set(pending.scope.readContextIds);
-  if (!pending.allowedOperations.includes(edit.op)) {
+  if (suggestion.operations.some(operation => !pending.allowedOperations.includes(operation.op))) {
     throw new Error('The suggestion targets an element or operation outside the request’s writable scope.');
+  }
+  if (second) {
+    if (!pending.connectedNode || edit.op !== 'addNode' || second.op !== 'addEdge' || second.ref === edit.ref
+      || second.direction !== 'forward' || (second.sourceId === edit.ref) === (second.targetId === edit.ref)) {
+      throw new Error('A connected node needs a reviewed new node followed by one solid one-way connection to it.');
+    }
+    const incoming = second.sourceId === edit.ref;
+    const anchorId = incoming ? second.targetId : second.sourceId;
+    if (!readable.has(anchorId) || (!writable.has(anchorId) && !pending.scope.attachmentPointIds.includes(anchorId))) {
+      throw new Error('The existing endpoint must be writable or explicitly shared as an attachment.');
+    }
+    encodeMermaidLabel(edit.label);
+    if (second.label) encodeMermaidLabel(second.label);
+    return { op: 'addNext', anchorId, incoming, label: edit.label, shape: edit.shape, edgeLabel: second.label };
+  }
+  if (pending.connectedNode && (edit.op === 'addNode' || edit.op === 'addEdge')) {
+    throw new Error('This request allows the new node and its connection together. Review both operations in one proposal.');
   }
   if (edit.op === 'addNode') {
     encodeMermaidLabel(edit.label);
