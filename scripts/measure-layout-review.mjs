@@ -24,6 +24,7 @@ const standardSettings = {
 };
 const alternatives = ['Compact', 'Balanced', 'Presentation'];
 const variants = 11;
+const measureMemory = process.argv.includes("--memory");
 function prepareFixture(index) {
   const label = String.fromCharCode(65 + index);
   const nodes = Array.from({ length: 50 }, (_, number) => `  N${number}["Service ${label}${number}"]`);
@@ -37,20 +38,49 @@ function prepareFixture(index) {
 }
 const documents = Array.from({ length: variants }, (_, index) => prepareFixture(index));
 
+async function browserMemory(session) {
+  await session.send('HeapProfiler.collectGarbage');
+  const [{ documents, nodes, jsEventListeners }, { metrics }] = await Promise.all([
+    session.send('Memory.getDOMCounters'),
+    session.send('Performance.getMetrics'),
+  ]);
+  const heap = metrics.find(metric => metric.name === 'JSHeapUsedSize');
+  if (!heap || !Number.isSafeInteger(heap.value) || heap.value <= 0) {
+    throw new Error('Chromium did not report JS heap bytes.');
+  }
+  return { documents, nodes, jsEventListeners, jsHeapBytes: heap.value };
+}
+
 async function measure(mobile) {
   const page = await browser.newPage({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 900 },
     deviceScaleFactor: 1, hasTouch: mobile, isMobile: mobile, reducedMotion: 'reduce' });
   try {
     const session = await page.context().newCDPSession(page);
     if (mobile) await session.send('Emulation.setCPUThrottlingRate', { rate: 4 });
-    await page.addInitScript(({ documents }) => {
+    if (measureMemory) await session.send('Performance.enable');
+    await page.addInitScript(({ documents, measureMemory }) => {
       localStorage.setItem('meridian:v2', JSON.stringify({ version: 2, activeId: documents[0].id, documents }));
-    }, { documents });
+      if (!measureMemory) return;
+      const peak = { hosts: 0, elements: 0 };
+      window.layoutMeasurementHosts = peak;
+      const observer = new MutationObserver(records => {
+        const hosts = [...document.querySelectorAll('[data-meridian-render]')];
+        peak.hosts = Math.max(peak.hosts, hosts.length);
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node instanceof Element && node.matches('[data-meridian-render]') && !hosts.includes(node)) hosts.push(node);
+          }
+        }
+        for (const host of hosts) peak.elements = Math.max(peak.elements, host.querySelectorAll('*').length);
+      });
+      observer.observe(document, { childList: true, subtree: true });
+    }, { documents, measureMemory });
     await page.goto(base.href);
     await page.getByRole('button', { name: 'Manage projects' }).click();
     await page.getByRole('button', { name: 'Project migration and recovery' }).click();
     await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
     const batches = [];
+    const memory = measureMemory ? { baseline: await browserMemory(session), fixtures: [] } : undefined;
     for (const [index, project] of documents.entries()) {
       await page.getByRole('button', { name: `Open v3 project ${project.title}` }).click({ timeout: 30000 });
       const live = page.getByRole('dialog', { name: project.title });
@@ -111,10 +141,17 @@ async function measure(mobile) {
       }
       if (index > 0) batches.push(samples);
       process.stderr.write(`${mobile ? 'mobile' : 'desktop'} fixture ${index + 1}/${documents.length}\n`);
+      const active = memory ? await browserMemory(session) : undefined;
       await dialog.getByRole('button', { name: 'Close dialog' }).click();
       await live.getByRole('button', { name: 'Back to v3 projects' }).click();
+      if (memory) {
+        await live.waitFor({ state: 'hidden' });
+        const closed = await browserMemory(session);
+        memory.fixtures.push({ title: project.title, active, closed });
+      }
     }
-    return { mobile, throttle: mobile ? 4 : 1, viewport: page.viewportSize(), batches };
+    const hosts = memory ? await page.evaluate(() => window.layoutMeasurementHosts) : undefined;
+    return { mobile, throttle: mobile ? 4 : 1, viewport: page.viewportSize(), batches, memory: memory && { ...memory, hosts } };
   } finally { await page.close(); }
 }
 try {
@@ -124,7 +161,9 @@ try {
     browser: browser.version(), os: os.release(), cpu: os.cpus()[0].model,
     cpuCgroup: readLimit('/sys/fs/cgroup/cpu.max'), memoryCgroup: readLimit('/sys/fs/cgroup/memory.max'),
     fixture: { nodes: 50, edges: 75, warmedModuleFixtures: 1, measuredFixturesPerProfile: 10 },
-    method: 'Real click or tap to two animation frames after a visible decoded candidate becomes eligible to apply. Long Tasks API and requestAnimationFrame gaps observed independently. Candidate inputs differ per fixture. Three sequential options per fixture.',
+    method: measureMemory
+      ? 'Observed temporary rendering hosts with a DOM observer. Read Chromium DOM and live JavaScript heap counters after forced garbage collection before opening the first project, during the settled comparison, and after closing each project. Timings include observer instrumentation.'
+      : 'Real click or tap to two animation frames after a visible decoded candidate becomes eligible to apply. Long Tasks API and requestAnimationFrame gaps observed independently. Candidate inputs differ per fixture. Three sequential options per fixture.',
     results,
   }, null, 2) + '\n');
 } finally { await browser.close(); }

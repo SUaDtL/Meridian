@@ -395,3 +395,22 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - Offline assistant exchange accepts one explicitly enabled standalone node. Its read-only context remains bound to the reviewed request, and the Chromium fixture refuses a context rename, verifies exact Apply and Undo, and checks request consumption. The dedicated service still requires operator and deployment decisions. [PR #136](https://github.com/SUaDtL/Meridian/pull/136)
 - The chart table identifies each observation through a row header and retains measurement units. Count aggregations use counts. Chromium compares the accessible title, description, row context and the exact measure in studio and portable HTML. Physical screen-reader validation remains open. [PR #139](https://github.com/SUaDtL/Meridian/pull/139) · [Workflow evidence](https://github.com/SUaDtL/Meridian/actions/runs/44865281885)
 - Jumping from a reviewed relationship to source can return to the same filtered Outline view while the authored source is current. Chromium verifies the exact relationship, active focus, selection and filter after a switch to phone width. [PR #133](https://github.com/SUaDtL/Meridian/pull/133)
+
+## Layout preview memory lifecycle
+
+The memory run used the same 50-node, 75-connection diagrams as the responsiveness run, with three explicitly requested choices per fixture. The production application source was at `054cfff51deb7c35d0f9845c41e8436aa17ae398`. Its clean lab artifact was built from `7b472506e431fedcc62c53ec99e666c75e8f640b`, which adds instrumentation only. Chromium 159.0.8154.6 ran on an AMD EPYC 9V74 host with a four-core CPU quota and 16 GiB memory ceiling. The profiles were 1280 × 900 desktop and 390 × 844 mobile with 4× CPU throttling.
+
+One warm fixture preceded ten distinct projects per profile. Chromium reported the counts below after forced garbage collection. The baseline was after migration and before the first workspace opened. A mutation observer saw at most one connected measurement host in either profile and up to 1,067 descendant elements in an observed host.
+
+| Profile and state | Live JS heap in decimal MB | Page-wide DOM nodes | Documents |
+| --- | --- | --- | --- |
+| Desktop baseline | 3.44 | 317 | 2 |
+| Desktop settled review | 18.96–20.88 | 7,004–9,786 | 5 |
+| Desktop after closing project | 19.23–20.95 | 4,837–7,162 | 3 |
+| Throttled mobile baseline | 3.63 | 318 | 2 |
+| Throttled mobile settled review | 19.01–20.92 | 7,004–9,786 | 5 |
+| Throttled mobile after closing project | 18.70–20.61 | 4,837–7,162 | 3 |
+
+Closing the workspace reduced documents and node counts. Later projects retained more DOM nodes than early projects after closure. These browser-wide counters do not separate renderer caches from page and browser state. Longer churn, exact aggregate string accounting, native memory, physical mobile devices and injected input response remain open. The instrumented timing samples are excluded from the automatic-preview gate.
+
+Run `PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173/ node scripts/measure-layout-review.mjs --memory` against a clean Pages artifact. The JSON includes per-fixture active and closed samples alongside the browser and host profile.
