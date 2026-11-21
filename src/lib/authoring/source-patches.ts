@@ -88,6 +88,7 @@ function readSubset(source: string, allowGroups = false) {
   const edgeIds = new Set<string>();
   const styles: { record: RecordSpan; indices: string }[] = [];
   const groups = new Map<string, string[]>();
+  const groupDeclarations = new Map<string, RecordSpan>();
   const parents: string[][] = [];
 
   for (const record of records) {
@@ -98,6 +99,7 @@ function readSubset(source: string, allowGroups = false) {
       parents.at(-1)?.push(id);
       const members: string[] = [];
       groups.set(id, members);
+      groupDeclarations.set(id, record);
       parents.push(members);
       continue;
     }
@@ -139,7 +141,7 @@ function readSubset(source: string, allowGroups = false) {
       throw unsupported();
     }
   }
-  return { heading: first, records, direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles, groups };
+  return { heading: first, records, direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles, groups, groupDeclarations };
 }
 
 function subsetTopology({ direction, nodes, edges }: ReturnType<typeof readSubset>) {
@@ -160,11 +162,12 @@ export function supportsComponentInsertion(source: string) {
   catch { return false; }
 }
 
-export function flowchartSourceLocations(source: string) {
-  const { nodes, edges } = readSubset(source);
+export function flowchartSourceLocations(source: string, allowGroups = false) {
+  const { nodes, edges, groupDeclarations } = readSubset(source, allowGroups);
   const location = ({ start, end }: RecordSpan) => ({ from: start, to: end });
   return {
     nodes: new Map(Array.from(nodes, ([id, record]) => [id, location(record)])),
+    groups: new Map(Array.from(groupDeclarations, ([id, record]) => [id, location(record)])),
     edges: new Map(edges.flatMap(({ id, record }) => id ? [[id, location(record)] as const] : [])),
   };
 }

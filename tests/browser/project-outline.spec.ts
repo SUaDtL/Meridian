@@ -59,8 +59,8 @@ test('discovers parallel relationships and jumps only to the exact selected sour
   await expect(editor.getByRole('button', { name: 'Apply change' })).toBeDisabled();
 });
 
-test('collapsing a verified group hides its selected member and never guesses a source span', async ({ page }) => {
-  const source = 'flowchart LR\n  subgraph cluster [Team boundary]\n    A[First system]\n  end\n  B[Second system]\n  A --> B\n';
+test('keeps selection under a collapsed group and opens exact group and member source spans', async ({ page }) => {
+  const source = '\uFEFFflowchart LR\r\n  subgraph cluster [Team boundary]\r\n    A[First system]\r\n  end\r\n  B[Second system]\r\n  A --> B\r\n';
   const live = await openProject(page, 'Grouped outline', source);
   await live.getByRole('button', { name: 'Outline', exact: true }).click();
   const outline = page.getByRole('dialog', { name: 'Diagram outline' });
@@ -71,7 +71,8 @@ test('collapsing a verified group hides its selected member and never guesses a 
   await expect(child).toHaveAttribute('aria-level', '2');
   await child.click();
   await expect(outline.getByRole('status')).toHaveText('1 selected · 0 hidden');
-  await expect(outline.getByRole('button', { name: 'Jump to source' })).toBeDisabled();
+  const jump = outline.getByRole('button', { name: 'Jump to source' });
+  await expect(jump).toBeEnabled();
   await tree.press('ArrowLeft');
   await tree.press('ArrowLeft');
   await expect(group).toHaveAttribute('aria-expanded', 'false');
@@ -80,6 +81,21 @@ test('collapsing a verified group hides its selected member and never guesses a 
   await tree.press('ArrowRight');
   await expect(child).toHaveAttribute('aria-selected', 'true');
   await expect(outline.getByRole('status')).toHaveText('1 selected · 0 hidden');
+  await child.click();
+  await jump.click();
+  await expect(live.locator('mark')).toHaveText('First system');
+  await expect(live.locator('mark')).toBeFocused();
+
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  await group.click();
+  await jump.click();
+  await expect(live.locator('mark')).toHaveText('subgraph cluster [Team boundary]');
+  expect(await live.locator('pre').textContent()).toBe(source);
+
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  await outline.getByRole('button', { name: 'Relationships', exact: true }).click();
+  await outline.getByRole('listbox', { name: 'Relationships' }).getByRole('option').click();
+  await expect(jump).toBeDisabled();
 });
 
 test('uses touch checkboxes across filters and refuses selection beyond the interactive limit', async ({ browser }) => {
