@@ -31,6 +31,17 @@ type GenerationStatus =
   | { code: 'NOT_FOUND' }
   | { code: 'ISSUED'; ticketExpiresAtMs: number }
   | { code: 'STATUS'; state: GenerationState; amount: bigint; sealedResult?: Uint8Array };
+type OwnedGeneration = {
+  requestHash: string;
+  policyVersion: string;
+  ticketExpiresAtMs: number;
+  statusExpiresAtMs: number;
+  maximumCharge: string;
+} & ({ state: 'issued' } | {
+  state: GenerationState;
+  settledOrReserved: string;
+  result?: { bytes: Uint8Array; expiresAtMs: number };
+});
 type Result =
   | { code: 'RESERVED'; amount: bigint }
   | { code: 'EXISTING'; state: GenerationState; amount: bigint }
@@ -275,21 +286,33 @@ export class CompanionAdmissionLedger {
   }
 
   status(subject: string, requestId: string, nowMs: number): GenerationStatus {
+    const record = this.ownedGeneration(subject, requestId, nowMs);
+    if (!record) return { code: 'NOT_FOUND' };
+    if (record.state === 'issued') return { code: 'ISSUED', ticketExpiresAtMs: record.ticketExpiresAtMs };
+    const result = record.result ? { sealedResult: record.result.bytes } : {};
+    return { code: 'STATUS', state: record.state, amount: BigInt(record.settledOrReserved), ...result };
+  }
+
+  ownedGeneration(subject: string, requestId: string, nowMs: number): OwnedGeneration | undefined {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new RangeError('Invalid server clock');
-    if (!fitsPattern(subject, digestPattern, 64) || assistRequestTimestamp(requestId) === undefined) {
-      return { code: 'NOT_FOUND' };
-    }
+    if (!fitsPattern(subject, digestPattern, 64) || assistRequestTimestamp(requestId) === undefined) return;
     const row = this.db.prepare(`
-      SELECT i.expires_seconds, g.state, CAST(g.amount AS TEXT) AS amount, r.ciphertext
+      SELECT i.request_hash, i.policy_version, i.max_charge, i.expires_seconds, i.status_expires_ms,
+        g.state, CAST(g.amount AS TEXT) AS amount, r.expires_ms AS result_expires_ms, r.ciphertext
       FROM ticket_issuance i
       LEFT JOIN generations g ON g.ticket_id = i.ticket_id
       LEFT JOIN proposal_results r ON r.ticket_id = i.ticket_id AND r.expires_ms > ?
       WHERE i.subject = ? AND i.request_id = ? AND i.status_expires_ms > ?
     `).get(nowMs, subject, requestId, nowMs);
-    if (!row) return { code: 'NOT_FOUND' };
-    if (row.state === null) return { code: 'ISSUED', ticketExpiresAtMs: Number(row.expires_seconds) * 1000 };
-    const result = row.ciphertext instanceof Uint8Array ? { sealedResult: row.ciphertext } : {};
-    return { code: 'STATUS', state: row.state as GenerationState, amount: BigInt(String(row.amount)), ...result };
+    if (!row) return;
+    const metadata = {
+      requestHash: String(row.request_hash), policyVersion: String(row.policy_version), maximumCharge: String(row.max_charge),
+      ticketExpiresAtMs: Number(row.expires_seconds) * 1_000, statusExpiresAtMs: Number(row.status_expires_ms),
+    };
+    if (row.state === null) return { ...metadata, state: 'issued' };
+    const result = row.ciphertext instanceof Uint8Array
+      ? { bytes: row.ciphertext, expiresAtMs: Number(row.result_expires_ms) } : undefined;
+    return { ...metadata, state: row.state as GenerationState, settledOrReserved: String(row.amount), result };
   }
 
   settleKnown(ticket: VerifiedGenerationTicket, state: 'succeeded' | 'failed', actualMicrousd: bigint, result?: RetainedResult): boolean {
