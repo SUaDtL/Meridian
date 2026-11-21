@@ -78,6 +78,45 @@ test('keeps an invalid source draft, previews binding-preserving changes, and re
   expect(restored.design).toEqual(original.design);
 });
 
+test('preserves long and formatted labels until the author edits their Mermaid source', async ({ page }) => {
+  const longLabel = 'Detailed handoff '.repeat(13).trim();
+  const richLabel = '`**Review** the handoff`';
+  const source = `\uFEFFflowchart LR\r\n  A["${longLabel}"]\r\n  B["${richLabel}"]\r\n  A link@--> B\r\n`;
+  const project = { ...createDocument(), title: 'Preserved source labels', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Preserved source labels' }).click();
+  const live = page.getByRole('dialog', { name: 'Preserved source labels' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Preserved source labels' })).toBeVisible();
+  const accepted = await download(page, live);
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  for (const id of ['A', 'B']) {
+    await live.getByRole('button', { name: 'Edit flowchart' }).click();
+    await edit.getByRole('combobox', { name: 'Operation' }).selectOption('setNodeLabel');
+    const option = await edit.getByRole('combobox', { name: 'Node to rename' }).getByRole('option', { name: new RegExp(`\\(${id}\\)$`) }).textContent();
+    await edit.getByRole('combobox', { name: 'Node to rename' }).selectOption({ label: option! });
+    await edit.getByRole('textbox', { name: 'Node label' }).fill('Short visual replacement');
+    await edit.getByRole('button', { name: 'Preview change' }).click();
+    await expect(edit.getByRole('alert')).toContainText('Use the Mermaid source editor to edit this long or formatted label.');
+    await expect(edit.getByRole('button', { name: 'Apply change' })).toBeDisabled();
+    await edit.getByRole('button', { name: 'Cancel' }).click();
+    expect(await download(page, live)).toEqual(accepted);
+  }
+  await live.getByRole('button', { name: 'Edit Mermaid source' }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const revised = source.replace('**Review** the handoff', '**Verify** the handoff');
+  await editor.getByRole('textbox', { name: 'Mermaid source' }).fill(revised.replace(/\r\n/g, '\n'));
+  await editor.getByRole('button', { name: 'Preview source' }).click();
+  await editor.getByRole('button', { name: 'Apply source' }).click();
+  const applied = await download(page, live);
+  expect(applied.source).toBe(revised);
+  expect(applied.identity).toEqual(accepted.identity);
+});
+
 test('offers proven endpoint completion and keeps draft history separate from accepted changes', async ({ page }) => {
   const source = 'flowchart LR\n  alpha[Client]\n  beta[Worker]\n';
   const project = { ...createDocument(), title: 'Source completion', source };
