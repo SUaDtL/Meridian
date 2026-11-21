@@ -93,7 +93,7 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
     operations: [{ op: 'setNodeLabel', targetId: writable.id, label: 'Reviewed label' }],
   };
   await review(dialog, { ...proposal, origin: 'canvas' });
-  await expect(dialog.getByRole('alert')).toContainText('one supported label edit or one connection removal');
+  await expect(dialog.getByRole('alert')).toContainText('one supported label edit or removal');
   await review(dialog, { ...proposal, operations: [{ ...proposal.operations[0], targetId: contextOnly.id }] });
   await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
   await review(dialog, { ...proposal, baseToken: { ...proposal.baseToken, stateDigest: 'a'.repeat(64) } });
@@ -242,4 +242,72 @@ test('removes one explicitly authorized connection offline and retains its scene
   await dialog.getByRole('button', { name: 'Review a proposal' }).click();
   await review(dialog, proposal);
   await expect(dialog.getByRole('alert')).toContainText('no longer matches a live request');
+});
+
+test('requires complete writable incidence for assistant node removal and restores the reviewed graph with Undo', async ({ page, context }) => {
+  const source = [
+    'flowchart LR', ' A[Old relay]', ' B[Receiver]', ' C[Other service]',
+    ' A intake@--> B', ' C returnEdge@--> A', ' B keep@--> C',
+    ' linkStyle 0,1 stroke:#aaaaaa', ' linkStyle 2 stroke:#123456', '',
+  ].join('\r\n');
+  const scene = { ...createScene(), title: 'Incoming messages', visible: ['node:A', 'node:B', 'edge:id:intake'] };
+  const live = await openProject(page, 'Node removal exchange', source, project => {
+    project.storyboard = { version: 1, scenes: [scene], loop: false };
+    project.design.elements['node:A'] = { fill: '#123456' };
+  });
+  const projectFile = live.getByRole('button', { name: 'Download v3 project' });
+  const original = JSON.parse(await download(page, projectFile));
+  const dialog = await openExchange(page, live);
+  await context.setOffline(true);
+  await dialog.getByLabel('Instruction').fill('Review removing the old relay and both related connections.');
+  await dialog.getByRole('combobox', { name: 'Old relay', exact: true }).selectOption('writable');
+  await dialog.getByRole('combobox', { name: 'Receiver', exact: true }).selectOption('context');
+  await dialog.getByRole('checkbox', { name: 'Old relay to Receiver (intake)' }).check();
+  await dialog.getByRole('checkbox', { name: 'Allow removal of one writable node and all its writable incident connections' }).check();
+  const share = dialog.getByRole('button', { name: 'Review what will be shared' });
+  await share.click();
+  await expect(dialog.getByRole('alert')).toContainText('mark every incident connection writable');
+  await dialog.getByRole('combobox', { name: 'Other service', exact: true }).selectOption('context');
+  await share.click();
+  await expect(dialog.getByRole('alert')).toContainText('mark every incident connection writable');
+  await dialog.getByRole('checkbox', { name: 'Other service to Old relay (returnEdge)' }).check();
+  await share.click();
+  await expect(dialog.getByRole('list', { name: 'Nodes eligible for removal' }).getByRole('listitem')).toHaveText('Old relay');
+  const request = JSON.parse(await download(page, dialog.getByRole('button', { name: 'Download request' })));
+  const relay = request.graph.nodes.find((node: { label: string }) => node.label === 'Old relay');
+  const incident = request.graph.edges.filter((edge: { sourceId: string; targetId: string }) => edge.sourceId === relay.id || edge.targetId === relay.id);
+  const [first, second] = incident.map((edge: { id: string }) => edge.id);
+  const unauthorized = request.graph.edges.find((edge: { id: string }) => edge.id !== first && edge.id !== second);
+  expect(relay.incidentEdgesComplete).toBe(true);
+  expect(request.scope.writableElementIds).toEqual([relay.id, first, second]);
+  expect(request.allowedOperations).toContain('removeNode');
+  await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+  const operation = { op: 'removeNode', targetId: relay.id, incidentEdgeIds: [first, second], annotationPolicy: 'preserve-orphans' };
+  const proposal = {
+    schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'ai',
+    requestId: request.requestId, requestHash: await canonicalDigest('meridian-assist-request/v1', request), baseToken: request.baseToken,
+    operations: [operation],
+  };
+  await review(dialog, { ...proposal, operations: [{ ...operation, incidentEdgeIds: [first, unauthorized.id] }] });
+  await expect(dialog.getByRole('alert')).toContainText('Every incident connection must be inside the request’s writable scope');
+  await review(dialog, { ...proposal, operations: [{ ...operation, incidentEdgeIds: [first] }] });
+  await expect(dialog.getByRole('alert')).toContainText('Review all incident connections');
+  await review(dialog, proposal);
+  await expect(dialog.getByRole('img', { name: 'Diagram preview after proposed node removal' })).toBeVisible();
+  await expect(dialog.getByRole('list', { name: 'Connections to remove' }).getByRole('listitem')).toHaveText([
+    'Old relay to Receiver (intake)', 'Other service to Old relay (returnEdge)',
+  ]);
+  await expect(dialog.getByRole('region', { name: 'Retained annotations' })).toContainText('Incoming messages');
+  await dialog.getByRole('button', { name: 'Apply reviewed node removal' }).click();
+  await expect(dialog).toBeHidden();
+  const removed = JSON.parse(await download(page, projectFile));
+  expect(removed.source).toBe(source.replace('A[Old relay]', '').replace('A intake@--> B', '').replace('C returnEdge@--> A', '')
+    .replace('linkStyle 0,1 stroke:#aaaaaa', '').replace('linkStyle 2 stroke:#123456', 'linkStyle 0 stroke:#123456'));
+  expect(removed.identity.orphans).toContainEqual(expect.objectContaining({ formerElementId: relay.id, retained: expect.objectContaining({
+    style: { fill: '#123456' }, sceneReferences: [{ sceneId: scene.id, field: 'visible', index: 0 }],
+  }) }));
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = JSON.parse(await download(page, projectFile));
+  expect(restored).toEqual({ ...original, revision: removed.revision + 1, updatedAt: restored.updatedAt });
 });
