@@ -405,7 +405,7 @@ test('reviews larger selected labels and discloses measured movement outside the
   await expect(change.getByText(/Long intake label for a wider node.*Label size · [\d.]+ px → 22 px/)).toBeVisible();
   await expect(change.getByText(/Manual font.*Label size|User font.*Label size|Downstream/)).toHaveCount(0);
   const scope = design.getByRole('region', { name: 'Reviewed design scope' });
-  await expect(scope.getByText('Automatic layout moved 1 node outside this scope. Their styling is unchanged.')).toBeVisible();
+  await expect(scope.getByText('Automatic layout moved 1 node outside this scope. Style changes apply only to the reviewed targets.')).toBeVisible();
   await scope.getByText('Review moved nodes', { exact: true }).click();
   await expect(scope.getByText('Downstream (B)', { exact: true })).toBeVisible();
   await scope.getByText('Review preserved font sizes', { exact: true }).click();
@@ -495,4 +495,88 @@ test('preserves a successful design candidate when a different option fails', as
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const undone = await downloadProject(page, live);
   expect(undone).toEqual({ ...original, revision: accepted.revision + 1, updatedAt: undone.updatedAt });
+});
+
+test('applies a reviewed Decision diamond only within the selected recipe scope', async ({ page, browser }) => {
+  const base = JSON.parse(await readFile(new URL('../../src/lib/authoring/fixtures/example-project.json', import.meta.url), 'utf8'));
+  const [decision, manual] = base.identity.elements;
+  const outside = { ...decision, id: crypto.randomUUID(), binding: { type: 'source-id', sourceId: 'C' } };
+  const source = '\uFEFF' + (base.source + '  C["Outside decision"]\n').replace(/\n/g, '\r\n');
+  const project = {
+    ...base, source, title: 'Selected Decision shapes',
+    identity: { ...base.identity, elements: [...base.identity.elements, outside] },
+    design: { ...base.design, elements: { [manual.id]: { shape: 'circle' } } },
+    roles: [decision, manual, outside].map(item => ({ elementId: item.id, role: 'decision' })),
+  };
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  const library = page.getByRole('dialog', { name: 'Project migration and recovery' });
+  await library.getByLabel('Import v3 project file').setInputFiles({
+    name: 'selected-shapes.meridian.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await library.getByRole('button', { name: 'Open v3 project Selected Decision shapes' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  await expect(live.getByRole('img', { name: /Diagram preview for/ })).toBeVisible();
+  const before = await downloadProject(page, live);
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^Client/ }).click();
+  await outline.getByRole('treeitem', { name: /^API/ }).click({ modifiers: ['Shift'] });
+  await outline.getByRole('button', { name: 'Explore designs for selection' }).click();
+
+  const review = page.getByRole('dialog', { name: 'Explore designs' });
+  await expect(review.getByRole('combobox', { name: 'Design scope' })).toHaveValue('selection');
+  await review.getByRole('group', { name: 'Design recipes' }).getByRole('button', { name: /^Presentation/ }).click();
+  const useShapes = review.getByRole('checkbox', { name: 'Use diamonds for Decision nodes' });
+  await expect(useShapes).not.toBeChecked();
+  await useShapes.check();
+  await review.getByRole('button', { name: 'Preview Presentation' }).click();
+  const changes = review.getByRole('list', { name: 'Design changes' });
+  await expect(changes).toContainText('Client (A) · Presentation shape · Existing shape → Diamond');
+  await expect(changes).not.toContainText('Outside decision');
+  const scope = review.getByRole('region', { name: 'Reviewed design scope' });
+  await scope.getByText('Review preserved shapes').click();
+  await expect(scope.getByText('API (B)', { exact: true })).toBeVisible();
+  await review.getByRole('button', { name: 'Apply Presentation' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const accepted = await downloadProject(page, live);
+  expect(accepted.source).toBe(source);
+  expect(accepted.settings).toEqual(before.settings);
+  expect(accepted.design.recipe).toEqual(before.design.recipe);
+  expect(accepted.design.applyRoleShapes).toBe(false);
+  expect(accepted.design.recipeElements[decision.id]).toMatchObject({ recipe: { id: 'presentation', version: '1.0.0' }, style: { shape: 'diamond' } });
+  expect(accepted.design.elements[manual.id].shape).toBe('circle');
+  expect(accepted.design.recipeElements[manual.id].style.shape).toBeUndefined();
+  expect(accepted.design.recipeElements[outside.id]).toBeUndefined();
+
+  const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download HTML presentation' }).click()]);
+  const path = await file.path();
+  if (!path) throw new Error('Missing scoped presentation download.');
+  const offline = await browser.newContext({ offline: true });
+  try {
+    const presentation = await offline.newPage();
+    await presentation.setContent(await readFile(path, 'utf8'));
+    await expect(presentation.locator(`[data-element-key="${decision.id}"] polygon`)).toBeVisible();
+    await expect(presentation.locator(`[data-element-key="${manual.id}"] circle`)).toBeVisible();
+    const untouched = presentation.locator(`[data-element-key="${outside.id}"]`);
+    await expect(untouched).toContainText('Outside decision');
+    await expect(untouched.locator('polygon')).toHaveCount(0);
+  } finally { await offline.close(); }
+
+  await live.getByRole('button', { name: 'Export diagram', exact: true }).click();
+  const exportDialog = page.getByRole('dialog', { name: 'Take your diagram with you.' });
+  await exportDialog.getByRole('button', { name: /Mermaid/ }).click();
+  const [sourceFile] = await Promise.all([
+    page.waitForEvent('download'), exportDialog.getByRole('button', { name: 'Download MERMAID', exact: true }).click(),
+  ]);
+  const sourcePath = await sourceFile.path();
+  if (!sourcePath) throw new Error('Missing Mermaid source download.');
+  expect(await readFile(sourcePath, 'utf8')).toBe(source);
+  await exportDialog.getByRole('button', { name: 'Close dialog' }).click();
+
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await downloadProject(page, live);
+  expect(restored).toEqual({ ...before, revision: accepted.revision + 1, updatedAt: restored.updatedAt });
 });
