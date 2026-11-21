@@ -909,7 +909,9 @@
   cursor: pointer;
 }
 .project-outline > ul > li[data-current="true"] { border-color: #6b9783; }
-.project-outline > ul > li[aria-selected="true"] { background: #253f34; }
+.project-outline > ul > li:is([aria-selected="true"], [data-checked="true"]) { background: #253f34; }
+.outline-row-checkbox { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.outline-row-checkbox > span { display: grid; gap: 2px; }
 .project-outline small { color: #aac4b9; }
 .migration-preview mark { background: #dcefae; color: #17241e; }
 .recipe-options {

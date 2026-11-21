@@ -58,7 +58,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [deleteConnections, setDeleteConnections] = useState<{ ids: string[]; hidden: number }>();
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
-  const [renameTarget, setRenameTarget] = useState<string>();
+  const [editTarget, setEditTarget] = useState<string>();
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
   const [dismissedReadability, setDismissedReadability] = useState<ReadonlySet<string>>(new Set());
   const [readabilityOpen, setReadabilityOpen] = useState(false);
@@ -219,6 +219,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       ? [{ id: item.id, label: ids.has(item.id) ? `${item.label} (${ids.get(item.id)})` : item.label,
         sourceId: item.sourceId, targetId: item.targetId, direction: item.direction, explicit: ids.has(item.id), text: edgeLabels?.get(item.id) ?? "" }] : []) ?? [];
   }, [identities, targetTable, edgeLabels]);
+  const selectedSource = outlineSelection.size === 1 ? nodes.find(node => outlineSelection.has(node.id))?.id : undefined;
   const removableGroup = useMemo(() => {
     const identity = identities?.find(record => record.status === "resolved" && record.elementKind === "group"
       && record.binding.sourceId === ungroupSourceId);
@@ -266,8 +267,13 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   function renameFromOutline(id: string) {
     if (editingUnavailable || !nodes.some(node => node.id === id)) return;
     setOutlineOpen(false);
-    setRenameTarget(id);
+    setEditTarget(id);
     setEditFlowchart("setNodeLabel");
+  }
+  function openConnection() {
+    if (editingUnavailable || !nodes.length) return;
+    setEditTarget(selectedSource);
+    setEditFlowchart("addEdge");
   }
   function changeHistory(direction: "undo" | "redo") {
     void run(async () => {
@@ -318,7 +324,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: editingUnavailable, run: () => setEditFlowchart("addDecision") },
     { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
     { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
-      unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("addEdge") },
+      unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: openConnection },
     { id: "create-group", title: "Create group", category: "Diagram", synonyms: ["group nodes", "add subgraph"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose current node declarations." : undefined), run: () => setEditFlowchart("addGroup") },
     { id: "ungroup", title: "Ungroup", category: "Diagram", synonyms: ["remove container", "keep group members"],
@@ -422,6 +428,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
         canRename={!editingUnavailable} onClose={() => setOutlineOpen(false)}
         onRename={renameFromOutline} onSource={jumpToSource} onBulkText={setBulkTextHidden}
+        onConnect={!editingUnavailable && selectedSource ? openConnection : undefined}
         onDesign={flatFlowchart ? hidden => {
           setComparisonSelection({ ids: [...outlineSelection], hidden });
           setOutlineOpen(false);
@@ -520,9 +527,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return result.status;
         }} />}
       {editFlowchart && editor.current && (
-        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} initialOperation={editFlowchart} initialTarget={renameTarget}
+        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} initialOperation={editFlowchart} initialTarget={editTarget}
           deleteConnections={deleteConnections}
-          onClose={() => { setEditFlowchart(undefined); setRenameTarget(undefined); setDeleteConnections(undefined); }}
+          onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); }}
           onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);
