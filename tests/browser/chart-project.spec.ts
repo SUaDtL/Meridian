@@ -226,8 +226,12 @@ test('requires an explicit decimal and thousands separator for a localized data 
   expect(body).not.toContain('1.000,10');
 });
 
-test('finds a later chart value, changes visible columns, and navigates rows in studio and offline HTML', async ({ page, browser }, info) => {
-  const rows = Array.from({ length: 55 }, (_, index) => `Sample ${String(index + 1).padStart(2, '0')},${index + 1}`);
+test('finds an aggregate with its axes and units in studio and offline HTML', async ({ page, browser }, info) => {
+  const rows = Array.from({ length: 55 }, (_, index) => {
+    const sample = String(index + 1).padStart(2, '0');
+    const value = ((index + 1) / 100).toFixed(2);
+    return Array.from({ length: 20 }, () => `Sample ${sample},${value}`);
+  }).flat();
   await page.goto('/');
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   await page.getByRole('button', { name: 'Chart values' }).click();
@@ -236,14 +240,19 @@ test('finds a later chart value, changes visible columns, and navigates rows in 
     name: 'samples.csv', mimeType: 'text/csv', buffer: Buffer.from(['Sample,Count', ...rows, ''].join('\n')),
   });
   await chart.getByRole('button', { name: 'Read data' }).click();
-  await chart.getByRole('group', { name: 'Count', exact: true }).getByLabel('Type').selectOption('number');
+  const count = chart.getByRole('group', { name: 'Count', exact: true });
+  await count.getByLabel('Type').selectOption('number');
+  await count.getByLabel('Unit').fill('events');
   await chart.getByRole('button', { name: 'Confirm columns' }).click();
   await chart.getByLabel('Title', { exact: true }).fill('Read chart values');
   await chart.getByLabel('Y field').selectOption({ label: 'Count' });
+  await chart.getByLabel('Aggregation').selectOption('sum');
   await chart.getByRole('button', { name: 'Review chart' }).click();
   await chart.getByRole('button', { name: 'Create chart project' }).click();
   await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
 
+  const accessibleDescription = /Bar chart of Count \(events\) by Sample.*Aggregation is sum/;
+  await expect(chart.getByRole('img', { name: 'Read chart values' })).toHaveAccessibleDescription(accessibleDescription);
   const controls = chart.getByRole('region', { name: 'Displayed values', exact: true });
   const table = controls.getByRole('table', { name: 'Displayed values' });
   await expect(table.getByRole('row')).toHaveCount(51);
@@ -254,11 +263,19 @@ test('finds a later chart value, changes visible columns, and navigates rows in 
   await row51.press('ArrowDown');
   await expect(table.getByRole('row', { name: /Sample 52/ })).toBeFocused();
   await expect(controls.getByRole('status')).toContainText('Focused row 52, Sample 52.');
-  await controls.getByLabel('Find a value in displayed values').fill('Sample 54');
+  await controls.getByLabel('Find a value in displayed values').pressSequentially('Sample 54');
   await controls.getByText('Choose columns', { exact: true }).click();
   await controls.getByRole('checkbox', { name: 'Present values', exact: true }).uncheck();
   await expect(table.getByRole('columnheader', { name: 'Present values' })).toHaveCount(0);
-  await expect(table.getByRole('row', { name: /Sample 54/ })).toBeVisible();
+  async function verifyAggregate(values: typeof table) {
+    await expect(values.getByRole('columnheader', { name: 'Sample', exact: true })).toHaveAttribute('scope', 'col');
+    await expect(values.getByRole('columnheader', { name: 'Count (events)', exact: true })).toHaveAttribute('scope', 'col');
+    const row = values.getByRole('row', { name: /Sample 54/ });
+    await expect(row.getByRole('rowheader', { name: 'Sample 54' })).toHaveAttribute('scope', 'row');
+    await expect(row.getByRole('cell', { name: '10.8', exact: true })).toBeVisible();
+    await expect(row.getByRole('cell', { name: '20', exact: true })).toBeVisible();
+  }
+  await verifyAggregate(table);
   await page.screenshot({ path: info.outputPath('chart-table-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: info.outputPath('chart-table-mobile.png') });
@@ -272,6 +289,7 @@ test('finds a later chart value, changes visible columns, and navigates rows in 
   try {
     const offline = await context.newPage();
     await offline.setContent(html);
+    await expect(offline.getByRole('img', { name: 'Read chart values' })).toHaveAccessibleDescription(accessibleDescription);
     await offline.getByRole('searchbox', { name: 'Find a value in displayed values' }).fill('Sample 54');
     const result = offline.getByRole('table', { name: 'Displayed values, Rows 51–55 of 55' });
     const row = result.getByRole('row', { name: /Sample 54/ });
@@ -282,7 +300,7 @@ test('finds a later chart value, changes visible columns, and navigates rows in 
     await offline.getByText('Choose columns', { exact: true }).click();
     await offline.getByRole('checkbox', { name: 'Present values', exact: true }).uncheck();
     await expect(result.getByRole('columnheader', { name: 'Present values' })).toHaveCount(0);
-    await expect(row).toBeVisible();
+    await verifyAggregate(result);
   } finally {
     await context.close();
   }
