@@ -6,12 +6,13 @@ import { openApiNodeLimit, openApiSchemaScope, prepareOpenApiProject, prepareOpe
   type OpenApiChoice, type OpenApiSchemaChoice } from "../lib/authoring/openapi-project";
 import { buildExportFrame } from "../lib/export";
 import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
-import { listOpenApiCheckpoints, restoreOpenApiScope, saveOpenApiCheckpoint, type OpenApiCheckpoint } from "../lib/persistence/openapi-drafts";
+import { isOpenApiOperationCheckpoint, listOpenApiCheckpoints, restoreOpenApiScope, saveOpenApiCheckpoint, type OpenApiCheckpoint } from "../lib/persistence/openapi-drafts";
+import { restoreOpenApiOperations, saveOpenApiOperationCheckpoint } from "../lib/persistence/openapi-operation-drafts";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import Modal from "./Modal";
 
 const rowLimit = 50;
-const draftSave = "Saving the schema scope";
+const draftSave = "Saving the OpenAPI scope";
 type Review = Awaited<ReturnType<typeof prepareOpenApiProject>> & { url: string };
 const countLabel = (count: number, singular: string) => `${count} ${singular}${count === 1 ? "" : "s"}`;
 
@@ -104,31 +105,47 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   }
 
   function resume(saved: OpenApiCheckpoint) {
-    const resumed = restoreOpenApiScope(saved);
-    setView("schemas");
+    if (isOpenApiOperationCheckpoint(saved)) {
+      const resumed = restoreOpenApiOperations(saved);
+      setView("operations");
+      setFacts(resumed.facts);
+      setChoices(resumed.selection);
+      setSchemas(new Map());
+      setTitle(resumed.title);
+      setIncludeUnresolved(false);
+      setNotice("Saved operation scope restored. Preview it before creating a diagram.");
+    } else {
+      const resumed = restoreOpenApiScope(saved);
+      setView("schemas");
+      setFacts(resumed.facts);
+      setChoices(new Map());
+      setSchemas(resumed.selection);
+      setTitle(resumed.title);
+      setIncludeUnresolved(resumed.includeUnresolved);
+      setNotice("Saved schema scope restored. Preview it before creating a diagram.");
+    }
     setFiles([]);
-    setFacts(resumed.facts);
-    setSchemas(new Map(resumed.selection));
-    setTitle(resumed.title);
-    setIncludeUnresolved(resumed.includeUnresolved);
     setCheckpoint(saved);
     setRestoredScope(true);
     setQuery("");
     setVisibleLimit(rowLimit);
     setError("");
-    setNotice("Saved schema scope restored. Preview it before creating a diagram.");
   }
 
   function checkpointScope(close = false) {
-    if (!facts?.schemaView) return;
+    if (!facts) return;
     void run(draftSave, async signal => {
       const db = await openWorkspaceDatabase();
       try {
         signal.throwIfAborted();
-        const next = await saveOpenApiCheckpoint(db, { facts, selection: schemas, title, includeUnresolved }, checkpoint);
+        const savedOperations = checkpoint && isOpenApiOperationCheckpoint(checkpoint) ? checkpoint : undefined;
+        const savedSchemas = checkpoint && !isOpenApiOperationCheckpoint(checkpoint) ? checkpoint : undefined;
+        const next = facts.schemaView
+          ? await saveOpenApiCheckpoint(db, { facts, selection: schemas, title, includeUnresolved }, savedSchemas)
+          : await saveOpenApiOperationCheckpoint(db, { facts, selection: choices, title }, savedOperations);
         setCheckpoints(previous => [next, ...previous.filter(item => item.id !== next.id)]);
         setCheckpoint(next);
-        setNotice("Schema facts and scope saved in this browser.");
+        setNotice(facts.schemaView ? "Schema facts and scope saved in this browser." : "Operation facts and scope saved in this browser.");
         if (close) onClose();
       } finally { db.close(); }
     });
@@ -148,7 +165,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   }
 
   function close() {
-    if (facts?.schemaView && !busy) checkpointScope(true);
+    if (facts && !busy) checkpointScope(true);
     else onClose();
   }
 
@@ -221,7 +238,8 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
       {checkpoints.length > 0 && <ul className="project-list" aria-label="Saved OpenAPI scopes">
         {checkpoints.map(item => <li className="project-row" key={item.id}>
           <button type="button" className="project-open" disabled={!!busy} onClick={() => resume(item)}>
-            <strong>Resume {item.payload.title || "schema scope"}</strong><small>{item.payload.selectedFactIds.length} selected schemas</small>
+            <strong>Resume {item.payload.title || (isOpenApiOperationCheckpoint(item) ? "operation scope" : "schema scope")}</strong>
+            <small>{item.payload.selectedFactIds.length} selected {isOpenApiOperationCheckpoint(item) ? "operations" : "schemas"}</small>
           </button>
           <button type="button" className="button quiet" disabled={!!busy} onClick={() => discard(item)}>Discard scope draft</button>
         </li>)}
@@ -332,7 +350,9 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
       </ul>
       {visible.length < matching.length && <button type="button" className="button quiet" onClick={() => setVisibleLimit(value => value + rowLimit)}>Show more operations</button>}
       <div className="dialog-actions">
-        <button type="button" className="button quiet" disabled={!!busy} onClick={() => { setFacts(undefined); setError(""); }}>Choose another file</button>
+        <button type="button" className="button quiet" disabled={!!busy} onClick={() => { setFacts(undefined); setCheckpoint(undefined); setError(""); }}>Choose another file</button>
+        <button type="button" className="button quiet" disabled={!!busy} onClick={() => checkpoint ? discard(checkpoint, true) : onClose()}>Discard this scope</button>
+        <button type="button" className="button secondary" disabled={!!busy || totalNodes > openApiNodeLimit} onClick={() => checkpointScope()}>Save scope draft</button>
         <button type="submit" className="button primary" disabled={!!busy || !choices.size || totalNodes > openApiNodeLimit}>Preview diagram</button>
       </div>
     </form>}

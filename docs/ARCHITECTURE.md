@@ -121,6 +121,12 @@ scoped to an origin and browser profile and may be cleared by the browser or
 user. Portable project JSON is the interchange and backup format. Any future
 schema migration should read, validate, and preserve old data before replacing it.
 
+### OpenAPI operation checkpoints
+
+The F11 engineering draft definition provides generic operation facts and source locations. Resuming the operations view also needs every allowlisted tag in source order and the index of the reviewed primary tag. The browser-local draft payload therefore has an optional, closed `openApiOperations` field. It records the HTTP method, path, tags, primary tag index, and aggregate omitted coverage. The original file, descriptions, examples, and remote reference values are released.
+
+Existing schema and engineering drafts retain their current shape and reopen unchanged. Builds predating this field skip operation checkpoints. The newer reader reconstructs exact operation and tag pointers, validates all scope links, and runs a fresh preview before creating an independent project. The verification fixture covers reload, omitted input, precise tag provenance, and checkpoint cleanup after creation.
+
 ## Storyboard runtime and identities
 
 `src/lib/storyboard.ts` contains pure validation/timeline helpers and re-exports

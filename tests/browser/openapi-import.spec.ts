@@ -1,7 +1,21 @@
 import { readFile } from 'node:fs/promises';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
-test('reviews OpenAPI operations, keeps hidden selection, and stores precise provenance without raw file content', async ({ page }, info) => {
+function readDrafts(page: Page) {
+  return page.evaluate(() => new Promise<unknown[]>((resolve, reject) => {
+    const open = indexedDB.open('meridian-workspace');
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction('drafts');
+      const read = tx.objectStore('drafts').getAll();
+      tx.oncomplete = () => { db.close(); resolve(read.result); };
+      tx.onabort = () => { db.close(); reject(tx.error); };
+    };
+    open.onerror = () => reject(open.error);
+  }));
+}
+
+test('resumes reviewed OpenAPI operations and keeps precise provenance without the input file', async ({ page }, info) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   await page.getByRole('button', { name: 'Engineering file' }).click();
@@ -23,10 +37,32 @@ test('reviews OpenAPI operations, keeps hidden selection, and stores precise pro
   await dialog.getByRole('button', { name: 'Read operation facts' }).click();
   await expect(dialog.getByText(/Unresolved referenced path items: 1/)).toBeVisible();
   await dialog.getByRole('checkbox', { name: 'GET /pets/{id}' }).check();
+  await dialog.getByLabel('Display label').fill('Read one pet');
   await dialog.getByLabel('Primary tag').selectOption('Pets');
   await dialog.getByLabel('Find operations').fill('health');
   await expect(dialog.getByRole('status')).toContainText('1 selected outside visible rows');
   await dialog.getByLabel('Diagram title').fill('Pet operation reference');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(dialog).toBeHidden();
+  const drafts = await readDrafts(page);
+  expect(drafts).toEqual([expect.objectContaining({ feature: 'engineering-facts', payload: expect.objectContaining({
+    adapter: 'openapi', selectedFactIds: ['o1'], virtualPaths: ['specifications/service.json'],
+    facts: [expect.objectContaining({ externalKey: 'readPet', pointer: '/paths/~1pets~1{id}/get', label: 'Read one pet' }),
+      expect.objectContaining({ externalKey: 'GET /health' })],
+    openApiOperations: { referencedPathCount: 1, uncheckedSchemaCount: 1, details: [
+      { factId: 'o1', method: 'get', path: '/pets/{id}', tags: ['Pets', 'Read'], primaryTagIndex: 0 },
+      { factId: 'o2', method: 'get', path: '/health', tags: ['Health'], primaryTagIndex: null },
+    ] },
+  }) })]);
+  expect(JSON.stringify(drafts)).not.toMatch(/raw-file-secret|raw-description-secret|example\.invalid/);
+  await page.reload();
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Engineering file' }).click();
+  await dialog.getByRole('list', { name: 'Saved OpenAPI scopes' }).getByRole('button', { name: /Resume Pet operation reference/ }).click();
+  await expect(dialog.getByRole('checkbox', { name: 'GET /pets/{id}' })).toBeChecked();
+  await expect(dialog.getByLabel('Display label')).toHaveValue('Read one pet');
+  await expect(dialog.getByLabel('Primary tag')).toHaveValue('Pets');
+  await expect(dialog.getByText(/Unresolved referenced path items: 1. Schema definitions outside this view: 1./)).toBeVisible();
   await dialog.getByRole('button', { name: 'Preview diagram' }).click();
   await expect(dialog.getByRole('img', { name: 'Proposed OpenAPI operation diagram' })).toBeVisible();
   await expect(dialog.getByText('2 nodes · 1 connection · 1 operation fact omitted')).toBeVisible();
@@ -41,6 +77,8 @@ test('reviews OpenAPI operations, keeps hidden selection, and stores precise pro
   if (!path) throw new Error('Missing OpenAPI project download.');
   const contents = await readFile(path, 'utf8');
   const project = JSON.parse(contents);
+  expect(project.source).toContain('Read one pet');
+  expect(await readDrafts(page)).toEqual([]);
   expect(project.provenance).toContainEqual(expect.objectContaining({
     adapter: 'openapi-operations', adapterVersion: '1.0.0', virtualPath: 'specifications/service.json',
     pointer: '/paths/~1pets~1{id}/get/tags/0', relationship: 'Declared OpenAPI tag membership',
@@ -138,18 +176,7 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   await expect(dialog.getByRole('checkbox', { name: 'Account', exact: true })).toBeChecked();
   await expect(dialog.getByRole('checkbox', { name: 'Customer', exact: true })).toBeChecked();
   await expect(dialog.getByRole('textbox', { name: 'Display label' }).first()).toHaveValue('Account record');
-  const readDrafts = () => page.evaluate(() => new Promise<unknown[]>((resolve, reject) => {
-    const open = indexedDB.open('meridian-workspace');
-    open.onsuccess = () => {
-      const db = open.result;
-      const tx = db.transaction('drafts');
-      const read = tx.objectStore('drafts').getAll();
-      tx.oncomplete = () => { db.close(); resolve(read.result); };
-      tx.onabort = () => { db.close(); reject(tx.error); };
-    };
-    open.onerror = () => reject(open.error);
-  }));
-  const drafts = await readDrafts();
+  const drafts = await readDrafts(page);
   expect(drafts).toEqual([expect.objectContaining({ feature: 'engineering-facts',
     payload: expect.objectContaining({ adapter: 'openapi', title: 'OpenAPI schema relationships',
       selectedFactIds: ['s1', 's2'], selectedRelationshipIds: ['r1', 'r2'] }),
@@ -191,7 +218,7 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   })));
   expect(text).not.toMatch(/private-schema|example\.invalid|Audit/);
   expect(requested).toEqual([]);
-  expect(await readDrafts()).toEqual([]);
+  expect(await readDrafts(page)).toEqual([]);
 });
 
 test('requires reviewed distinct virtual paths and retains provenance across supplied OpenAPI files', async ({ page }) => {
