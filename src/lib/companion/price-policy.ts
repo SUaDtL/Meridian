@@ -59,3 +59,23 @@ export function agreedCharge(
   }
   return { code: 'ACCEPTED', reserveMicrousd };
 }
+
+export type ProviderUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  overheadMicrousd: string;
+};
+
+export function knownCharge(policy: PricePolicy, usage: ProviderUsage): bigint {
+  const ceiling = priceCeiling(policy);
+  const checkedTokens = (count: number, cap: number) => {
+    if (!Number.isInteger(count) || count < 0 || count > cap) throw new RangeError('Usage exceeds the priced limits.');
+    return BigInt(count);
+  };
+  const input = checkedTokens(usage.inputTokens, policy.maxInputTokens) * parseMoney(policy.inputMicrousdPerMillionTokens);
+  const output = checkedTokens(usage.outputTokens, policy.maxOutputTokens) * parseMoney(policy.outputMicrousdPerMillionTokens);
+  const overhead = parseMoney(usage.overheadMicrousd);
+  const charge = (input + output + million - 1n) / million + overhead;
+  if (overhead > parseMoney(policy.fixedUpperBoundMicrousd) || charge > ceiling) throw new RangeError('Usage exceeds the priced limits.');
+  return charge;
+}
