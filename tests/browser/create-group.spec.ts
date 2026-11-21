@@ -61,3 +61,43 @@ test('reviews exact group members and boundary connections, preserves identities
   expect(restored.source).toBe(original.source);
   expect(restored.identity).toEqual(original.identity);
 });
+
+test('moves an outside declaration into a reviewed group and preserves exact project annotations and Undo', async ({ page }) => {
+  const moved = '  B[Outside]\r\n';
+  const source = '\uFEFFflowchart LR\r\n' + moved
+    + '  subgraph Team [Review group]\r\n    A[Member]\r\n  end\r\n  C[Finish]\r\n  A local@--> B\r\n  B external@-->|"Send"| C\r\n  linkStyle 1 stroke:#123456\r\n';
+  const project = { ...createDocument(), title: 'Move a node into review', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Move a node into review' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Move a node into review' })).toBeVisible();
+  const original = await download(page, live);
+
+  await live.getByRole('button', { name: 'Move node into group', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await expect(edit.getByRole('button', { name: 'Apply change' })).toBeDisabled();
+  const picker = edit.getByLabel('Node to move into Review group');
+  await expect(picker.getByRole('option', { name: 'Member (A)' })).toHaveCount(0);
+  await picker.selectOption({ label: 'Outside (B)' });
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  const impact = edit.getByRole('region', { name: 'Group move impact' });
+  await expect(impact).toContainText('Outside (B) will join Review group.');
+  await expect(impact.getByRole('list', { name: 'Connections retained' }).getByRole('listitem')).toHaveCount(2);
+  await edit.getByRole('button', { name: 'Apply change' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const applied = await download(page, live);
+  expect(applied).toEqual({
+    ...original, revision: original.revision + 1, updatedAt: applied.updatedAt,
+    source: source.replace(moved, '').replace('  end\r\n', moved + '  end\r\n'),
+  });
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await download(page, live);
+  expect(restored.source).toBe(original.source);
+  expect(restored.identity).toEqual(original.identity);
+});

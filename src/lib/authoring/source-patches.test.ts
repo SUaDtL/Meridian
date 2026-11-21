@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySourcePatches, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupCreation, planGroupRemoval, planNodeAddition, planNodeLabel, planNodeRemoval } from './source-patches';
+import { applySourcePatches, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, supportedGroupMoves } from './source-patches';
 
 it('wraps a consecutive authored range and leaves comments and relationship lines byte-exact', () => {
   const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  %% Between declarations\r\n  B[Second] %% Keep this comment\r\n  C[Last]\r\n  A first@--> B\r\n  B second@--> C\r\n';
@@ -16,6 +16,16 @@ it('wraps a consecutive authored range and leaves comments and relationship line
   expect(applySourcePatches(grouped, inverse.patches)).toBe(source);
   const nested = grouped.replace('  A[First]', '  subgraph nested [Nested]\r\n  A[First]').replace('  B[Second]', '  end\r\n  B[Second]');
   expect(() => planGroupRemoval(nested, 'm_g1')).toThrow('source panel');
+});
+
+it('moves the exact standalone line and omits members and shared source lines', () => {
+  const line = '  B[Outside] %% Keep with B\r\n';
+  const source = '\uFEFFflowchart LR\r\n' + line + '  subgraph Team [Team]\r\n  A[Member]\r\n  end\r\n  C[Shared]; D[Shared]\r\n  A link@--> B\r\n';
+  expect(supportedGroupMoves(source, 'Team')).toEqual(['B']);
+  const plan = planMoveToGroup(source, 'B', 'Team');
+  expect(applySourcePatches(source, plan.patches)).toBe(source.replace(line, '').replace('  end\r\n', line + '  end\r\n'));
+  expect(() => planMoveToGroup(source, 'A', 'Team')).toThrow('outside node');
+  expect(() => planMoveToGroup(source, 'C', 'Team')).toThrow('own source line');
 });
 
 it('removes only the exact incident set and preserves unaffected linkStyle positions', () => {
