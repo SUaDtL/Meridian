@@ -104,11 +104,17 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
       intent = { op: 'removeGroup', sourceId: group.binding.sourceId };
       removal = [{ id: group.id, legacyKey: `group:${group.binding.sourceId}` }];
       if (edit.op === 'removeGroupContents') {
-        const members = edit.memberIds.map(nodeSourceId);
+        const members = edit.memberIds.map(id => {
+          const member = previousById.get(id);
+          if (!member || member.status !== 'resolved' || (member.elementKind !== 'node' && member.elementKind !== 'group')) {
+            throw new Error('Choose current nodes and groups in this project.');
+          }
+          return member;
+        });
         const incidentEdgeIds = edit.incidentEdgeIds.map(edgeSourceId);
-        intent = { op: edit.op, sourceId: group.binding.sourceId, members, incidentEdgeIds };
+        intent = { op: edit.op, sourceId: group.binding.sourceId, members: members.map(item => item.binding.sourceId), incidentEdgeIds };
         removal.push(
-          ...edit.memberIds.map((id, index) => ({ id, legacyKey: `node:${members[index]}` })),
+          ...members.map(item => ({ id: item.id, legacyKey: `${item.elementKind}:${item.binding.sourceId}` })),
           ...edit.incidentEdgeIds.map((id, index) => ({ id, legacyKey: `edge:id:${incidentEdgeIds[index]}` })),
         );
       }

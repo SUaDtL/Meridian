@@ -327,6 +327,54 @@ test('removes one nested container while keeping the parent, member identities, 
   expect(restored.identity).toEqual(original.identity);
 });
 
+test('reviews a nested group deletion and retires only the confirmed footprint', async ({ page }, info) => {
+  const source = '\uFEFFflowchart LR\r\n  subgraph Fleet [Fleet]\r\n    subgraph Rack [Rack]\r\n'
+    + '      subgraph Pool [Pool]\r\n        A[Service]\r\n      end\r\n      B[Worker]\r\n    end\r\n'
+    + '    C[Neighbor]\r\n  end\r\n  D[Outside]\r\n  A internal@--> B\r\n'
+    + '  Pool boundary@-->|"Reports"| D\r\n  C retained@--> D\r\n  linkStyle 0,1,2 stroke:#446677\r\n';
+  const live = await openProject(page, 'Delete a nested group', source);
+  const download = async () => {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing project backup.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  };
+  const original = await download();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  await outline.getByRole('treeitem', { name: /Rack/ }).click();
+  await outline.getByRole('button', { name: 'Delete group and contents' }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  const footprint = edit.getByRole('region', { name: 'Group contents to delete' });
+  await expect(footprint.getByRole('list', { name: 'Nested groups to delete' })).toHaveText('Pool');
+  await expect(footprint.getByRole('list', { name: 'Nodes to delete' }).getByRole('listitem')).toHaveText(['Service (A)', 'Worker (B)']);
+  const connections = footprint.getByRole('list', { name: 'Connections to delete' });
+  await expect(connections.getByRole('listitem')).toHaveCount(2);
+  await expect(connections).toContainText('Reports');
+  await expect(connections).not.toContainText('retained');
+  const apply = edit.getByRole('button', { name: 'Apply change' });
+  await expect(apply).toBeDisabled();
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  await expect(apply).toBeEnabled();
+  await page.screenshot({ path: info.outputPath('nested-deletion-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('nested-deletion-mobile.png') });
+  await apply.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const applied = await download();
+  expect(applied.source).toBe(
+    '\uFEFFflowchart LR\r\n  subgraph Fleet [Fleet]\r\n        \r\n      \r\n    C[Neighbor]\r\n  end\r\n'
+      + '  D[Outside]\r\n  \r\n  \r\n  C retained@--> D\r\n  linkStyle 0 stroke:#446677\r\n',
+  );
+  expect(applied.identity.elements.filter((item: { status: string }) => item.status === 'resolved')).toEqual(
+    original.identity.elements.filter((item: { binding: { sourceId: string } }) => ['Fleet', 'C', 'D', 'retained'].includes(item.binding.sourceId)),
+  );
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await download();
+  expect(restored).toEqual({ ...original, revision: applied.revision + 1, updatedAt: restored.updatedAt });
+});
+
 test('moves a reviewed node between nested groups while preserving its bindings and source bytes', async ({ page }, info) => {
   const declaration = '      B[Worker]\r\n';
   const source = '\uFEFFflowchart LR\r\n  subgraph Fleet [Fleet]\r\n    subgraph Rack [Rack]\r\n      A[Service]\r\n    end\r\n'

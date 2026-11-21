@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySourcePatches, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupContentsRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, supportedGroupMoves } from './source-patches';
+import { applySourcePatches, groupContentsDeletionScopes, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupContentsRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, supportedGroupMoves } from './source-patches';
 
 it('wraps a consecutive authored range and leaves comments and relationship lines byte-exact', () => {
   const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  %% Between declarations\r\n  B[Second] %% Keep this comment\r\n  C[Last]\r\n  A first@--> B\r\n  B second@--> C\r\n';
@@ -52,6 +52,27 @@ it('requires the full group deletion footprint and leaves all unidentified conne
   expect(() => planGroupContentsRemoval(source.replace('crossing@', ''), 'Team', ['A', 'B'], ['inside'])).toThrow('explicit source ID');
   expect(() => planGroupContentsRemoval(source.replace(' C[Outside]\n', '').replace(' B crossing@--> C\n', ''),
     'Team', ['A', 'B'], ['inside'])).toThrow('Keep at least one node');
+});
+
+it('requires every descendant and connection when deleting nested group contents', () => {
+  const source = '\uFEFFflowchart LR\r\n'
+    + '  subgraph Fleet [Fleet]\r\n    subgraph Rack [Rack]\r\n      subgraph Pool [Pool]\r\n'
+    + '        %% Keep this note\r\n        A[Service]\r\n      end\r\n      B[Worker]\r\n    end\r\n'
+    + '    C[Neighbor]\r\n  end\r\n  D[Outside]\r\n  A inside@--> B\r\n  Pool container@--> D\r\n'
+    + '  Rack boundary@--> D\r\n  C kept@--> D\r\n  linkStyle 1,3 stroke:#446677\r\n';
+  const members = ['Pool', 'B', 'A'];
+  const incident = ['inside', 'container', 'boundary'];
+  expect(groupContentsDeletionScopes(source).get('Rack')).toEqual({ members, connections: incident });
+  expect(() => planGroupContentsRemoval(source, 'Rack', ['A', 'B'], incident)).toThrow('every current group member');
+  expect(() => planGroupContentsRemoval(source, 'Rack', members, ['inside', 'boundary'])).toThrow('all incident connections');
+  expect(() => planGroupContentsRemoval(source.replace('container@', ''), 'Rack', members, ['inside', 'boundary'])).toThrow('explicit source ID');
+  expect(() => planGroupContentsRemoval(source.replace('    C[Neighbor]\r\n', '').replace('C kept@--> D', 'D kept@--> D'),
+    'Rack', members, incident)).toThrow('containing group');
+  const patches = planGroupContentsRemoval(source, 'Rack', members, incident).patches;
+  expect(applySourcePatches(source, patches)).toBe(
+    '\uFEFFflowchart LR\r\n  subgraph Fleet [Fleet]\r\n        %% Keep this note\r\n        \r\n      \r\n'
+      + '    C[Neighbor]\r\n  end\r\n  D[Outside]\r\n  \r\n  \r\n  \r\n  C kept@--> D\r\n  linkStyle 0 stroke:#446677\r\n',
+  );
 });
 
 it('removes only the exact incident set and preserves unaffected linkStyle positions', () => {

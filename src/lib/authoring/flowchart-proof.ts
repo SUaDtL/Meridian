@@ -49,8 +49,7 @@ function readModel(model: FlowModel | undefined, allowGroup = false) {
 type SemanticGraph = ReturnType<typeof readModel>;
 
 function planSourceEdit(source: string, intent: SourceIntent): {
-  sourceId: string; patches: SourcePatch[]; edgeId?: string; from?: string; to?: string; memberIds?: string[]; flatSource?: string;
-  afterGroupRemoval?: SourcePatch[];
+  sourceId: string; patches: SourcePatch[]; edgeId?: string; from?: string; to?: string;
 } {
   switch (intent.op) {
     case 'addNode': return planNodeAddition(source, intent.label, intent.shape);
@@ -114,10 +113,11 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
     case 'removeNode':
     case 'removeGroupContents': {
       const removed = new Set(intent.incidentEdgeIds);
-      const members = new Set(intent.op === 'removeGroupContents' ? intent.members : [sourceId]);
+      const members = new Set(intent.op === 'removeGroupContents' ? [sourceId, ...intent.members] : [sourceId]);
       return {
         ...graph,
-        groups: intent.op === 'removeGroupContents' ? [] : graph.groups,
+        groups: graph.groups.filter(group => !members.has(group.id)).map(group =>
+          ({ ...group, members: group.members.filter(id => !members.has(id)) })),
         nodes: graph.nodes.filter(node => !members.has(node.id)),
         edges: graph.edges.filter(edge => !edge.id || !removed.has(edge.id)),
       };
@@ -220,18 +220,15 @@ export async function proveFlowchartEdit(
   signal?: AbortSignal,
 ) {
   const plan = planSourceEdit(document.source, intent);
-  const patched = applySourcePatches(document.source, plan.patches);
-  const source = plan.afterGroupRemoval ? applySourcePatches(patched, plan.afterGroupRemoval) : patched;
-  const groupId = intent.op === 'removeGroupContents' ? intent.sourceId : undefined;
-  const canReadGroups = intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel' || intent.op === 'removeGroup' || intent.op === 'moveToGroup';
+  const source = applySourcePatches(document.source, plan.patches);
+  const canReadGroups = intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel' || intent.op === 'removeGroup'
+    || intent.op === 'removeGroupContents' || intent.op === 'moveToGroup';
   const groupedSource = canReadGroups ? groupedFlowchartTopology(document.source) : undefined;
-  const sourceTopology = groupedSource?.topology ?? flowchartSubsetTopology(plan.flatSource ?? document.source);
+  const sourceTopology = groupedSource?.topology ?? flowchartSubsetTopology(document.source);
   const groupedEdit = !!groupedSource?.groups.size;
   const render = (text: string) => renderDiagram(text, document.settings, document.nodeAccents ?? {}, document.design, { signal });
   const initial = await render(document.source);
-  const before = readModel(flowchartModelFor(initial), !!groupId || groupedEdit);
-  if (groupId && (before.groups.length !== 1 || before.groups[0].id !== groupId
-    || canonicalJson(before.groups[0].members) !== canonicalJson(plan.memberIds?.sort()))) throw mismatch();
+  const before = readModel(flowchartModelFor(initial), groupedEdit);
   verifySourceTopology(before, sourceTopology, groupedSource?.groups);
   const output = source === document.source ? initial : await render(source);
   const actual = readModel(flowchartModelFor(output), groupedEdit || intent.op === 'addGroup' || intent.op === 'moveToGroup');
@@ -249,7 +246,7 @@ export async function proveFlowchartEdit(
     verifyVisibleLabel(output, intent, plan.sourceId);
     expected = expectedEdit(before, intent, plan.sourceId, source !== document.source);
   }
-  const ordered = (graph: SemanticGraph) => intent.op === 'removeGroup' || intent.op === 'moveToGroup'
+  const ordered = (graph: SemanticGraph) => intent.op === 'removeGroup' || intent.op === 'removeGroupContents' || intent.op === 'moveToGroup'
     ? { ...graph, nodes: [...graph.nodes].sort(byId), groups: [...graph.groups].sort(byId) } : graph;
   if (canonicalJson(ordered(actual)) !== canonicalJson(ordered(expected))) throw mismatch();
   return { source, sourceId: plan.sourceId, render: output, addedEdgeId };
