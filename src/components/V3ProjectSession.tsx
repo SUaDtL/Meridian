@@ -744,7 +744,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return result.status;
         }} />}
       {orphanReviewOpen && project && editor.current && <Suspense fallback={null}>
-        <OrphanReviewDialog editor={editor.current} project={project} onClose={() => setOrphanReviewOpen(false)}
+        <OrphanReviewDialog editor={editor.current} project={project} targets={targetTable ?? undefined} onClose={() => setOrphanReviewOpen(false)}
           onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);
