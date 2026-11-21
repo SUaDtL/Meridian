@@ -6,6 +6,7 @@ import type { RenderTargetTable } from "../lib/authoring/project-render";
 import { downloadBlob } from "../lib/download";
 import { buildExportFrame } from "../lib/export";
 import { cleanPendingAssist, savePendingAssist } from "../lib/persistence/pending-assist";
+import type { RenderElement } from "../types/design";
 import Modal from "./Modal";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
@@ -14,8 +15,9 @@ type RequestPreview = Awaited<ReturnType<typeof buildAssistRequest>>;
 const batchSize = 30;
 const durableActions = new Set(["Saving request", "Applying suggestion"]);
 
-export default function AssistExchangeDialog({ db, editor, project, table, edgeLabels, onApplied, onClose }: {
+export default function AssistExchangeDialog({ db, editor, project, table, elements, edgeLabels, onApplied, onClose }: {
   db: IDBDatabase; editor: Editor; project: MermaidProjectV3; table: RenderTargetTable; edgeLabels: ReadonlyMap<string, string>;
+  elements: readonly RenderElement[];
   onApplied: () => void; onClose: () => void;
 }) {
   const [mode, setMode] = useState<"export" | "import">("export");
@@ -55,7 +57,9 @@ export default function AssistExchangeDialog({ db, editor, project, table, edgeL
 
   function reviewRequest() {
     void run("Preparing request", async signal => {
-      const result = await buildAssistRequest(project, table, edgeLabels, selected, instruction, writableEdges, edgeOperation);
+      const edgeStyles = new Map(elements.flatMap(item => item.kind === "edge" && item.appearance?.lineStyle
+        ? [[item.key, item.appearance.lineStyle] as const] : []));
+      const result = await buildAssistRequest(project, table, edgeLabels, edgeStyles, selected, instruction, writableEdges, edgeOperation);
       signal.throwIfAborted();
       if (editor.snapshot() !== project) throw new Error("The project changed. Close this dialog and review the current diagram.");
       setRequest(result);
@@ -191,7 +195,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, edgeL
       <details open={writableEdges.size > 0 || undefined}><summary>{request.request.graph.edges.length} declared relationships in the selected scope</summary>
         <ul>{request.request.graph.edges.map(edge => <li key={edge.id}>
           {labels.get(edge.sourceId)} {edge.direction === "both" ? "↔" : edge.direction === "forward" ? "→" : "—"} {labels.get(edge.targetId)}
-          {edge.label && ` (${edge.label})`} · {request.request.scope.writableElementIds.includes(edge.id)
+          {edge.label && ` (${edge.label})`} · {edge.lineStyle} · {request.request.scope.writableElementIds.includes(edge.id)
             ? request.request.allowedOperations.includes("removeEdge") ? "Removal allowed" : "Writable connection" : "Read-only context"}
         </li>)}</ul>
       </details>

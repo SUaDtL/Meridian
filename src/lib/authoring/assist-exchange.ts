@@ -85,6 +85,7 @@ export async function buildAssistRequest(
   document: MermaidProjectV3,
   table: RenderTargetTable,
   edgeLabels: ReadonlyMap<string, string>,
+  edgeStyles: ReadonlyMap<string, Edge['lineStyle']>,
   chosen: ReadonlyMap<string, AssistSelection>,
   instruction: string,
   writableEdges: ReadonlySet<string> = new Set(),
@@ -135,13 +136,14 @@ export async function buildAssistRequest(
       }),
       edges: scopedEdges.map(item => {
         const label = edgeLabels.get(item.id);
-        if (label === undefined || !item.sourceId || !item.targetId || !item.direction
+        const lineStyle = edgeStyles.get(item.id);
+        if (label === undefined || !item.sourceId || !item.targetId || !item.direction || !lineStyle
           || [...label].length > 200 || /[\u0000-\u001f\uD800-\uDFFF]/u.test(label)) {
           throw new Error('A selected relationship cannot be shared. Choose a smaller scope.');
         }
         return {
           id: item.id, elementKind: 'edge', sourceId: item.sourceId, targetId: item.targetId,
-          label, direction: item.direction, lineStyle: 'solid',
+          label, direction: item.direction, lineStyle,
         };
       }),
       groups: [],

@@ -609,8 +609,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
             setProject(editor.current!.snapshot());
           } }} />
       </Suspense>}
-      {assistOpen && project && targetTable && edgeLabels && flatFlowchart && connection.current && editor.current && <Suspense>
-        <AssistExchangeDialog db={connection.current} editor={editor.current} project={project} table={targetTable} edgeLabels={edgeLabels}
+      {assistOpen && project && currentFrame && targetTable && edgeLabels && flatFlowchart && connection.current && editor.current && <Suspense>
+        <AssistExchangeDialog db={connection.current} editor={editor.current} project={project} table={targetTable}
+          elements={currentFrame.rendered.result.elements ?? []} edgeLabels={edgeLabels}
           onClose={() => setAssistOpen(false)} onApplied={() => {
             setAssistOpen(false);
             setProject(editor.current!.snapshot());

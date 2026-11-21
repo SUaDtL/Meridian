@@ -121,7 +121,7 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
 });
 
 test('grants one explicit connection label with context-only endpoints and protects its parallel neighbor', async ({ page, context }, info) => {
-  const source = 'flowchart LR\r\n A[First]\r\n B[Second]\r\n A keep@-->|"Keep this"| B\r\n A clear@-->|"Clear this"| B\r\n';
+  const source = 'flowchart LR\r\n A[First]\r\n B[Second]\r\n A keep@-->|"Keep this"| B\r\n A clear@-->|"Clear this"| B\r\n linkStyle 0 stroke-dasharray:7 5\r\n linkStyle 1 stroke-dasharray:2 4\r\n';
   const live = await openProject(page, 'Connection exchange', source);
   const projectFile = live.getByRole('button', { name: 'Download v3 project' });
   const original = JSON.parse(await download(page, projectFile));
@@ -140,8 +140,11 @@ test('grants one explicit connection label with context-only endpoints and prote
   await connection.check();
   await dialog.getByRole('button', { name: 'Review what will be shared' }).click();
   const disclosure = dialog.getByRole('region', { name: 'What will be shared' });
-  await expect(disclosure.getByText(/Clear this.*Writable connection/)).toBeVisible();
+  await expect(disclosure.getByText(/Clear this.*dotted.*Writable connection/)).toBeVisible();
+  await expect(disclosure.getByText(/Keep this.*dashed.*Read-only context/)).toBeVisible();
   const request = JSON.parse(await download(page, dialog.getByRole('button', { name: 'Download request' })));
+  expect(request.graph.edges.map((edge: { label: string; lineStyle: string }) => [edge.label, edge.lineStyle]))
+    .toEqual([['Keep this', 'dashed'], ['Clear this', 'dotted']]);
   const edgeId = request.graph.edges.find((edge: { label: string }) => edge.label === 'Clear this').id;
   const otherId = request.graph.edges.find((edge: { label: string }) => edge.label === 'Keep this').id;
   expect(request.scope.writableElementIds).toEqual([edgeId]);
