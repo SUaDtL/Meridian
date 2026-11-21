@@ -62,6 +62,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [framedTargets, setFramedTargets] = useState<{ frame: Frame; url: string; count: number }>();
   const [error, setError] = useState("");
   const [renderError, setRenderError] = useState("");
+  const [drawingAttempt, setDrawingAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [editHeading, setEditHeading] = useState(false);
   const [editFlowchart, setEditFlowchart] = useState<NativeFlowchartEdit["op"]>();
@@ -168,7 +169,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [project]);
+  }, [project, drawingAttempt]);
   useEffect(() => () => { if (framedTargets) URL.revokeObjectURL(framedTargets.url); }, [framedTargets]);
 
   async function run(work: () => Promise<void>) {
@@ -568,7 +569,14 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
             <div className="v3-panel-workspace" data-active-panel={mobilePanel}>
               <section data-v3-panel="Canvas" aria-label="Diagram canvas" className="migration-preview">
                 {currentFrame && <div className="v3-canvas-image">
-                  <img ref={previewImage} src={previewUrl} alt={`Diagram preview for ${title}`} draggable={false} onClick={selectCanvasNode} />
+                  <img ref={previewImage} src={previewUrl} alt={`Diagram preview for ${title}`} draggable={false} onClick={selectCanvasNode} onError={event => {
+                    if (event.currentTarget.src !== previewUrl) return;
+                    URL.revokeObjectURL(event.currentTarget.src);
+                    setFrame(undefined);
+                    setFramedTargets(undefined);
+                    setCanvasMessage("");
+                    setRenderError("The browser could not display the drawing. You can still download the project.");
+                  }} />
                   {!focusedFrame && selectedCanvasBounds.length > 0 && (
                     <svg aria-hidden="true" className="v3-canvas-selection" viewBox={`0 0 ${currentFrame.geometry.width} ${currentFrame.geometry.height}`}>
                       {selectedCanvasBounds.map(target => {
@@ -596,7 +604,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                   }}>Fit full diagram</button>
                 </div>}
                 {!currentFrame && !renderError && <p role="status">Rendering the current diagram…</p>}
-                {renderError && <p role="alert">{renderError}</p>}
+                {renderError && <>
+                  <p role="alert">{renderError}</p>
+                  <button type="button" className="button secondary" onClick={() => setDrawingAttempt(count => count + 1)}>Retry drawing</button>
+                </>}
               </section>
               <section data-v3-panel="Build" aria-label="Build tools">
                 <div className="migration-preview">
