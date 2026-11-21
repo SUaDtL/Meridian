@@ -127,6 +127,60 @@ test('uses touch checkboxes across filters and refuses selection beyond the inte
   } finally { await context.close(); }
 });
 
+test('groups the complete reviewed outline selection and refuses a mixed selection', async ({ page }, info) => {
+  const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  B[Second]\r\n  C[Third]\r\n  A internal@--> B\r\n  B outside@-->|"External"| C\r\n';
+  const live = await openProject(page, 'Group outline selection', source);
+  const download = async () => {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing grouped project download.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  };
+  const before = await download();
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^First/ }).click();
+  await outline.getByRole('treeitem', { name: /^Second/ }).click({ modifiers: ['Shift'] });
+  const group = outline.getByRole('button', { name: 'Group selected nodes' });
+  await expect(group).toBeVisible();
+  await outline.getByRole('button', { name: 'Relationships', exact: true }).click();
+  const edge = outline.getByRole('option', { name: /outside/ });
+  await edge.click({ modifiers: ['Shift'] });
+  await expect(group).toHaveCount(0);
+  await edge.click({ modifiers: ['Shift'] });
+  await outline.getByRole('button', { name: 'Nodes and groups' }).click();
+  await outline.getByRole('textbox', { name: 'Find an element' }).fill('First');
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 1 hidden');
+  await group.click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  const scope = edit.getByRole('region', { name: 'Selected group members' });
+  await expect(scope.getByText('2 selected · 1 hidden in the outline')).toBeVisible();
+  await expect(scope.getByRole('listitem')).toHaveText(['First (A)', 'Second (B)']);
+  await edit.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(group).toBeFocused();
+  await group.click();
+  await edit.getByRole('textbox', { name: 'Group label' }).fill('Team boundary');
+  const apply = edit.getByRole('button', { name: 'Apply change' });
+  await expect(apply).toBeDisabled();
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  const impact = edit.getByRole('region', { name: 'Group impact' });
+  await expect(impact.getByRole('list', { name: 'Connections crossing the group' })).toContainText('outside');
+  await page.screenshot({ path: info.outputPath('outline-group-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('outline-group-mobile.png') });
+  await apply.click();
+  await expect(outline.getByRole('status')).toContainText('2 selected');
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const grouped = await download();
+  expect(grouped.source).toBe(source.replace('  A[First]\r\n  B[Second]\r\n', '  subgraph m_g1 ["Team boundary"]\r\n  A[First]\r\n  B[Second]\r\n  end\r\n'));
+  expect(grouped.identity.elements.slice(0, before.identity.elements.length)).toEqual(before.identity.elements);
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await download();
+  expect(restored).toEqual({ ...before, revision: grouped.revision + 1, updatedAt: restored.updatedAt });
+});
+
 test('applies one reviewed text color to eligible labels across an outline filter', async ({ page }, info) => {
   const nodes = Array.from({ length: 10 }, (_, index) => `N${index}[${index < 2 ? 'Focus' : 'Other'} ${index}]`);
   const source = ['flowchart LR', ...nodes, 'N0 path@--> N1', ''].join('\n');
