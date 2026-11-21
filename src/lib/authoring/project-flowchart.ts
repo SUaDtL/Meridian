@@ -22,6 +22,7 @@ export type NativeFlowchartEdit =
   | { op: 'addEdge'; sourceId: string; targetId: string; label?: string; direction?: ConnectionDirection }
   | { op: 'addGroup'; memberIds: readonly string[]; label: string }
   | { op: 'removeGroup'; targetId: string }
+  | { op: 'removeGroupContents'; targetId: string; memberIds: readonly string[]; incidentEdgeIds: readonly string[] }
   | { op: 'moveToGroup'; targetId: string; groupId: string }
   | { op: 'removeNode'; targetId: string; incidentEdgeIds: readonly string[] }
   | { op: 'removeEdges'; targetIds: readonly string[] }
@@ -96,11 +97,21 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
     case 'addGroup':
       intent = { op: 'addGroup', members: edit.memberIds.map(nodeSourceId), label: edit.label };
       break;
-    case 'removeGroup': {
+    case 'removeGroup':
+    case 'removeGroupContents': {
       const group = previousById.get(edit.targetId);
       if (!group || group.status !== 'resolved' || group.elementKind !== 'group') throw new Error('Choose a current diagram group.');
       intent = { op: 'removeGroup', sourceId: group.binding.sourceId };
       removal = [{ id: group.id, legacyKey: `group:${group.binding.sourceId}` }];
+      if (edit.op === 'removeGroupContents') {
+        const members = edit.memberIds.map(nodeSourceId);
+        const incidentEdgeIds = edit.incidentEdgeIds.map(edgeSourceId);
+        intent = { op: edit.op, sourceId: group.binding.sourceId, members, incidentEdgeIds };
+        removal.push(
+          ...edit.memberIds.map((id, index) => ({ id, legacyKey: `node:${members[index]}` })),
+          ...edit.incidentEdgeIds.map((id, index) => ({ id, legacyKey: `edge:id:${incidentEdgeIds[index]}` })),
+        );
+      }
       break;
     }
     case 'moveToGroup': {
@@ -157,7 +168,8 @@ export async function prepareFlowchartCandidate(document: MermaidProjectV3, edit
   const target = added.find(item => item.binding.sourceId === proof.sourceId
     && item.elementKind === (edit.op === 'addEdge' ? 'edge' : edit.op === 'addGroup' ? 'group' : 'node'));
   const noNewIdentity = edit.op === 'setNodeLabel' || edit.op === 'setEdgeLabel' || edit.op === 'removeEdge'
-    || edit.op === 'removeEdges' || edit.op === 'removeNode' || edit.op === 'removeGroup' || edit.op === 'moveToGroup';
+    || edit.op === 'removeEdges' || edit.op === 'removeNode' || edit.op === 'removeGroup'
+    || edit.op === 'removeGroupContents' || edit.op === 'moveToGroup';
   const validAdded = noNewIdentity ? !added.length
     : edit.op === 'addNext' ? added.length === 2 && !!target && added.some(item => item.elementKind === 'edge' && item.binding.sourceId === proof.addedEdgeId)
     : added.length === 1 && !!target;

@@ -248,8 +248,18 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     const identity = identities?.find(record => record.status === "resolved" && record.elementKind === "group"
       && record.binding.sourceId === ungroupSourceId);
     const target = targetTable?.targets.find(item => item.id === identity?.id && item.elementKind === "group");
-    return target ? { id: target.id, label: target.label || "Diagram group" } : undefined;
+    return target ? { id: target.id, label: target.label || "Diagram group", members: target.members } : undefined;
   }, [identities, targetTable, ungroupSourceId]);
+  const groupRemoval = useMemo(() => {
+    if (!removableGroup) return;
+    const members = new Set(removableGroup.members);
+    const selected = nodes.filter(item => members.has(item.id));
+    const connections = edges.filter(item => members.has(item.sourceId ?? "") || members.has(item.targetId ?? ""));
+    const unavailable = !members.size || selected.length !== members.size ? "The group membership could not be verified."
+      : selected.length === nodes.length ? "Keep at least one node in the diagram."
+      : connections.some(item => !item.explicit) ? "Each incident connection needs an explicit source ID." : undefined;
+    return { memberIds: selected.map(item => item.id), connectionIds: connections.map(item => item.id), unavailable };
+  }, [removableGroup, nodes, edges]);
   const movableNodes = useMemo(() => {
     if (!source || !ungroupSourceId || !targetTable) return [];
     const candidates = new Set(supportedGroupMoves(source, ungroupSourceId));
@@ -365,6 +375,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "ungroup", title: "Ungroup", category: "Diagram", synonyms: ["remove container", "keep group members"],
       unavailable: busy ? "Wait for the current action to finish." : removableGroup ? undefined : "Open a rendered flowchart with one supported top-level group.",
       run: () => setEditFlowchart("removeGroup") },
+    { id: "delete-group-contents", title: "Delete group and contents", category: "Diagram",
+      unavailable: busy ? "Wait for the current action to finish." : groupRemoval ? groupRemoval.unavailable
+        : "Open a rendered flowchart with one supported top-level group.",
+      run: () => setEditFlowchart("removeGroupContents") },
     { id: "move-into-group", title: "Move node into group", category: "Diagram",
       unavailable: busy ? "Wait for the current action to finish." : removableGroup && movableNodes.length ? undefined
         : "Open a supported top-level group with a standalone node outside it.",
@@ -424,6 +438,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                 <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
               )}
               {removableGroup && <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("removeGroup")}>Ungroup</button>}
+              {groupRemoval && !groupRemoval.unavailable && <button className="button secondary" disabled={busy}
+                onClick={() => setEditFlowchart("removeGroupContents")}>Delete group and contents</button>}
               {removableGroup && !!movableNodes.length && <button className="button secondary" disabled={busy}
                 onClick={() => setEditFlowchart("moveToGroup")}>Move node into group</button>}
               <button className="button quiet" disabled={busy || !editor.current?.canUndo()} onClick={() => changeHistory("undo")}>Undo</button>
@@ -610,7 +626,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       {editFlowchart && editor.current && (
         <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} movableNodes={movableNodes}
           initialOperation={editFlowchart} initialTarget={editTarget}
-          deleteConnections={deleteConnections} groupMembers={groupMembers}
+          deleteConnections={deleteConnections} groupMembers={groupMembers} groupRemoval={groupRemoval}
           onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); setGroupMembers(undefined); }}
           onApply={proposal => {
             const current = editor.current!;

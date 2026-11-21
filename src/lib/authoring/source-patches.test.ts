@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySourcePatches, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, supportedGroupMoves } from './source-patches';
+import { applySourcePatches, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupContentsRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, supportedGroupMoves } from './source-patches';
 
 it('wraps a consecutive authored range and leaves comments and relationship lines byte-exact', () => {
   const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  %% Between declarations\r\n  B[Second] %% Keep this comment\r\n  C[Last]\r\n  A first@--> B\r\n  B second@--> C\r\n';
@@ -26,6 +26,15 @@ it('moves the exact standalone line and omits members and shared source lines', 
   expect(applySourcePatches(source, plan.patches)).toBe(source.replace(line, '').replace('  end\r\n', line + '  end\r\n'));
   expect(() => planMoveToGroup(source, 'A', 'Team')).toThrow('outside node');
   expect(() => planMoveToGroup(source, 'C', 'Team')).toThrow('own source line');
+});
+
+it('requires the full group deletion footprint and leaves all unidentified connections untouched', () => {
+  const source = 'flowchart LR\n subgraph Team [Team]\n A[First]\n B[Second]\n end\n C[Outside]\n A inside@--> B\n B crossing@--> C\n';
+  expect(() => planGroupContentsRemoval(source, 'Team', ['A'], ['inside'])).toThrow('every current group member');
+  expect(() => planGroupContentsRemoval(source, 'Team', ['A', 'B'], ['inside'])).toThrow('all incident connections');
+  expect(() => planGroupContentsRemoval(source.replace('crossing@', ''), 'Team', ['A', 'B'], ['inside'])).toThrow('explicit source ID');
+  expect(() => planGroupContentsRemoval(source.replace(' C[Outside]\n', '').replace(' B crossing@--> C\n', ''),
+    'Team', ['A', 'B'], ['inside'])).toThrow('Keep at least one node');
 });
 
 it('removes only the exact incident set and preserves unaffected linkStyle positions', () => {
