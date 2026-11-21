@@ -23,7 +23,7 @@ const emptyBranches = (): DecisionBranch[] => [
 
 export default function V3StructureEditor({ editor, nodes, edges, group, movableNodes, flatFlowchart, canEditLabels, canUngroup,
   initialOperation = "addNode", initialTarget = "",
-  deleteConnections, groupMembers, groupRemoval, onApply, onClose }: {
+  deleteConnections, groupMembers, groupRemoval, onApply, onBlockedSource, onClose }: {
   editor: Editor;
   nodes: (NodeChoice & { text: string })[];
   edges: EdgeChoice[];
@@ -38,6 +38,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   groupMembers?: { ids: string[]; hidden: number };
   groupRemoval?: { members: { id: string; label: string; kind: string }[]; connectionIds: string[]; unavailable?: string };
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
+  onBlockedSource: (id: string) => void;
   onClose: () => void;
 }) {
   const [operation, setOperation] = useState<Operation>(initialOperation);
@@ -280,7 +281,11 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
             <option value="">Choose a node</option>{nodeOptions}
           </select>
         </label>}
-        {removingNode && !!unidentified.length && <p role="status">Each incident connection needs an explicit source ID before this node can be deleted.</p>}
+        {removingNode && !!unidentified.length && <section aria-label="Blocked node deletion">
+          <p role="status">Each incident connection needs an explicit source ID before this node can be deleted.</p>
+          <ul aria-label="Connections that need a source ID">{unidentified.map(edge => <li key={edge.id}>{edge.label}</li>)}</ul>
+          <button type="button" className="button secondary" onClick={() => onBlockedSource(to)}>Open node source</button>
+        </section>}
         {movingToGroup && <label>Node to move into {group?.label}
           <select value={to} disabled={busy} onChange={event => { setTo(event.target.value); resetPreview(); }}>
             <option value="">Choose a node</option>
@@ -358,7 +363,10 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
               {edges.filter(item => groupRemoval.connectionIds.includes(item.id)).map(item => <li key={item.id}>{item.label}</li>)}
             </ul>}
           </>}
-          {groupRemoval.unavailable && <p role="alert">{groupRemoval.unavailable}</p>}
+          {groupRemoval.unavailable && <>
+            <p role="alert">{groupRemoval.unavailable}</p>
+            {group && <button type="button" className="button secondary" onClick={() => onBlockedSource(group.id)}>Open group source</button>}
+          </>}
         </section>}
         {removingEdges && <section aria-label="Connections to delete">
           <p>{deleteConnections?.ids.length} selected · {deleteConnections?.hidden} hidden in the outline</p>

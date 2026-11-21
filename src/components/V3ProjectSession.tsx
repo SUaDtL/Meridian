@@ -413,14 +413,32 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     setOutlineOpen(true);
   }
 
-  function jumpToSource(location: OutlineSourceLocation, view: OutlineView) {
+  function jumpToSource(location: OutlineSourceLocation, view?: OutlineView) {
     if (!source || !sourceDetails.current) return;
     setOutlineOpen(false);
     setHighlight({ ...location, source });
-    setOutlineReturn({ source, view });
+    setOutlineReturn(view ? { source, view } : undefined);
     setMobilePanel("Build");
     sourceDetails.current.open = true;
     requestAnimationFrame(() => sourceMark.current?.focus());
+  }
+  function closeStructureEditor() {
+    setEditFlowchart(undefined);
+    setEditTarget(undefined);
+    setDeleteConnections(undefined);
+    setGroupMembers(undefined);
+  }
+
+  function openBlockedDeletionSource(id: string) {
+    if (!project || !targetTable) return;
+    const location = projectOutline(project, targetTable).find(item => item.id === id)?.source;
+    closeStructureEditor();
+    if (location) jumpToSource(location);
+    else {
+      setHighlight(undefined);
+      setOutlineReturn(undefined);
+      showSource();
+    }
   }
   function frameOutlineTargets(ids: readonly string[], closeOutline: boolean) {
     if (!currentFrame) return "The current diagram is still rendering. Try framing again when it is ready.";
@@ -980,12 +998,12 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           }} />
       </Suspense>}
       {editFlowchart && editor.current && (
-        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={structureGroup} movableNodes={movableNodes}
+        <V3StructureEditor onBlockedSource={openBlockedDeletionSource} editor={editor.current} nodes={nodes} edges={edges} group={structureGroup} movableNodes={movableNodes}
           canUngroup={!!structureGroup && ungroupableGroups.has(structureGroup.id)}
           flatFlowchart={flatFlowchart} canEditLabels={!labelEditingUnavailable}
           initialOperation={editFlowchart} initialTarget={editFlowchart === "moveToGroup" ? undefined : editTarget}
           deleteConnections={deleteConnections} groupMembers={groupMembers} groupRemoval={groupRemoval}
-          onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); setGroupMembers(undefined); }}
+          onClose={closeStructureEditor}
           onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);
