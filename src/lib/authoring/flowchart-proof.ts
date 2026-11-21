@@ -164,7 +164,7 @@ export async function proveFlowchartFragment(
     expected = expectedEdit(expected, { op: 'addNode', label: item.label, shape: item.shape }, item.sourceId, true);
   }
   for (const item of plan.edges) {
-    expected = expectedEdit(expected, { op: 'addEdge', from: item.from, to: item.to, label: item.label }, item.sourceId, true);
+    expected = expectedEdit(expected, { op: 'addEdge', from: item.from, to: item.to, label: item.label, direction: item.direction }, item.sourceId, true);
   }
   if (canonicalJson(actual) !== canonicalJson(expected)) throw mismatch();
   const svg = new DOMParser().parseFromString(rendered.svg, 'image/svg+xml');

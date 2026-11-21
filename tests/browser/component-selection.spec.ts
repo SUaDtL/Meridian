@@ -9,8 +9,8 @@ async function download(page: Page, button: Locator) {
   return readFile(path, 'utf8');
 }
 
-test('saves exactly the reviewed nodes, one internal edge, and one port without editing the source project', async ({ page }, info) => {
-  const source = 'flowchart LR\n Client[Outside client]\n A[(Queue)]\n B[Worker]\n Archive[Outside archive]\n Client entry@--> A\n A route@-->|"Route work"| B\n B exit@--> Archive\n';
+test('saves exactly the reviewed nodes, connection directions, and port without editing the source project', async ({ page }, info) => {
+  const source = 'flowchart LR\n Client[Outside client]\n A[(Queue)]\n B[Worker]\n Archive[Outside archive]\n Client entry@--> A\n A route@<-->|"Route work"| B\n A note@---|"Shares capacity"| B\n B exit@--> Archive\n';
   const project = { ...createDocument(), title: 'Extraction example', source };
   await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
     { key: STORAGE_KEY, project });
@@ -25,16 +25,20 @@ test('saves exactly the reviewed nodes, one internal edge, and one port without 
   const before = await download(page, button);
   await projectDialog.getByRole('button', { name: 'Outline', exact: true }).click();
   const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  const review = page.getByRole('dialog', { name: 'Save selection as component' });
   await outline.getByRole('treeitem', { name: /^Queue/ }).click();
+  await outline.getByRole('button', { name: 'Save as component', exact: true }).click();
+  await expect(review.getByRole('alert')).toContainText('The boundary connection Queue ↔ Worker');
+  await review.getByRole('button', { name: 'Close dialog' }).click();
   await outline.getByRole('treeitem', { name: /^Worker/ }).click({ modifiers: ['Shift'] });
   await outline.getByRole('textbox', { name: 'Find an element' }).fill('Queue');
   await expect(outline.getByRole('status')).toHaveText('2 selected · 1 hidden');
   await outline.getByRole('button', { name: 'Save as component', exact: true }).click();
-  const review = page.getByRole('dialog', { name: 'Save selection as component' });
   await expect(review.getByText('2 selected nodes · 1 hidden in the outline')).toBeVisible();
   await review.getByLabel('Component name').fill('Reusable queue worker');
   await review.getByRole('checkbox', { name: /Make Worker/ }).check();
-  await review.getByRole('checkbox', { name: /Include Queue → Worker/ }).check();
+  await review.getByRole('checkbox', { name: /Include Queue ↔ Worker/ }).check();
+  await review.getByRole('checkbox', { name: /Include Queue – Worker/ }).check();
   await review.getByRole('checkbox', { name: /Expose Outside client → Queue/ }).check();
   await review.getByLabel('Port label').fill('Work input');
   await review.getByRole('button', { name: 'Preview component' }).click();
@@ -49,7 +53,10 @@ test('saves exactly the reviewed nodes, one internal edge, and one port without 
     { id: 'node-1', label: 'Queue', shape: 'cylinder', role: null },
     { id: 'node-2', label: 'Worker', shape: 'rect', role: null },
   ]);
-  expect(result.fragment.edges).toEqual([{ id: 'edge-1', sourceId: 'node-1', targetId: 'node-2', label: 'Route work', direction: 'forward' }]);
+  expect(result.fragment.edges).toEqual([
+    { id: 'edge-1', sourceId: 'node-1', targetId: 'node-2', label: 'Route work', direction: 'both' },
+    { id: 'edge-2', sourceId: 'node-1', targetId: 'node-2', label: 'Shares capacity', direction: 'none' },
+  ]);
   expect(result.parameters).toEqual([expect.objectContaining({ id: 'label-node-2', default: 'Worker' })]);
   expect(result.ports).toEqual([{ id: 'port-1', nodeId: 'node-1', label: 'Work input', direction: 'in' }]);
   await review.getByRole('button', { name: 'Save to component library' }).click();

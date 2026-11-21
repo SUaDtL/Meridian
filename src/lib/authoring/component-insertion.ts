@@ -14,8 +14,8 @@ export async function prepareComponentInsertion(
 ) {
   if (base.componentInstances.length >= 100) throw new Error('This project already has 100 component instances.');
   const component = structuredClone(validateComponentDefinition(definition));
-  if (component.fragment.groups.length || component.fragment.edges.some(edge => edge.direction !== 'forward')) {
-    throw new Error('Insertion supports ungrouped definitions with forward relationships.');
+  if (component.fragment.groups.length) {
+    throw new Error('Insertion supports ungrouped definitions.');
   }
   const ports = component.ports;
   if (assignments.size !== ports.length || ports.some(port => !assignments.has(port.id))) {
@@ -26,7 +26,7 @@ export async function prepareComponentInsertion(
   const graph = materializeComponent(component, values);
   const edges: FlowchartFragment['edges'][number][] = graph.edges.map((item, index) => ({
     key: component.fragment.edges[index].id,
-    from: { key: item.from }, to: { key: item.to }, label: item.label,
+    from: { key: item.from }, to: { key: item.to }, label: item.label, direction: item.direction,
   }));
   for (const port of ports) {
     const choice = assignments.get(port.id);

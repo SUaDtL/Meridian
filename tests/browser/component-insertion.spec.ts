@@ -75,7 +75,10 @@ test('resumes component parameters and distinguishes unanswered, unconnected, an
     provenance: { author: 'Meridian test', source: 'Browser fixture', license: '', licenseText: '' },
     fragment: {
       nodes: [{ id: 'api', label: 'API', shape: 'rect', role: 'service' }, { id: 'worker', label: 'Worker', shape: 'rect', role: 'service' }],
-      edges: [{ id: 'queued', sourceId: 'api', targetId: 'worker', label: 'Queued', direction: 'forward' }],
+      edges: [
+        { id: 'queued', sourceId: 'api', targetId: 'worker', label: 'Queued', direction: 'both' },
+        { id: 'shared', sourceId: 'api', targetId: 'worker', label: 'Shared capacity', direction: 'none' },
+      ],
       groups: [],
     },
     ports: [{ id: 'request', nodeId: 'api', label: 'Request input', direction: 'either' },
@@ -146,7 +149,10 @@ test('resumes component parameters and distinguishes unanswered, unconnected, an
   if (!path) throw new Error('Missing inserted component project download.');
   const inserted = JSON.parse(await readFile(path, 'utf8'));
   expect(inserted.source).toContain('m_n1["Reviewed worker"]');
-  expect(inserted.source).toContain('m_n1 m_e2@--> In');
+  expect(inserted.source).toContain('m_n1 m_e1@<-->|"Queued"| m_n2');
+  expect(inserted.source).toContain('m_n1 m_e2@---|"Shared capacity"| m_n2');
+  expect(inserted.source).toContain('m_n1 m_e3@--> In');
+  expect(inserted.componentInstances[0].bindings.map((item: { localId: string }) => item.localId)).toEqual(['api', 'worker', 'queued', 'shared']);
   await openInsertion();
   await expect(component.getByRole('button', { name: /^Configurable worker/ })).toBeVisible();
   await expect(resume).toHaveCount(0);

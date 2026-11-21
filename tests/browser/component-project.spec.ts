@@ -33,6 +33,10 @@ test('previews a typed component, stores only instance bindings, and preserves t
 
   const definition = {
     ...serviceComponent,
+    fragment: { ...serviceComponent.fragment, edges: [
+      { ...serviceComponent.fragment.edges[0], direction: 'both' },
+      { ...serviceComponent.fragment.edges[1], direction: 'none' },
+    ] },
     parameters: [{ id: 'serviceName', label: 'API name', required: true, type: 'text', default: 'Public', maxLength: 50 }],
     labelBindings: [{ nodeId: 'api', parameterId: 'serviceName', prefix: 'API ', suffix: '' }],
   };
@@ -57,6 +61,8 @@ test('previews a typed component, stores only instance bindings, and preserves t
   }
   const created = await downloadProject();
   expect(created.source).toContain('m_n1["API Edge service"]');
+  expect(created.source).toContain('m_n1 m_e1@<-->|"Enqueue"| m_n2');
+  expect(created.source).toContain('m_n2 m_e2@---|"Consume"| m_n3');
   expect(created.componentInstances).toHaveLength(1);
   const instance = created.componentInstances[0];
   expect(instance).toMatchObject({ definitionId: definition.id, definitionVersion: '1.0.0', definitionHash: expect.stringMatching(/^[0-9a-f]{64}$/) });
