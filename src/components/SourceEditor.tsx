@@ -65,7 +65,7 @@ type SourceEditorProps = {
   onRedo: () => void;
   draft?: never;
 } | {
-  draft: { readOnly: boolean; maxLength: number; onReady: (view: EditorView) => void };
+  draft: { readOnly: boolean; maxLength: number; onReady: (view: EditorView) => void; onComposition?: (active: boolean) => void };
   onUndo?: never;
   onRedo?: never;
 });
@@ -79,8 +79,8 @@ const draftAttributes = EditorView.contentAttributes.of({
 });
 
 function SourceEditor({ source, onChange, onUndo, onRedo, focusRequest = 0, draft }: SourceEditorProps) {
-  const actions = useRef({ onChange, onUndo, onRedo, onReady: draft?.onReady });
-  actions.current = { onChange, onUndo, onRedo, onReady: draft?.onReady };
+  const actions = useRef({ onChange, onUndo, onRedo, onReady: draft?.onReady, onComposition: draft?.onComposition });
+  actions.current = { onChange, onUndo, onRedo, onReady: draft?.onReady, onComposition: draft?.onComposition };
   const editor = useRef<EditorView | null>(null);
   const initialSource = useRef(source);
   const latestSource = useRef(source);
@@ -133,6 +133,16 @@ function SourceEditor({ source, onChange, onUndo, onRedo, focusRequest = 0, draf
   const draftExtensions = useMemo(() => maxLength === undefined ? undefined : [
     ...extensions,
     draftAttributes,
+    EditorView.domEventHandlers({
+      compositionstart() {
+        actions.current.onComposition?.(true);
+        return false;
+      },
+      compositionend() {
+        actions.current.onComposition?.(false);
+        return false;
+      },
+    }),
     EditorState.changeFilter.of(transaction => transaction.newDoc.length <= Math.max(maxLength, transaction.startState.doc.length)),
   ], [maxLength]);
   return <CodeMirror value={initialSource.current} height="100%" theme={editorTheme} extensions={draftExtensions ?? editorExtensions}
