@@ -11,19 +11,26 @@ import { minimumAdvisoryLabelSize, normalizedName, viewingScale, type FrameGeome
 import { routeTolerance } from "../lib/authoring/route-geometry";
 import Modal from "./Modal";
 
-const presentation: ViewingProfile = { width: 1280, height: 720, padding: 32 };
+const presentation: Required<ViewingProfile> = { width: 1280, height: 720, padding: 32 };
 const checkNames = { "QC-01": "Solid text contrast", "QC-02": "Connector contrast", "QC-03": "Viewed label size", "QC-04": "Label containment",
   "QC-05": "Duplicate names", "QC-06": "Separate regions", "QC-07": "Crossing candidates", "QC-08": "Explicit role styling" } as const;
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type ContrastPreview = NonNullable<ReturnType<Editor["readContrastPreview"]>>;
+export type ReadabilityProfileChoice = { mode: "canvas" | "presentation" | "document" | "custom";
+  custom: Required<ViewingProfile>; documentWidth: number };
+export const initialReadabilityProfile = (canvas?: ViewingProfile): ReadabilityProfileChoice => ({
+  mode: canvas ? "canvas" : "presentation", custom: presentation, documentWidth: 720,
+});
 
-export default function ReadabilityDialog({ frame, targets, token, editor, canvas, dismissed, onDismissed, onRename, onResetRolePaint,
+export default function ReadabilityDialog({ frame, targets, token, editor, canvas, viewing, onViewing, dismissed, onDismissed, onRename, onResetRolePaint,
   onCompareLayouts, highlightTargets, onApply, onClose }: {
   frame: FrameGeometry;
   targets: ReadabilityTarget[];
   token: BaseToken;
   editor: Editor;
   canvas?: ViewingProfile;
+  viewing: ReadabilityProfileChoice;
+  onViewing: (choice: ReadabilityProfileChoice) => void;
   dismissed: ReadonlySet<string>;
   onDismissed: Dispatch<SetStateAction<ReadonlySet<string>>>;
   onRename?: (elementId: string) => void;
@@ -33,9 +40,8 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyContrast"]>;
   onClose: () => void;
 }) {
-  const [mode, setMode] = useState<"canvas" | "presentation" | "document" | "custom">(canvas ? "canvas" : "presentation");
-  const [custom, setCustom] = useState(presentation);
-  const [documentWidth, setDocumentWidth] = useState(720);
+  const { custom, documentWidth } = viewing;
+  const mode = viewing.mode === "canvas" && !canvas ? "presentation" : viewing.mode;
   const [result, setResult] = useState<{ report: ReadabilityReport; findings: { finding: ReadabilityFinding; key: string }[] }>();
   const [phase, setPhase] = useState<"check" | "findings" | "contrast">();
   const busy = phase !== undefined;
@@ -60,6 +66,11 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   useEffect(() => () => { if (highlight) URL.revokeObjectURL(highlight.url); }, [highlight]);
 
   function reset() { setResult(undefined); setError(""); setRetry(undefined); setFix(undefined); setImageReady(false); setCancelled(false); }
+
+  function changeViewing(change: Partial<ReadabilityProfileChoice>) {
+    onViewing({ ...viewing, ...change });
+    reset();
+  }
 
   function cancel() {
     const work = active.current;
@@ -160,7 +171,9 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     if (finding.rule === "QC-06") {
       return [finding.rule, 1, finding.regions.map(region => [...region].sort()).sort()];
     }
-    if (finding.rule === "QC-08" || finding.rule === "QC-02") return [1, finding];
+    if (finding.rule === "QC-08") return [1, finding];
+    if (finding.rule === "QC-01") return [1, finding, byId.get(finding.target)?.solidTextPaint ?? null, profile];
+    if (finding.rule === "QC-02") return [1, finding, byId.get(finding.target)?.solidConnectorPaint ?? null];
     return [1, finding, profile];
   }
 
@@ -183,7 +196,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   function findingText(finding: ReadabilityFinding) {
     if (finding.rule === "QC-01") {
       const name = byId.get(finding.target)?.label || "Unnamed label";
-      return <>{name} has a contrast ratio of {Number(finding.ratio.toPrecision(6))} to 1. Aim for at least {finding.threshold} to 1 at this size.</>;
+      return <>{name} has a contrast ratio of {finding.ratio} to 1. Aim for at least {finding.threshold} to 1 at this size.</>;
     }
     if (finding.rule === "QC-02") {
       const name = byId.get(finding.target)?.label || "Unnamed connection";
@@ -218,18 +231,18 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   return (
     <><Modal title="Check readability" wide onClose={onClose}>
       <div className="heading-form">
-        <label>Viewing profile<select value={mode} disabled={busy} onChange={event => { setMode(event.target.value as typeof mode); reset(); }}>
+        <label>Viewing profile<select value={mode} disabled={busy} onChange={event => changeViewing({ mode: event.target.value as typeof mode })}>
           {canvas && <option value="canvas">Canvas at fit</option>}
           <option value="presentation">Presentation</option><option value="document">Document width</option><option value="custom">Custom viewport</option>
         </select></label>
         {mode === "document" && <label>Allocated width in CSS pixels
           <input type="number" min={100} max={8192} step={1} disabled={busy} value={Number.isFinite(documentWidth) ? documentWidth : ""}
-            onChange={event => { setDocumentWidth(event.target.valueAsNumber); reset(); }} />
+            onChange={event => changeViewing({ documentWidth: event.target.valueAsNumber })} />
         </label>}
         {mode === "custom" && (Object.keys(custom) as (keyof ViewingProfile)[]).map(field => (
           <label key={field}>{field === "width" ? "Width" : field === "height" ? "Height" : "Padding"} in CSS pixels
             <input type="number" min={field === "padding" ? 0 : 100} max={8192} step={1} value={Number.isFinite(custom[field]) ? custom[field] : ""} disabled={busy}
-              onChange={event => { setCustom({ ...custom, [field]: event.target.valueAsNumber }); reset(); }} /></label>
+              onChange={event => changeViewing({ custom: { ...custom, [field]: event.target.valueAsNumber } })} /></label>
         ))}
         <p>{profile.height === undefined
           ? `${Number.isFinite(profile.width) ? profile.width : "—"} CSS pixels allocated · Fits width`

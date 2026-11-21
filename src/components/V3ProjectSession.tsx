@@ -4,7 +4,7 @@ import HeadingEditor from "./HeadingEditor";
 import CommandPalette from "./CommandPalette";
 import Modal from "./Modal";
 import V3ProjectOutline from "./V3ProjectOutline";
-import ReadabilityDialog from "./ReadabilityDialog";
+import ReadabilityDialog, { initialReadabilityProfile, type ReadabilityProfileChoice } from "./ReadabilityDialog";
 import V3ComparisonDialog from "./V3ComparisonDialog";
 import V3GroupStoryDialog, { initialGroupStoryDraft } from "./V3GroupStoryDialog";
 import type { ManualSceneSelection } from "./V3SavedScenesDialog";
@@ -68,6 +68,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
   const [dismissedReadability, setDismissedReadability] = useState<ReadonlySet<string>>(new Set());
   const [readabilityOpen, setReadabilityOpen] = useState(false);
+  const [readabilityViewing, setReadabilityViewing] = useState<ReadabilityProfileChoice>();
   const [comparisonSelection, setComparisonSelection] = useState<{ ids: string[]; hidden: number }>();
   const [comparison, setComparison] = useState<"design" | "layout">();
   const [storyOpen, setStoryOpen] = useState(false);
@@ -292,8 +293,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
     const bounds = previewImage.current?.getBoundingClientRect();
-    setCanvasProfile(bounds && bounds.width >= 100 && bounds.height >= 100
-      ? { width: Math.floor(bounds.width), height: Math.floor(bounds.height), padding: 0 } : undefined);
+    const fit = bounds && bounds.width >= 100 && bounds.height >= 100
+      ? { width: Math.floor(bounds.width), height: Math.floor(bounds.height), padding: 0 } : undefined;
+    setCanvasProfile(fit);
+    setReadabilityViewing(current => current ?? initialReadabilityProfile(fit));
     setReadabilityOpen(true);
   }
   function showSource() {
@@ -539,8 +542,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
             return status;
           }} />
       </Suspense>}
-      {readabilityTargets && currentFrame && targetTable && editor.current && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
+      {readabilityTargets && readabilityViewing && currentFrame && targetTable && editor.current && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
         token={targetTable.baseToken} editor={editor.current} canvas={canvasProfile}
+        viewing={readabilityViewing} onViewing={setReadabilityViewing}
         highlightTargets={ids => buildReadabilityHighlight(currentFrame.rendered, currentFrame.document, ids)}
         dismissed={dismissedReadability} onDismissed={setDismissedReadability}
         onCompareLayouts={() => { setReadabilityOpen(false); setComparison("layout"); }}

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { solidContrast } from '../../src/lib/authoring/solid-text-color';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 import type { StudioDocument } from '../../src/types';
 
@@ -56,6 +57,11 @@ test('checks the accepted drawing and shows the exact finding targets without ed
   await expect(report).toHaveCount(0);
   await check.getByRole('button', { name: 'Check diagram' }).click();
   await expect(report.getByText(/Service measures .* CSS pixels/).first()).toBeVisible();
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+  await expect(check.getByRole('combobox', { name: 'Viewing profile' })).toHaveValue('document');
+  await expect(check.getByRole('spinbutton', { name: 'Allocated width in CSS pixels' })).toHaveValue('125');
+  await expect(report).toHaveCount(0);
   await check.getByRole('button', { name: 'Close dialog' }).click();
   await live.getByText('Mermaid source', { exact: true }).click();
   expect(await live.locator('pre').textContent()).toBe(source);
@@ -127,6 +133,50 @@ test('reports an ELK bridge arc as unknown route geometry', async ({ page }) => 
   await check.getByRole('button', { name: 'Check diagram' }).click();
   await expect(check.getByRole('region', { name: 'Readability results' })
     .getByText('Crossing candidates · 3 measured · 1 unknown · 4 not applicable')).toBeVisible();
+});
+
+test('reconsiders dismissed contrast when the resolved colors change at the same ratio', async ({ page }) => {
+  const original = 'flowchart LR\n A[Status]\n style A fill:#ffffff,color:#eeeeee\n';
+  let live = await openProject(page, { ...createDocument(), title: 'Contrast dismissal', source: original });
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  const report = check.getByRole('region', { name: 'Readability results' });
+  const ratio = solidContrast({ channels: [238, 238, 238], opacity: 1 }, [255, 255, 255]);
+  const ratioText = `Status has a contrast ratio of ${ratio} to 1.`;
+  const exact = report.getByText(ratioText);
+  const finding = report.getByRole('listitem').filter({ hasText: ratioText });
+
+  async function checkSolidText() {
+    await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+    await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('presentation');
+    await check.getByRole('button', { name: 'Check diagram' }).click();
+    await expect(report).toBeVisible();
+  }
+
+  await checkSolidText();
+  await expect(exact).toBeVisible();
+  await finding.getByRole('button', { name: 'Ignore for this session' }).click();
+  await expect(exact).toHaveCount(0);
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('button', { name: 'Edit heading', exact: true }).click();
+  const heading = page.getByRole('dialog', { name: 'Edit heading' });
+  await heading.getByRole('textbox', { name: 'Title', exact: true }).fill('Updated contrast dismissal');
+  await heading.getByRole('button', { name: 'Apply heading' }).click();
+  live = page.getByRole('dialog', { name: 'Updated contrast dismissal' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Updated contrast dismissal' })).toBeVisible();
+  await checkSolidText();
+  await expect(exact).toHaveCount(0);
+  await expect(report.getByRole('status')).toContainText('1 ignored this session');
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+
+  await live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  await editor.getByRole('textbox', { name: 'Mermaid source' }).fill(original.replace('fill:#ffffff,color:#eeeeee', 'fill:#eeeeee,color:#ffffff'));
+  await editor.getByRole('button', { name: 'Preview source' }).click();
+  await editor.getByRole('button', { name: 'Apply source' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  await checkSolidText();
+  await expect(exact).toBeVisible();
+  await expect(report.getByRole('status')).not.toContainText('ignored');
 });
 
 test('compares verified solid text and leaves the gradient node unmeasured', async ({ page }) => {
