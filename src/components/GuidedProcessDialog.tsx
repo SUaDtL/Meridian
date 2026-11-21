@@ -7,7 +7,9 @@ import { AuthoringWorkerTimeout } from "../lib/authoring/authoring-worker";
 import { normalizeProcessInWorker } from "../lib/authoring/process-normalization";
 import { buildExportFrame } from "../lib/export";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
-import { checkpointConnections, discardProcessCheckpoint, listProcessCheckpoints, saveProcessCheckpoint, type ProcessCheckpoint } from "../lib/persistence/process-drafts";
+import { checkpointConnections, discardProcessCheckpoint, listProcessCheckpoints, makeProcessCheckpoint, saveProcessCheckpoint, type ProcessCheckpoint } from "../lib/persistence/process-drafts";
+
+import { downloadText } from "../lib/storage";
 
 export type GuidedProcessDraft = {
   title: string;
@@ -101,6 +103,15 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
       }
     } finally {
       controller.current = undefined;
+    }
+  }
+
+  function downloadDraft() {
+    try {
+      const record = makeProcessCheckpoint(draft.title, steps, crypto.randomUUID(), Date.now(), connections);
+      downloadText(JSON.stringify(record, null, 2), "process.meridian-draft.json");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The normalized draft could not be downloaded.");
     }
   }
 
@@ -307,6 +318,8 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
       )}
       {stage !== "input" && !busy && !draftError && draft.unsaved && <p role="status">Session-only draft changes</p>}
       {draftError && <p role="alert">{stage === "input" ? draftError : `Session-only draft. ${draftError}`}</p>}
+      {draftError && stage !== "input" && draft.unsaved && steps.length > 0 && <button type="button"
+        className="button quiet" disabled={!!busy} onClick={downloadDraft}>Download normalized draft</button>}
       {error && <p role="alert">{error}</p>}
     </Modal>
   );

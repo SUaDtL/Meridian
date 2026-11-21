@@ -1,8 +1,8 @@
 import { elementUuidPattern } from '../authoring/identities';
 import { normalizeSystemsDraft, type SystemsDraft } from '../authoring/systems-draft';
-import { draftBytes, draftWeek, listGuidedCheckpoints, maxDraftBytes, sameCheckpoint, saveGuidedCheckpoint } from './guided-drafts';
+import { draftBytes, draftWeek, listGuidedCheckpoints, maxDraftBytes, sameCheckpoint } from './guided-drafts';
 
-function systemsCheckpoint(input: SystemsDraft, id: string, now: number) {
+export function makeSystemsCheckpoint(input: SystemsDraft, id: string, now: number) {
   if (!elementUuidPattern.test(id) || !Number.isFinite(now)) throw new Error('The draft identity or saved time is invalid.');
   const { title, direction, nodes, edges } = normalizeSystemsDraft(input);
   return {
@@ -17,7 +17,7 @@ function systemsCheckpoint(input: SystemsDraft, id: string, now: number) {
     },
   };
 }
-export type SystemsCheckpoint = ReturnType<typeof systemsCheckpoint>;
+export type SystemsCheckpoint = ReturnType<typeof makeSystemsCheckpoint>;
 
 export function resumeSystemsDraft({ payload }: SystemsCheckpoint): SystemsDraft {
   return normalizeSystemsDraft(payload);
@@ -28,15 +28,10 @@ export function listSystemsDrafts(db: IDBDatabase) {
     try {
       const record = value as SystemsCheckpoint;
       if (record?.feature !== 'guided' || record.payload?.intent !== 'systems' || record.payload.mapping.label !== null) return undefined;
-      const expected = systemsCheckpoint(resumeSystemsDraft(record), record.id, Date.parse(record.createdAt));
+      const expected = makeSystemsCheckpoint(resumeSystemsDraft(record), record.id, Date.parse(record.createdAt));
       return sameCheckpoint(record, expected) && draftBytes(expected) <= maxDraftBytes ? expected : undefined;
     } catch {
       return undefined;
     }
   });
-}
-
-export function saveSystemsDraft(db: IDBDatabase, draft: SystemsDraft, previous?: SystemsCheckpoint) {
-  const now = Date.now();
-  return saveGuidedCheckpoint(db, systemsCheckpoint(draft, previous?.id ?? crypto.randomUUID(), now), previous, now);
 }

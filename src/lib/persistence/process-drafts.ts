@@ -5,14 +5,15 @@ import { elementUuidPattern } from '../authoring/identities';
 
 import { discardGuidedCheckpoint, draftBytes, draftWeek, listGuidedCheckpoints, maxDraftBytes, sameCheckpoint, saveGuidedCheckpoint } from './guided-drafts';
 
-function makeCheckpoint(title: string, steps: readonly ProcessStep[], id: string, timestamp: number, connections?: ProcessConnections) {
+export function makeProcessCheckpoint(title: string, steps: readonly ProcessStep[], id: string, timestamp: number, connections?: ProcessConnections) {
   if (!Number.isFinite(timestamp) || typeof id !== 'string' || !elementUuidPattern.test(id)
     || typeof title !== 'string' || title.length > 120 || /[\uD800-\uDFFF]/u.test(title)
     || !steps.length || steps.length > authoringLimits.graphNodes) throw new Error('This draft cannot be saved.');
   let previousLine = 0;
   const seenLines = new Set<number>();
   const nodes = steps.map(({ line, label }, index) => {
-    if (!Number.isSafeInteger(line) || line < 1 || line > authoringLimits.sourceCodeUnits + 1 || seenLines.has(line)
+    if (line > maxProcessSourceRows) throw new Error('This draft contains a step beyond line 10,000.');
+    if (!Number.isSafeInteger(line) || line < 1 || seenLines.has(line)
       || (!connections && line <= previousLine)) {
       throw new Error('The draft row order is invalid.');
     }
@@ -61,7 +62,7 @@ function makeCheckpoint(title: string, steps: readonly ProcessStep[], id: string
   };
 }
 
-export type ProcessCheckpoint = ReturnType<typeof makeCheckpoint>;
+export type ProcessCheckpoint = ReturnType<typeof makeProcessCheckpoint>;
 export function checkpointConnections({ payload }: ProcessCheckpoint): ProcessConnections | undefined {
   if (payload.mode === 'linear') return undefined;
   const lines = new Map(payload.nodes.map(node => [node.id, node.sourceRow]));
@@ -83,7 +84,7 @@ function readCheckpoint(value: unknown): ProcessCheckpoint | undefined {
     const record = value as ProcessCheckpoint;
     if (record?.feature !== 'guided' || !['linear', 'connections'].includes(record.payload?.mode)) return undefined;
     const normalized = record.payload.nodes.map(node => ({ line: node.sourceRow, original: node.label, label: node.label }));
-    const expected = makeCheckpoint(record.payload.title, normalized, record.id, Date.parse(record.createdAt), checkpointConnections(record));
+    const expected = makeProcessCheckpoint(record.payload.title, normalized, record.id, Date.parse(record.createdAt), checkpointConnections(record));
     return sameCheckpoint(record, expected) && draftBytes(expected) <= maxDraftBytes ? expected : undefined;
   } catch {
     return undefined;
@@ -97,9 +98,8 @@ export function listProcessCheckpoints(db: IDBDatabase) {
 export async function saveProcessCheckpoint(
   db: IDBDatabase, title: string, steps: readonly ProcessStep[], previous?: ProcessCheckpoint, connections?: ProcessConnections,
 ): Promise<ProcessCheckpoint> {
-  if (steps.some(step => step.line > maxProcessSourceRows)) throw new Error('This draft contains a step beyond line 10,000.');
   const now = Date.now();
-  const next = makeCheckpoint(title, steps, previous?.id ?? crypto.randomUUID(), now, connections);
+  const next = makeProcessCheckpoint(title, steps, previous?.id ?? crypto.randomUUID(), now, connections);
   return saveGuidedCheckpoint(db, next, previous, now);
 }
 

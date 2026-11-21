@@ -103,8 +103,22 @@ test('guidance keeps session input available when draft storage fails', async ({
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
   await wizard.getByLabel('Project title').fill('Session draft');
-  await wizard.getByLabel('Put one step on each line').fill('Read request\nReply');
+  await wizard.getByLabel('Put one step on each line').fill('1. Read request\n\n- Reply');
   await wizard.getByRole('button', { name: 'Review connections' }).click();
+  await expect(wizard.getByRole('alert')).toHaveText('Session-only draft. Draft storage is full.');
+  const [recoveredFile] = await Promise.all([page.waitForEvent('download'),
+    wizard.getByRole('button', { name: 'Download normalized draft' }).click()]);
+  expect(recoveredFile.suggestedFilename()).toBe('process.meridian-draft.json');
+  const draftPath = await recoveredFile.path();
+  if (!draftPath) throw new Error('Missing normalized draft download.');
+  const text = await readFile(draftPath, 'utf8');
+  const draft = JSON.parse(text);
+  expect(draft).toMatchObject({ schema: 'meridian-draft/v1', feature: 'guided', baseToken: null, payload: {
+    title: 'Session draft', intent: 'process', mode: 'linear',
+    nodes: [{ label: 'Read request', sourceRow: 1 }, { label: 'Reply', sourceRow: 3 }],
+    edges: [{ sourceId: 'step-1', targetId: 'step-2', review: 'accepted' }],
+  } });
+  expect(text).not.toMatch(/1\. Read request|- Reply|original|sourceCode|\"text\"/);
   await expect(wizard.getByRole('alert')).toHaveText('Session-only draft. Draft storage is full.');
   await wizard.getByRole('button', { name: 'Preview process' }).click();
   await wizard.getByRole('button', { name: 'Create process' }).click();
