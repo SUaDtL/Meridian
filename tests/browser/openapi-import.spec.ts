@@ -283,3 +283,68 @@ test('requires reviewed distinct virtual paths and retains provenance across sup
   expect(text).not.toMatch(/meridian-import\.invalid|registered-models\.invalid|#reviewed|#record/);
   expect(outgoing).toEqual([]);
 });
+
+test('re-imports changed OpenAPI facts as an independent project after a manual edit', async ({ page }) => {
+  await page.goto('/');
+  async function createDiagram(title: string, route: string, operationId: string) {
+    await page.getByRole('button', { name: 'Build with guidance' }).click();
+    await page.getByRole('button', { name: 'Engineering file' }).click();
+    const wizard = page.getByRole('dialog', { name: 'Engineering file' });
+    await wizard.getByLabel('OpenAPI specification').setInputFiles({
+      name: 'account.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
+        openapi: '3.1.0', paths: { [route]: { get: { operationId, tags: ['Accounts'] } } },
+      })),
+    });
+    await wizard.getByLabel('Virtual path').fill('api/account.json');
+    await wizard.getByRole('button', { name: 'Read operation facts' }).click();
+    await wizard.getByRole('checkbox', { name: `GET ${route}` }).check();
+    await wizard.getByLabel('Diagram title').fill(title);
+    await wizard.getByRole('button', { name: 'Preview diagram' }).click();
+    await expect(wizard.getByRole('img', { name: 'Proposed OpenAPI operation diagram' })).toBeVisible();
+    await wizard.getByRole('button', { name: 'Create new diagram' }).click();
+    return page.getByRole('dialog', { name: title });
+  }
+
+  const savedProjects = page.getByRole('dialog', { name: 'Project migration and recovery' });
+  const firstTitle = 'Original account routes';
+  const nextTitle = 'Latest account routes';
+  const first = await createDiagram(firstTitle, '/old-accounts', 'readAccounts');
+  const downloadProject = async (title: string) => {
+    const live = page.getByRole('dialog', { name: title });
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing selected OpenAPI project download.');
+    return readFile(path, 'utf8');
+  };
+
+  const original = JSON.parse(await downloadProject(firstTitle));
+  await first.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const edited = original.source + '  %% Manually added routing note\n';
+  await editor.getByRole('textbox', { name: 'Mermaid source' }).fill(edited);
+  await editor.getByRole('button', { name: 'Preview source' }).click();
+  await expect(editor.getByRole('region', { name: 'Proposed source edit' })).toBeVisible();
+  await editor.getByRole('button', { name: 'Apply source' }).click();
+  const firstBytes = await downloadProject(firstTitle);
+  const authored = JSON.parse(firstBytes);
+  expect(authored).toEqual({
+    ...original, source: edited, revision: original.revision + 1, updatedAt: authored.updatedAt,
+  });
+
+  await first.getByRole('button', { name: 'Back to v3 projects' }).click();
+  await savedProjects.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('dialog', { name: 'Your projects' }).getByRole('button', { name: 'Close dialog' }).click();
+  const second = await createDiagram(nextTitle, '/new-accounts', 'listAccounts');
+  const newer = JSON.parse(await downloadProject(nextTitle));
+  expect(newer.id).not.toBe(original.id);
+  expect(newer.revision).toBe(0);
+  expect(newer.provenance).toContainEqual(expect.objectContaining({
+    virtualPath: 'api/account.json', pointer: '/paths/~1new-accounts/get',
+  }));
+  expect(newer.source).not.toContain('Manually added routing note');
+  await second.getByRole('button', { name: 'Back to v3 projects' }).click();
+  await savedProjects.getByRole('button', { name: `Open v3 project ${firstTitle}` }).click();
+  expect(await downloadProject(firstTitle)).toBe(firstBytes);
+  expect(await readDrafts(page)).toEqual([]);
+});
