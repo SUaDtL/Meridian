@@ -123,3 +123,83 @@ test('offers proven endpoint completion and keeps draft history separate from ac
   await live.getByRole('button', { name: 'Undo', exact: true }).click();
   expect((await download(page, live)).source).toBe(source);
 });
+
+test('downloads and restores an over-limit annotation source draft with its exact accepted base', async ({ page }, info) => {
+  const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  B[Second]\r\n';
+  const revised = source.replace('  B[Second]\r\n', '');
+  const project = { ...createDocument(), title: 'Recover source draft', source };
+  project.design.elements = Object.fromEntries(Array.from({ length: 500 },
+    (_, index) => [`node:Former${index}`, { fill: '#123456' }]));
+  await page.addInitScript(({ key, project }) => {
+    if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] }));
+  }, { key: STORAGE_KEY, project });
+  async function openProject(migrate = false) {
+    await page.getByRole('button', { name: 'Manage projects' }).click();
+    await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+    if (migrate) await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+    await page.getByRole('button', { name: 'Open v3 project Recover source draft' }).click();
+    return page.getByRole('dialog', { name: 'Recover source draft' });
+  }
+  await page.goto('/');
+  const live = await openProject(true);
+  const original = await download(page, live);
+  expect(original.identity.orphans).toHaveLength(500);
+  await live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const input = editor.getByRole('textbox', { name: 'Mermaid source' });
+  await input.fill(revised.replace(/\r\n/g, '\n'));
+  await editor.getByRole('button', { name: 'Preview source' }).click();
+  await expect(editor.getByRole('alert')).toContainText('retained annotation limits');
+  await expect(editor.getByRole('button', { name: 'Apply source' })).toBeDisabled();
+  const save = editor.getByRole('button', { name: 'Download source recovery file' });
+  await expect(save).toBeVisible();
+  await page.screenshot({ path: info.outputPath('source-recovery-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('source-recovery-mobile.png') });
+  const [file] = await Promise.all([page.waitForEvent('download'), save.click()]);
+  const path = await file.path();
+  if (!path) throw new Error('Missing source recovery file.');
+  const content = await readFile(path, 'utf8');
+  const recovery = JSON.parse(content);
+  expect(recovery).toEqual({
+    schema: 'meridian-recovery/v1', acceptedProject: original, sourceDraft: revised,
+    reason: 'annotation-limit', baseStateDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+  });
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
+  expect(await download(page, live)).toEqual(original);
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.reload();
+  const reopened = await openProject();
+  await reopened.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  await editor.getByText('Source recovery file', { exact: true }).click();
+  const upload = (text: string) => editor.getByLabel('Source recovery file', { exact: true }).setInputFiles({
+    name: 'draft.meridian-recovery.json', mimeType: 'application/json', buffer: Buffer.from(text),
+  });
+  await upload(JSON.stringify({ ...recovery, acceptedProject: { ...original, title: 'Changed in the file' } }));
+  await expect(editor.getByRole('alert')).toContainText('does not match the accepted project it contains');
+  await expect(input).toContainText('B[Second]');
+  await upload(content);
+  await expect(editor.getByRole('status')).toContainText('Source draft restored');
+  await expect(input).toContainText('A[First]');
+  await expect(input).not.toContainText('B[Second]');
+  await expect(editor.getByRole('button', { name: 'Apply source' })).toBeDisabled();
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
+  expect(await download(page, reopened)).toEqual(original);
+
+  await reopened.getByRole('button', { name: 'Review unresolved annotations' }).click();
+  const annotations = page.getByRole('dialog', { name: 'Unresolved annotations' });
+  await annotations.getByRole('searchbox', { name: 'Find an annotation' }).fill('Former0');
+  await annotations.getByRole('checkbox', { name: 'node:Former0', exact: true }).check();
+  await annotations.getByRole('button', { name: 'Review removal' }).click();
+  await annotations.getByRole('button', { name: 'Remove reviewed annotations' }).click();
+  const cleaned = await download(page, reopened);
+  expect(cleaned.source).toBe(source);
+  expect(cleaned.identity.orphans).toHaveLength(499);
+  await reopened.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  await editor.getByRole('button', { name: 'Discard draft' }).click();
+  await editor.getByText('Source recovery file', { exact: true }).click();
+  await upload(content);
+  await expect(editor.getByRole('alert')).toContainText('matching accepted project revision');
+  await expect(input).toContainText('B[Second]');
+});

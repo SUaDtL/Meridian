@@ -26,11 +26,20 @@ function parallelKey(binding: Extract<SourceIdentity['binding'], { type: 'legacy
   return JSON.stringify([binding.sourceId, binding.targetId, binding.labelHash]);
 }
 
+export class IdentityLimitError extends Error {
+  constructor(
+    readonly reason: 'annotation-limit' | 'project-size',
+    message = 'The project exceeds its identity and retained annotation limits. Export a recovery copy before resolving annotations.',
+  ) {
+    super(message);
+    this.name = 'IdentityLimitError';
+  }
+}
+
 function enforceIdentityBudget(records: readonly IdentityRecord[], orphanCount: number) {
   const resolved = records.filter(record => record.status === 'resolved').length;
-  if (resolved > MAX_LIVE_IDENTITIES || records.length - resolved + orphanCount > MAX_RETAINED_IDENTITY_RECORDS) {
-    throw new Error('The project exceeds its identity and retained annotation limits. Export a recovery copy before resolving annotations.');
-  }
+  if (records.length - resolved + orphanCount > MAX_RETAINED_IDENTITY_RECORDS) throw new IdentityLimitError('annotation-limit');
+  if (resolved > MAX_LIVE_IDENTITIES) throw new IdentityLimitError('project-size');
 }
 
 /**
@@ -46,7 +55,7 @@ export function reconcileIdentities(
 ): readonly IdentityRecord[] {
   if (observed === null) return previous;
   if (!Number.isSafeInteger(orphanCount) || orphanCount < 0) throw new Error('Invalid orphan count.');
-  if (observed.length > MAX_LIVE_IDENTITIES) throw new Error('The structural snapshot has too many elements.');
+  if (observed.length > MAX_LIVE_IDENTITIES) throw new IdentityLimitError('project-size', 'The structural snapshot has too many elements.');
   enforceIdentityBudget(previous, orphanCount);
 
   const ids = new Set<string>();

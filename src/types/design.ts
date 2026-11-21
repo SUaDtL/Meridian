@@ -30,6 +30,7 @@ export interface DesignState {
 
 /** Read from the mounted SVG, so inspector values reflect source styles too. */
 export interface RenderedAppearance {
+  diamondShape?: boolean;
   fill?: string;
   fillKind?: 'solid' | 'gradient' | 'none';
   color?: string;

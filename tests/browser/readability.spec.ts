@@ -337,3 +337,66 @@ test('reviews separate regions and keeps an ignored name finding across unrelate
   await reviewNames();
   await expect(duplicate).toHaveCount(0);
 });
+
+test('keeps a dismissed role paint finding across a heading edit and rechecks newly measured paint', async ({ page }) => {
+  const base = JSON.parse(await readFile(new URL('../../src/lib/authoring/fixtures/example-project.json', import.meta.url), 'utf8'));
+  const target = base.roles[0].elementId;
+  const originalColor = '#62355c';
+  const changedColor = '#a13c65';
+  const expectedColor = '#0f172a';
+  const project = {
+    ...base, title: 'Role paint review',
+    design: { ...base.design, elements: { [target]: { color: originalColor } },
+      recipeElements: { [target]: { recipe: { id: 'clear', version: '1.0.0' }, style: { color: expectedColor } } } },
+  };
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  const library = page.getByRole('dialog', { name: 'Project migration and recovery' });
+  await library.getByLabel('Import v3 project file').setInputFiles({
+    name: 'role-paint.meridian.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await library.getByRole('button', { name: 'Open v3 project Role paint review' }).click();
+  let live = page.getByRole('dialog', { name: 'Role paint review' });
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  const results = check.getByRole('region', { name: 'Readability results' });
+  const finding = results.getByRole('listitem').filter({ hasText: /API has the service role/ });
+  async function measure() {
+    await live.getByRole('button', { name: 'Check readability' }).click();
+    await check.getByRole('button', { name: 'Check diagram' }).click();
+    await expect(results).toBeVisible();
+  }
+  await measure();
+  await expect(finding).toContainText('renders as ' + originalColor);
+  await expect(finding).toContainText('saved recipe specifies ' + expectedColor);
+  await finding.getByRole('button', { name: 'Ignore for this session' }).click();
+  await expect(finding).toHaveCount(0);
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+
+  await live.getByRole('button', { name: 'Edit heading' }).click();
+  const heading = page.getByRole('dialog', { name: 'Edit heading' });
+  await heading.getByRole('textbox', { name: 'Title', exact: true }).fill('Updated role paint review');
+  await heading.getByRole('button', { name: 'Apply heading' }).click();
+  live = page.getByRole('dialog', { name: 'Updated role paint review' });
+  await measure();
+  await expect(finding).toHaveCount(0);
+  await expect(results.getByRole('status')).toContainText('1 ignored this session');
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^API/ }).click();
+  await outline.getByRole('button', { name: 'Change selected text color' }).click();
+  const change = page.getByRole('dialog', { name: 'Change selected text color' });
+  await change.getByLabel('New text color').fill(changedColor);
+  await change.getByRole('button', { name: 'Preview text color' }).click();
+  await change.getByRole('button', { name: 'Apply to 1 eligible label' }).click();
+  await measure();
+  await expect(finding).toContainText('renders as ' + changedColor);
+  await expect(finding).toContainText('saved recipe specifies ' + expectedColor);
+  await expect(finding.getByRole('button', { name: 'Ignore for this session' })).toBeVisible();
+  await check.getByRole('button', { name: 'Close dialog' }).click();
+  const accepted = await downloadProject(page, live);
+  expect(accepted.source).toBe(project.source);
+  expect(accepted.design).toEqual({ ...project.design, elements: { [target]: { color: changedColor } } });
+});

@@ -15,7 +15,7 @@ export const requestIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-
 export const digestPattern = /^[a-f0-9]{64}$/;
 const day = 24 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
-export const assistOperations = ['setNodeLabel', 'setEdgeLabel', 'removeEdge', 'removeNode', 'addEdge', 'addNode'] as const;
+export const assistOperations = ['setNodeLabel', 'setEdgeLabel', 'removeEdge', 'removeNode', 'addEdge', 'addNode', 'createGroup'] as const;
 type AssistOperation = typeof assistOperations[number];
 export type AssistConnectionOperation = Extract<AssistOperation, 'setEdgeLabel' | 'removeEdge'>;
 
@@ -65,7 +65,10 @@ type AssistantEdit = { op: 'setNodeLabel' | 'setEdgeLabel'; targetId: string; la
   | { op: 'removeNode'; targetId: string; incidentEdgeIds: string[]; annotationPolicy: 'preserve-orphans' }
   | { op: 'addEdge'; ref: string; sourceId: string; targetId: string; label: string; direction: ConnectionDirection; lineStyle: 'solid' }
   | { op: 'addNode'; ref: string; label: string; shape: Shape; parentGroupId: null };
+type AssistantGroup = { op: 'createGroup'; ref: string; label: string; memberIds: string[]; parentGroupId: null };
+type ImportedOperation = AssistantEdit | AssistantGroup;
 type ConnectedAssistEdit = Extract<NativeFlowchartEdit, { op: 'addNext' }>;
+type GroupedAssistEdit = Extract<NativeFlowchartEdit, { op: 'addGroup' }>;
 export type AssistSelection = 'context' | 'writable' | 'attachment';
 
 export function assistWritableEdges(document: MermaidProjectV3, table: RenderTargetTable, selected: ReadonlyMap<string, AssistSelection>) {
@@ -96,7 +99,7 @@ export async function buildAssistRequest(
   instruction: string,
   writableEdges: ReadonlySet<string> = new Set(),
   edgeOperation: AssistConnectionOperation = 'setEdgeLabel',
-  permissions: { removeNode?: boolean; addEdge?: boolean; addNode?: boolean; addConnectedNode?: boolean } = {},
+  permissions: { removeNode?: boolean; addEdge?: boolean; addNode?: boolean; addConnectedNode?: boolean; createGroup?: boolean } = {},
   now = Date.now(),
 ) {
   const token = await projectBaseToken(document);
@@ -123,6 +126,10 @@ export async function buildAssistRequest(
   const allowedOperations: AssistOperation[] = [];
   if (writableNodes.length) allowedOperations.push('setNodeLabel');
   if (editable.length) allowedOperations.push(edgeOperation);
+  if (permissions.createGroup) {
+    if (!writableNodes.length) throw new Error('Choose at least one writable node before allowing a group.');
+    allowedOperations.push('createGroup');
+  }
   if (permissions.addEdge || connectedNode) {
     if (!connectedNode && !writableNodes.length) throw new Error('Choose at least one writable node to allow a new connection.');
     allowedOperations.push('addEdge');
@@ -229,6 +236,13 @@ const nodeAdditionSchema = {
   properties: { op: { const: 'addNode' }, ref: common.$defs.NewRef, label: common.$defs.Label,
     shape: common.$defs.Shape, parentGroupId: { type: 'null' } },
 };
+const groupCreationSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['op', 'ref', 'label', 'memberIds', 'parentGroupId'],
+  properties: { op: { const: 'createGroup' }, ref: common.$defs.NewRef, label: common.$defs.Label,
+    memberIds: { type: 'array', minItems: 1, maxItems: 100, items: common.$defs.UUID },
+    parentGroupId: { type: 'null' } },
+};
 const proposalSchema = {
   type: 'object', additionalProperties: false,
   required: ['schema', 'id', 'documentKind', 'baseToken', 'origin', 'requestId', 'requestHash', 'operations'],
@@ -236,11 +250,11 @@ const proposalSchema = {
     schema: { const: 'meridian-proposal/v1' }, id: common.$defs.UUID, documentKind: { const: 'mermaid' },
     baseToken: common.$defs.BaseToken, origin: { const: 'ai' }, requestHash: common.$defs.Sha256,
     requestId: { type: 'string', pattern: requestIdPattern.source },
-    operations: { type: 'array', minItems: 1, maxItems: 2, items: { oneOf: [renameSchema, edgeLabelSchema, edgeRemovalSchema, nodeRemovalSchema, edgeAdditionSchema, nodeAdditionSchema] } },
+    operations: { type: 'array', minItems: 1, maxItems: 2, items: { oneOf: [renameSchema, edgeLabelSchema, edgeRemovalSchema, nodeRemovalSchema, edgeAdditionSchema, nodeAdditionSchema, groupCreationSchema] } },
     explanation: { type: 'string', maxLength: 2000 },
   },
 };
-type ImportedEdit = { requestId: string; requestHash: string; baseToken: BaseToken; operations: [AssistantEdit] | [AssistantEdit, AssistantEdit] };
+type ImportedEdit = { requestId: string; requestHash: string; baseToken: BaseToken; operations: [ImportedOperation] | [ImportedOperation, ImportedOperation] };
 
 export function parseAssistSuggestion(text: string) {
   if (encoder.encode(text).byteLength > assistFileLimit) throw new Error('Choose a proposal no larger than 128 KiB.');
@@ -253,7 +267,7 @@ export function parseAssistSuggestion(text: string) {
 
 export function authorizeAssistEdit(
   suggestion: ImportedEdit, pending: PendingAssistRequest, token: BaseToken, now = Date.now(),
-): AssistantEdit | ConnectedAssistEdit {
+): AssistantEdit | ConnectedAssistEdit | GroupedAssistEdit {
   const [edit, second] = suggestion.operations;
   if (pending.expiresAt <= now || suggestion.requestId !== pending.id || suggestion.requestHash !== pending.requestHash
     || !sameBaseToken(pending.baseToken, suggestion.baseToken)) {
@@ -281,6 +295,15 @@ export function authorizeAssistEdit(
   }
   if (pending.connectedNode && (edit.op === 'addNode' || edit.op === 'addEdge')) {
     throw new Error('This request allows the new node and its connection together. Review both operations in one proposal.');
+  }
+  if (edit.op === 'createGroup') {
+    const members = edit.memberIds;
+    if (new Set(members).size !== members.length) throw new Error('List each proposed group member once.');
+    if (members.some(id => !writable.has(id) || !readable.has(id))) {
+      throw new Error('Every proposed group member must be inside the request’s writable scope.');
+    }
+    encodeMermaidLabel(edit.label);
+    return { op: 'addGroup', memberIds: members, label: edit.label };
   }
   if (edit.op === 'addNode') {
     encodeMermaidLabel(edit.label);

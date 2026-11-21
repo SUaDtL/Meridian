@@ -219,6 +219,20 @@ const NODE_SHAPES = [
   ':scope > g.label-container > ellipse', ':scope > g.label-container > polygon', ':scope > g > path.node-bkg',
 ].join(', ');
 
+function isDiamondShape(shape: SVGElement | undefined) {
+  if (shape?.localName !== 'polygon') return false;
+  const vertices = (shape as SVGPolygonElement).points;
+  if (vertices.numberOfItems !== 4) return false;
+  const points = Array.from({ length: 4 }, (_, index) => vertices.getItem(index));
+  const [left, , , right] = [...points].sort((a, b) => a.x - b.x);
+  const [top, , , bottom] = [...points].sort((a, b) => a.y - b.y);
+  const span = Math.max(right.x - left.x, bottom.y - top.y);
+  const near = (a: number, b: number) => Math.abs(a - b) <= span * 0.001;
+  return Number.isFinite(span) && span > 0 && left !== top && left !== bottom && right !== top && right !== bottom
+    && near(top.x, (left.x + right.x) / 2) && near(bottom.x, top.x)
+    && near(left.y, (top.y + bottom.y) / 2) && near(right.y, left.y);
+}
+
 function shapesFor(target: SVGElement, kind: RenderElement['kind']): SVGElement[] {
   return kind === 'edge' ? [target] : Array.from(target.querySelectorAll<SVGElement>(kind === 'group' ? ':scope > rect, :scope > path' : NODE_SHAPES));
 }
@@ -452,6 +466,7 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
       const stop = gradient?.querySelector('stop');
       const dash = shapeStyle?.strokeDasharray;
       item.appearance = {
+        diamondShape: item.kind === 'node' && shapes.length === 1 ? isDiamondShape(shape) : undefined,
         fill: colorToHex(fill) ?? (stop ? colorToHex(view.getComputedStyle(stop).stopColor) : undefined),
         fillKind: gradientId ? 'gradient' : fill === 'none' ? 'none' : 'solid',
         color: colorToHex(textStyle?.fill),

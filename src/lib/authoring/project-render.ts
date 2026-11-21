@@ -6,6 +6,7 @@ import { canonicalDigest, canonicalJson, projectBaseToken, type BaseToken } from
 import { sourceBindingKey } from './identities';
 import { observeFlowchartIdentities, type ObservedIdentity } from './identity-observation';
 import type { MermaidProjectV3 } from './mermaid-project';
+import { presentationRoleShape } from './presentation-role-shape';
 
 interface RenderTarget {
   id: string;
@@ -51,10 +52,12 @@ export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: 
   const kinds = new Map(live.map(record => [record.id, record.elementKind]));
   const byBinding = new Map(live.map(record => [sourceBindingKey(record), record.id]));
   const overrides: DesignState = { preset: snapshot.design.preset, elements: {} };
+  const shapeRoles = new Map(snapshot.design.applyRoleShapes ? snapshot.roles.map(item => [item.elementId, item.role]) : []);
   for (const record of live) {
+    const shape = record.elementKind === 'node' ? presentationRoleShape(snapshot.design.recipe, shapeRoles.get(record.id)) : undefined;
     const recipe = snapshot.design.recipeElements[record.id]?.style;
     const manual = snapshot.design.elements[record.id];
-    if (recipe || manual) overrides.elements[record.id] = { ...recipe, ...manual };
+    if (shape || recipe || manual) overrides.elements[record.id] = { ...(shape ? { shape } : {}), ...recipe, ...manual };
   }
   const [baseToken, projectionKey] = await Promise.all([
     projectBaseToken(snapshot), canonicalDigest('meridian-render-bindings/v1', [...byBinding].sort()),

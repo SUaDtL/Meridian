@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.meridian.invalid/recovery.schema.json",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "meridian-recovery/v1"
+    },
+    "acceptedProject": {
+      "$ref": "https://schemas.meridian.invalid/project.schema.json"
+    },
+    "baseStateDigest": {
+      "$ref": "https://schemas.meridian.invalid/common.schema.json#/$defs/Sha256"
+    },
+    "sourceDraft": {
+      "type": "string",
+      "maxLength": 100000
+    },
+    "reason": {
+      "enum": [
+        "annotation-limit",
+        "project-size",
+        "migration",
+        "save-failure"
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "acceptedProject",
+    "baseStateDigest",
+    "sourceDraft",
+    "reason"
+  ],
+  "additionalProperties": false
+}
