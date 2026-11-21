@@ -42,7 +42,7 @@ test('maps a local relationship table and exports distinct identities for duplic
   await expect(dialog.getByLabel('Relationship source')).toHaveValue('3');
   await dialog.getByRole('button', { name: 'Preview relationships' }).click();
   await expect(dialog.getByRole('list', { name: 'Reviewed relationships' })).toContainText('Service (row 3) → Service (row 2)');
-  await expect(dialog.getByText(/Draft saved locally · expires/)).toBeVisible();
+  await expect(dialog.getByText(/Draft saved locally at .* · expires/)).toBeVisible();
   const stored = await readDrafts(page);
   expect(stored).toHaveLength(1);
   expect(JSON.stringify(stored)).not.toContain('session-only-cell');
@@ -51,7 +51,14 @@ test('maps a local relationship table and exports distinct identities for duplic
   await page.getByRole('button', { name: 'Systems and relationships' }).click();
   const resume = dialog.getByRole('button', { name: /Resume Mapped systems/ });
   await expect(resume).toContainText(/Saved .* expires /);
+  await expect(resume.locator('time')).toHaveCount(2);
+  const dates = await resume.locator('time').evaluateAll(times => times.map(time => time.getAttribute('datetime')));
+  expect(dates).toHaveLength(2);
+  expect(Date.parse(dates[1]!) - Date.parse(dates[0]!)).toBe(7 * 24 * 60 * 60 * 1_000);
   await resume.click();
+  const restored = dialog.getByRole('status').filter({ hasText: 'Draft saved locally at' });
+  await expect(restored).toContainText(/Draft saved locally at .* · expires /);
+  for (const [index, date] of dates.entries()) await expect(restored.locator('time').nth(index)).toHaveAttribute('datetime', date!);
   await expect(dialog.getByText('Relationship source uses column 4')).toBeVisible();
   await dialog.getByRole('button', { name: 'Preview relationships' }).click();
   await expect(dialog.getByRole('img', { name: 'Proposed systems diagram' })).toBeVisible();
@@ -142,7 +149,7 @@ test('inserts a mapped table after rejecting a stale target and keeps unmapped b
   await wizard.getByRole('combobox', { name: 'Relationship target' }).selectOption('4');
   await wizard.getByRole('button', { name: 'Review mapped relationships' }).click();
   await expect(wizard.getByRole('heading', { name: 'Review mapped systems' })).toBeFocused();
-  await expect(wizard.getByText(/Draft saved locally · expires/)).toBeVisible();
+  await expect(wizard.getByText(/Draft saved locally at .* · expires/)).toBeVisible();
   const stored = await readDrafts(page);
   expect(stored).toHaveLength(1);
   expect(JSON.stringify(stored)).not.toMatch(/session-only-marker|discard-from-checkpoint/);

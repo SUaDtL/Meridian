@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Modal from "./Modal";
+import GuidedCheckpointTimes from "./GuidedCheckpointTimes";
 import GuidedAttachmentPicker, { emptyGuidedAttachment, GuidedAttachmentSummary, readyGuidedAttachment, type GuidedAttachmentTarget } from "./GuidedAttachmentPicker";
 import type { GuidedAttachment } from "../lib/authoring/guided-systems-insertion";
 import type { ReadyProposal } from "../lib/authoring/proposals";
@@ -244,7 +245,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
                   <button type="button" className="project-open" disabled={!!busy} onClick={() => resume(saved)}>
                     <span>
                       <strong>Resume {saved.payload.title || "Untitled process"}</strong>
-                      <small>Saved {formatTime(saved.createdAt)} · expires {formatTime(saved.expiresAt)}</small>
+                      <small><GuidedCheckpointTimes checkpoint={saved} /></small>
                     </span>
                   </button>
                   <button type="button" className="button quiet" disabled={!!busy} aria-label={`Discard draft ${saved.payload.title || "Untitled process"}`}
@@ -349,14 +350,12 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
           </div>
         </>
       )}
-      {busy === "normalize" && <p role="status">Reading process steps…</p>}
-      {busy === "preview" && <p role="status">Checking and rendering the process…</p>}
-      {busy === "save" && <p role="status">{target ? "Saving the insertion…" : "Saving the new project…"}</p>}
-      {busy === "checkpoint" && <p role="status">Saving draft…</p>}
-      {stage !== "input" && !busy && !draftError && draft.checkpoint && !draft.unsaved && (
-        <p role="status">Draft saved locally · expires {formatTime(draft.checkpoint.expiresAt)}</p>
-      )}
-      {stage !== "input" && !busy && !draftError && draft.unsaved && <p role="status">Session-only draft changes</p>}
+      <p role="status" className="guided-checkpoint-status">{busy === "normalize" ? "Reading process steps…"
+        : busy === "preview" ? "Checking and rendering the process…"
+        : busy === "save" ? (target ? "Saving the insertion…" : "Saving the new project…")
+        : busy === "checkpoint" ? "Saving draft…"
+        : stage !== "input" && !draftError && (draft.unsaved ? "Session-only draft changes"
+          : draft.checkpoint && <GuidedCheckpointTimes checkpoint={draft.checkpoint} status />)}</p>
       {draftError && <p role="alert">{stage === "input" ? draftError : `Session-only draft. ${draftError}`}</p>}
       {draftError && stage !== "input" && draft.unsaved && steps.length > 0 && <button type="button"
         className="button quiet" disabled={!!busy} onClick={downloadDraft}>Download normalized draft</button>}
@@ -365,9 +364,6 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
   );
 }
 
-function formatTime(value: string) {
-  return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
 
 async function withDatabase<Result>(work: (db: IDBDatabase) => Promise<Result>): Promise<Result> {
   const db = await openWorkspaceDatabase();

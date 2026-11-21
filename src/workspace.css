@@ -834,6 +834,7 @@
 .guided-process-connections li span {
   display: block;
 }
+.guided-checkpoint-status:empty { margin: 0; }
 .guided-process-fieldset {
   min-inline-size: 0;
   border: 1px solid #405255;
