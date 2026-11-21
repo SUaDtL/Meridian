@@ -19,11 +19,13 @@ export function validPendingAssist(value: unknown): value is PendingAssistReques
     || typeof item.requestHash !== 'string' || !digestPattern.test(item.requestHash)
     || !matchesBundledContract(item.baseToken, common.$defs.BaseToken)
     || !Number.isSafeInteger(item.expiresAt) || !scope || !ids(scope.readContextIds, 320)
-    || !ids(scope.writableElementIds, 320) || !ids(scope.attachmentPointIds, 0)
+    || !ids(scope.writableElementIds, 320) || !ids(scope.attachmentPointIds, 100)
     || !scope.writableElementIds.length || !scope.writableElementIds.every(id => scope.readContextIds.includes(id))
     || !Array.isArray(item.allowedOperations) || !item.allowedOperations.length
     || new Set(item.allowedOperations).size !== item.allowedOperations.length
-    || !item.allowedOperations.every(operation => assistOperations.includes(operation))) {
+    || !item.allowedOperations.every(operation => assistOperations.includes(operation))
+    || (scope.attachmentPointIds.length > 0 && !item.allowedOperations.includes('addEdge'))
+    || !scope.attachmentPointIds.every(id => scope.readContextIds.includes(id) && !scope.writableElementIds.includes(id))) {
     return false;
   }
   try {

@@ -26,6 +26,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
   const [writableEdges, setWritableEdges] = useState(new Set<string>());
   const [edgeOperation, setEdgeOperation] = useState<AssistConnectionOperation>("setEdgeLabel");
   const [allowNodeRemoval, setAllowNodeRemoval] = useState(false);
+  const [allowConnectionAddition, setAllowConnectionAddition] = useState(false);
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(batchSize);
   const [request, setRequest] = useState<RequestPreview>();
@@ -60,7 +61,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
     void run("Preparing request", async signal => {
       const edgeStyles = new Map(elements.flatMap(item => item.kind === "edge" && item.appearance?.lineStyle
         ? [[item.key, item.appearance.lineStyle] as const] : []));
-      const result = await buildAssistRequest(project, table, edgeLabels, edgeStyles, selected, instruction, writableEdges, edgeOperation, allowNodeRemoval);
+      const result = await buildAssistRequest(project, table, edgeLabels, edgeStyles, selected, instruction, writableEdges, edgeOperation, allowNodeRemoval, allowConnectionAddition);
       signal.throwIfAborted();
       if (editor.snapshot() !== project) throw new Error("The project changed. Close this dialog and review the current diagram.");
       setRequest(result);
@@ -121,7 +122,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
 
   function chooseNode(id: string, choice: string) {
     const next = new Map(selected);
-    if (choice === "context" || choice === "writable") next.set(id, choice);
+    if (choice === "context" || choice === "writable" || choice === "attachment") next.set(id, choice);
     else {
       next.delete(id);
       setWritableEdges(previous => new Set([...previous].filter(edgeId => {
@@ -133,7 +134,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
   }
   return <Modal title="External assistant file exchange" wide busy={durableActions.has(busy)} onClose={onClose}>
     {!candidate && !request && <>
-      <p>Download a scoped request or review a returned proposal. A proposal can make one authorized label edit or removal. Meridian processes the files locally.</p>
+      <p>Download a scoped request or review a returned proposal. A proposal can make one authorized change. Meridian processes the files locally.</p>
       <div className="dialog-actions">
         <button className="button secondary" aria-pressed={mode === "export"} disabled={!!busy} onClick={() => { setMode("export"); setError(""); }}>Prepare a request</button>
         <button className="button secondary" aria-pressed={mode === "import"} disabled={!!busy} onClick={() => { setMode("import"); setError(""); }}>Review a proposal</button>
@@ -144,11 +145,21 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
         <label>Find nodes<input value={query} disabled={!!busy} maxLength={200}
           onChange={event => { setQuery(event.target.value); setLimit(batchSize); }} /></label>
         <p>{selected.size} nodes selected · {writable} writable nodes · {writableEdges.size} writable connections</p>
+        <label className="check-label">
+          <input type="checkbox" checked={allowConnectionAddition} disabled={!!busy} onChange={event => {
+            const enabled = event.target.checked;
+            setAllowConnectionAddition(enabled);
+            if (!enabled) setSelected(previous => new Map([...previous].map(([id, choice]) =>
+              [id, choice === "attachment" ? "context" : choice])));
+          }} />
+          Allow one new solid connection
+        </label>
         <ul className="project-list">
           {visible.slice(0, limit).map(node => <li className="project-row" key={node.id}>
             <label>{node.label}
               <select value={selected.get(node.id) ?? ""} disabled={!!busy} onChange={event => chooseNode(node.id, event.target.value)}>
                 <option value="">Exclude</option><option value="context">Read-only context</option><option value="writable">Writable node</option>
+                {allowConnectionAddition && <option value="attachment">Read-only attachment point</option>}
               </select>
             </label>
           </li>)}
@@ -198,8 +209,11 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
         <p>As its single change, the proposal may remove one of these nodes and all its incident connections.</p>
         <ul aria-label="Nodes eligible for removal">{request.removableNodes.map(node => <li key={node.id}>{node.label}</li>)}</ul>
       </>}
+      {request.request.allowedOperations.includes("addEdge") &&
+        <p>One new solid connection may join a writable node to another writable node or a read-only attachment point.</p>}
       <ul>{request.request.graph.nodes.map(node => <li key={node.id}>
-        {node.label} · {request.request.scope.writableElementIds.includes(node.id) ? "Writable node" : "Read-only context"}
+        {node.label} · {request.request.scope.writableElementIds.includes(node.id) ? "Writable node"
+          : request.request.scope.attachmentPointIds.includes(node.id) ? "Read-only attachment point" : "Read-only context"}
       </li>)}</ul>
       <details open={writableEdges.size > 0 || undefined}><summary>{request.request.graph.edges.length} declared relationships in the selected scope</summary>
         <ul>{request.request.graph.edges.map(edge => <li key={edge.id}>
@@ -219,6 +233,9 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
       {candidate.op === "setNodeLabel" ? <p>Rename {labels.get(candidate.targetId)} to {candidate.label}.</p>
         : candidate.op === "removeEdge" ? <p>Remove {connectionName(candidate.targetId)}
           {edgeLabels.get(candidate.targetId) && ` · ${edgeLabels.get(candidate.targetId)}`}.</p>
+        : candidate.op === "addEdge" ? <p>Connect {labels.get(candidate.sourceId)}
+          {candidate.direction === "both" ? " ↔ " : candidate.direction === "forward" ? " → " : " — "}
+          {labels.get(candidate.targetId)}{candidate.label && ` · ${candidate.label}`} · solid</p>
         : candidate.op === "removeNode" ? <>
           <p>Remove {labels.get(candidate.targetId)} and every listed incident connection.</p>
           {candidate.incidentEdgeIds.length > 0 && <ul aria-label="Connections to remove">
@@ -235,6 +252,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
       </section>}
       <img src={candidate.url} alt={candidate.op === "setNodeLabel" ? "Diagram preview with proposed node label"
         : candidate.op === "removeEdge" ? "Diagram preview after proposed connection removal"
+        : candidate.op === "addEdge" ? "Diagram preview with proposed new connection"
         : candidate.op === "removeNode" ? "Diagram preview after proposed node removal" : "Diagram preview with proposed connection label"}
         onLoad={() => setPainted(true)}
         onError={() => setError("The candidate diagram could not be displayed.")} />
@@ -243,6 +261,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
         <button className="button primary" disabled={!painted || !!busy} onClick={apply}>
           {candidate.op === "setNodeLabel" ? "Apply reviewed rename"
             : candidate.op === "removeEdge" ? "Apply reviewed connection removal"
+            : candidate.op === "addEdge" ? "Apply reviewed new connection"
             : candidate.op === "removeNode" ? "Apply reviewed node removal" : "Apply reviewed connection label"}
         </button>
       </div>
