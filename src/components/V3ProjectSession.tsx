@@ -21,6 +21,7 @@ import { componentSourceIssue, flowchartSubsetTopology, groupContentsDeletionSco
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
+import type { LayoutIntent } from "../lib/authoring/layout-alternatives";
 import type { GuidedAttachment } from "../lib/authoring/guided-systems-insertion";
 import { emptyGuidedAttachment } from "./GuidedAttachmentPicker";
 import type { GuidedProcessDraft } from "./GuidedProcessDialog";
@@ -119,6 +120,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [readabilityViewing, setReadabilityViewing] = useState<ReadabilityProfileChoice>();
   const [comparisonSelection, setComparisonSelection] = useState<{ ids: string[]; hidden: number }>();
   const [comparison, setComparison] = useState<"design" | "layout">();
+  const [layoutResume, setLayoutResume] = useState<LayoutIntent>();
   const [storyOpen, setStoryOpen] = useState(false);
   const [savedStoryOpen, setSavedStoryOpen] = useState(false);
   const [savedScenesOpen, setSavedScenesOpen] = useState<"edit" | "create">();
@@ -945,16 +947,35 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           if (status === "applied") setProject(current.snapshot());
           return status;
         }} />}
-      {comparison && currentFrame && editor.current && <V3ComparisonDialog mode={comparison} allowDirection={flatFlowchart}
-        allowScopedDesign={componentSourceSupported}
-        editor={editor.current} currentUrl={currentFrame.url}
-        currentSize={currentFrame.geometry} selection={comparisonSelection} selectedRoleCounts={selectedRoleCounts} onClose={() => {
+      {comparison === "layout" && layoutResume && !outlineAvailable && <Modal title="Compare layouts" wide onClose={() => {
+        setLayoutResume(undefined);
+        setComparison(undefined);
+      }}>
+        {renderError || currentFrame ? <p role="alert">{renderError || "A verified flowchart is needed to compare layouts."}</p>
+          : <p role="status">Refreshing the saved diagram…</p>}
+      </Modal>}
+      {comparison && outlineAvailable && currentFrame && editor.current && <V3ComparisonDialog mode={comparison} allowDirection={flatFlowchart}
+        allowScopedDesign={componentSourceSupported} editor={editor.current} currentUrl={currentFrame.url}
+        currentSize={currentFrame.geometry} selection={comparisonSelection} selectedRoleCounts={selectedRoleCounts}
+        initialLayout={layoutResume} onRefreshLayout={async intent => {
+          const db = connection.current;
+          const current = editor.current;
+          if (!db || current?.saveState().phase !== "saved") throw new Error("Save the current project before refreshing the diagram.");
+          const refreshed = await openStoredProjectEditor(db, id, setSave);
+          if (editor.current !== current) {
+            refreshed.close();
+            return;
+          }
+          setLayoutResume(intent);
+          adoptEditor(refreshed);
+        }} onClose={() => {
           setComparisonSelection(undefined);
+          setLayoutResume(undefined);
           setComparison(undefined);
-        }} onApply={proposal => {
+        }} onApply={async proposal => {
           const current = editor.current!;
-          const status = comparison === "layout" ? current.applyLayout(proposal) : current.applyDesign(proposal);
-          if (status === "applied") setProject(current.snapshot());
+          const status = comparison === "layout" ? await current.applyLayout(proposal) : current.applyDesign(proposal);
+          if (status === "applied" && editor.current === current) setProject(current.snapshot());
           return status;
         }} />}
       {storyOpen && targetTable && editor.current && connection.current && <V3GroupStoryDialog editor={editor.current} db={connection.current} table={targetTable}
