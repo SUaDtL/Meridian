@@ -87,3 +87,23 @@ test('resumes schema facts without source bytes and creates exact local provenan
   expect(await records()).toHaveLength(0);
   expect(remoteRequests).toEqual([]);
 });
+
+test('explains an unsupported JSON Schema dialect and recovers with a dynamic reference report', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Engineering file' }).click();
+  await page.getByRole('button', { name: 'Import JSON Schema' }).click();
+  const dialog = page.getByRole('dialog', { name: 'JSON Schema relationships' });
+  const file = dialog.getByLabel('JSON Schema files');
+  const read = dialog.getByRole('button', { name: 'Read schema facts' });
+  const fixture = (schema: object) => ({ name: 'dialect.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(schema)) });
+  await file.setInputFiles(fixture({ $schema: 'http://json-schema.org/draft-07/schema#', type: 'object' }));
+  await read.click();
+  await expect(dialog.getByRole('alert')).toHaveText('Choose JSON Schema draft 2020-12. A supplied schema declares a different dialect.');
+  await expect(dialog.getByRole('button', { name: 'Preview schema diagram' })).toHaveCount(0);
+  await file.setInputFiles(fixture({ $schema: 'https://json-schema.org/draft/2020-12/schema', properties: { child: { $dynamicRef: '#Child' } } }));
+  await read.click();
+  await expect(dialog.getByText(/0 ordinary references checked · 1 unresolved entry/)).toBeVisible();
+  await expect(dialog.getByText(/dynamic reference semantics are outside this view/)).toBeVisible();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+});
