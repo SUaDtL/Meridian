@@ -111,6 +111,7 @@ test('discovers parallel relationships and jumps only to the exact selected sour
   const relationships = outline.getByRole('listbox', { name: 'Relationships' });
   await expect(relationships.getByRole('option')).toHaveCount(2);
   await expect(relationships.getByRole('option', { name: /delivery · Line 4/ })).toBeVisible();
+  await outline.getByRole('textbox', { name: 'Find an element' }).fill('audit');
   await relationships.getByRole('option', { name: /audit · Line 5/ }).click();
   await outline.getByRole('button', { name: 'Jump to source' }).click();
   await expect(outline).toHaveCount(0);
@@ -119,6 +120,14 @@ test('discovers parallel relationships and jumps only to the exact selected sour
   await expect(marked).toBeFocused();
   expect(await live.locator('pre').textContent()).toBe(source);
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await live.getByRole('button', { name: 'Return to outline' }).click();
+  await expect(outline.getByRole('textbox', { name: 'Find an element' })).toHaveValue('audit');
+  await expect(relationships.getByRole('option')).toHaveCount(1);
+  await expect(relationships).toBeFocused();
+  await expect(relationships.getByRole('option', { name: /audit · Line 5/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(outline.getByRole('status')).toHaveText('1 selected · 0 hidden');
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
   await live.getByRole('button', { name: 'Outline', exact: true }).click();
   await expect(outline.getByRole('status')).toHaveText('1 selected · 1 hidden');
   await outline.getByRole('treeitem', { name: /Result/ }).click();
