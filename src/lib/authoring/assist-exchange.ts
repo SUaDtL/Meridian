@@ -14,8 +14,9 @@ export const requestIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-
 export const digestPattern = /^[a-f0-9]{64}$/;
 const day = 24 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
-export const assistLabelOperations = ['setNodeLabel', 'setEdgeLabel'] as const;
-type AssistLabelOperation = typeof assistLabelOperations[number];
+export const assistOperations = ['setNodeLabel', 'setEdgeLabel', 'removeEdge'] as const;
+type AssistOperation = typeof assistOperations[number];
+export type AssistConnectionOperation = Extract<AssistOperation, 'setEdgeLabel' | 'removeEdge'>;
 
 type Scope = {
   readContextIds: string[];
@@ -47,17 +48,18 @@ type AssistRequest = {
   instruction: string;
   scope: Scope;
   graph: { nodes: Node[]; edges: Edge[]; groups: [] };
-  allowedOperations: AssistLabelOperation[];
+  allowedOperations: AssistOperation[];
 };
 export type PendingAssistRequest = {
   id: string;
   requestHash: string;
   baseToken: BaseToken;
   scope: Scope;
-  allowedOperations: AssistLabelOperation[];
+  allowedOperations: AssistOperation[];
   expiresAt: number;
 };
-type AssistantLabelEdit = { op: AssistLabelOperation; targetId: string; label: string };
+type AssistantEdit = { op: 'setNodeLabel' | 'setEdgeLabel'; targetId: string; label: string }
+  | { op: 'removeEdge'; targetId: string; annotationPolicy: 'preserve-orphans' };
 export type AssistSelection = 'context' | 'writable';
 
 export function assistWritableEdges(document: MermaidProjectV3, table: RenderTargetTable, selected: ReadonlyMap<string, AssistSelection>) {
@@ -86,6 +88,7 @@ export async function buildAssistRequest(
   chosen: ReadonlyMap<string, AssistSelection>,
   instruction: string,
   writableEdges: ReadonlySet<string> = new Set(),
+  edgeOperation: AssistConnectionOperation = 'setEdgeLabel',
   now = Date.now(),
 ) {
   const token = await projectBaseToken(document);
@@ -101,9 +104,9 @@ export async function buildAssistRequest(
   const editable = assistWritableEdges(document, table, chosen).filter(item => writableEdges.has(item.id)).map(item => item.id);
   if (editable.length !== writableEdges.size) throw new Error('Choose writable connections with an explicit source ID and both endpoints in scope.');
   if (!writableNodes.length && !editable.length) throw new Error('Choose at least one writable node or connection.');
-  const allowedOperations: AssistLabelOperation[] = [];
+  const allowedOperations: AssistOperation[] = [];
   if (writableNodes.length) allowedOperations.push('setNodeLabel');
-  if (editable.length) allowedOperations.push('setEdgeLabel');
+  if (editable.length) allowedOperations.push(edgeOperation);
   const selected = new Set(currentNodes.map(item => item.id));
   const edges = table.targets.filter(item => item.elementKind === 'edge');
   const scopedEdges = edges.filter(item => item.sourceId && item.targetId && selected.has(item.sourceId) && selected.has(item.targetId));
@@ -162,6 +165,10 @@ const edgeLabelSchema = {
   ...renameSchema,
   properties: { ...renameSchema.properties, op: { const: 'setEdgeLabel' }, label: { type: 'string', maxLength: 200 } },
 };
+const edgeRemovalSchema = {
+  type: 'object', required: ['op', 'targetId', 'annotationPolicy'], additionalProperties: false,
+  properties: { op: { const: 'removeEdge' }, targetId: common.$defs.UUID, annotationPolicy: { const: 'preserve-orphans' } },
+};
 const proposalSchema = {
   type: 'object', additionalProperties: false,
   required: ['schema', 'id', 'documentKind', 'baseToken', 'origin', 'requestId', 'requestHash', 'operations'],
@@ -169,24 +176,24 @@ const proposalSchema = {
     schema: { const: 'meridian-proposal/v1' }, id: common.$defs.UUID, documentKind: { const: 'mermaid' },
     baseToken: common.$defs.BaseToken, origin: { const: 'ai' }, requestHash: common.$defs.Sha256,
     requestId: { type: 'string', pattern: requestIdPattern.source },
-    operations: { type: 'array', minItems: 1, maxItems: 1, items: { oneOf: [renameSchema, edgeLabelSchema] } },
+    operations: { type: 'array', minItems: 1, maxItems: 1, items: { oneOf: [renameSchema, edgeLabelSchema, edgeRemovalSchema] } },
     explanation: { type: 'string', maxLength: 2000 },
   },
 };
-type ImportedLabelEdit = { requestId: string; requestHash: string; baseToken: BaseToken; operations: [AssistantLabelEdit] };
+type ImportedEdit = { requestId: string; requestHash: string; baseToken: BaseToken; operations: [AssistantEdit] };
 
 export function parseAssistSuggestion(text: string) {
   if (encoder.encode(text).byteLength > assistFileLimit) throw new Error('Choose a proposal no larger than 128 KiB.');
   const value = decodeJson(text);
   if (!matchesBundledContract(value, proposalSchema)) {
-    throw new Error('Choose a Meridian assistant proposal with one supported node or connection label edit.');
+    throw new Error('Choose a Meridian assistant proposal with one supported label edit or one connection removal that preserves annotations.');
   }
-  return value as ImportedLabelEdit;
+  return value as ImportedEdit;
 }
 
-export function authorizeAssistLabelEdit(
-  suggestion: ImportedLabelEdit, pending: PendingAssistRequest, token: BaseToken, now = Date.now(),
-): AssistantLabelEdit {
+export function authorizeAssistEdit(
+  suggestion: ImportedEdit, pending: PendingAssistRequest, token: BaseToken, now = Date.now(),
+): AssistantEdit {
   const edit = suggestion.operations[0];
   if (pending.expiresAt <= now || suggestion.requestId !== pending.id || suggestion.requestHash !== pending.requestHash
     || !sameBaseToken(pending.baseToken, suggestion.baseToken)) {
@@ -197,7 +204,7 @@ export function authorizeAssistLabelEdit(
     || !pending.scope.readContextIds.includes(edit.targetId) || !elementUuidPattern.test(edit.targetId)) {
     throw new Error('The suggestion targets an element or operation outside the request’s writable scope.');
   }
-  if (edit.op === 'setNodeLabel' || edit.label !== '') encodeMermaidLabel(edit.label);
+  if (edit.op !== 'removeEdge' && (edit.op === 'setNodeLabel' || edit.label !== '')) encodeMermaidLabel(edit.label);
   return edit;
 }
 
