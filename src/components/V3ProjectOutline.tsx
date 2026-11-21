@@ -51,7 +51,7 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
 }
 
 export default function V3ProjectOutline({ items, selected, restoredView, onSelection, canRename, onRename, onSource, onFrame, onConnect, onGroup, onBulkText,
-  onDesign, onResetDesign, onSaveComponent, onStory, onDeleteConnections, canUngroup, onUngroup, canReviewGroupDeletion, onReviewGroupDeletion,
+  onDesign, onResetDesign, onSaveComponent, componentIssue, onStory, onDeleteConnections, canUngroup, onUngroup, canReviewGroupDeletion, onReviewGroupDeletion,
   canMoveInto, onMoveInto, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
@@ -66,7 +66,8 @@ export default function V3ProjectOutline({ items, selected, restoredView, onSele
   onBulkText: (hidden: number) => void;
   onDesign?: (hidden: number) => void;
   onResetDesign?: (hidden: number) => void;
-  onSaveComponent?: (hidden: number) => void;
+  onSaveComponent: (hidden: number) => void;
+  componentIssue?: { message: string; location?: OutlineSourceLocation };
   onStory?: (hidden: number) => void;
   onDeleteConnections?: (hidden: number) => void;
   canUngroup: (id: string) => boolean;
@@ -203,12 +204,19 @@ export default function V3ProjectOutline({ items, selected, restoredView, onSele
             onClick={() => onDesign(hidden)}>Explore designs for selection</button>}
           {onResetDesign && <button type="button" className="button secondary" onClick={() => onResetDesign(hidden)}>Reset selected styles</button>}
           {onStory && canCreateScene && <button type="button" className="button secondary" onClick={() => onStory(hidden)}>Create scene from selection</button>}
-          {onSaveComponent && <button type="button" className="button secondary" disabled={!canSaveComponent}
+          <button type="button" className="button secondary" disabled={!canSaveComponent || !!componentIssue}
+            aria-describedby={componentIssue && canSaveComponent ? `${id}-component-issue` : undefined}
             title={canSaveComponent ? undefined : "Select one to 100 nodes or groups"}
-            onClick={() => onSaveComponent(hidden)}>Save as component</button>}
+            onClick={() => onSaveComponent(hidden)}>Save as component</button>
           {onDeleteConnections && relationships && <button type="button" className="button secondary" disabled={!canDeleteConnections}
             onClick={() => onDeleteConnections(hidden)}>Delete selected connections</button>}
         </div>
+        {componentIssue && canSaveComponent && <div>
+          <p className="muted-note" id={`${id}-component-issue`}>{componentIssue.message}</p>
+          {componentIssue.location && <button type="button" className="button quiet" onClick={() => {
+            if (componentIssue.location) onSource(componentIssue.location, { query, relationships, limit, activeId: active?.item.id ?? "", collapsed, checkboxSelection });
+          }}>Open blocking statement in source</button>}
+        </div>}
         {onDeleteConnections && relationships && selected.size > 0 && !canDeleteConnections
           && <p>Choose up to {bulkConnectionLimit} connections with verified source IDs to delete together.</p>}
         <ul ref={list} data-outline-list role={checkboxSelection ? "list" : relationships ? "listbox" : "tree"}
