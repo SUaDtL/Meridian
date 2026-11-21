@@ -349,3 +349,42 @@ test('re-imports changed OpenAPI facts as an independent project after a manual 
   expect(await downloadProject(firstTitle)).toBe(firstBytes);
   expect(await readDrafts(page)).toEqual([]);
 });
+
+test('names unsupported OpenAPI schema dialect locations and keeps dynamic references unresolved', async ({ page }) => {
+  const unexpectedRequests: string[] = [];
+  await page.context().route('https://schema.invalid/**', async route => {
+    unexpectedRequests.push(route.request().url());
+    await route.abort();
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Engineering file' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Engineering file' });
+  await dialog.getByLabel('OpenAPI view').selectOption('schemas');
+  const document = (name: string, value: object) => ({ name, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)) });
+  await dialog.getByLabel('OpenAPI specification').setInputFiles([
+    document('legacy-dialect.json', { openapi: '3.1.0', jsonSchemaDialect: 'https://schema.invalid/legacy', components: {
+      schemas: { Legacy: { $ref: '#/components/schemas/Legacy' } },
+    } }),
+    document('mixed-dialects.json', { openapi: '3.1.0', components: { schemas: {
+      Account: { properties: {
+        runtime: { $dynamicRef: 'https://schema.invalid/runtime#dynamic' },
+        local: { $schema: 'https://schema.invalid/nested', $ref: '#/components/schemas/Account' },
+      } },
+      LocalOverride: { $schema: 'https://schema.invalid/local', $ref: '#/components/schemas/Account' },
+    } } }),
+  ]);
+  await dialog.getByRole('button', { name: 'Read schema facts' }).click();
+  await expect(dialog.getByText('0 resolved references · 1 unresolved reference · 3 unsupported schema locations')).toBeVisible();
+  await dialog.getByText('3 unsupported dialect declarations', { exact: true }).press('Enter');
+  for (const location of ['legacy-dialect.json · /jsonSchemaDialect',
+    'mixed-dialects.json · /components/schemas/Account/properties/local/$schema',
+    'mixed-dialects.json · /components/schemas/LocalOverride/$schema']) {
+    await expect(dialog.getByText(location, { exact: true })).toBeVisible();
+  }
+  await dialog.getByRole('checkbox', { name: 'Account · mixed-dialects.json' }).check();
+  await dialog.getByText('See unresolved locations', { exact: true }).press('Enter');
+  await expect(dialog.getByText(/\/properties\/runtime\/\$dynamicRef · Unsupported dynamic or recursive reference/)).toBeVisible();
+  await expect(dialog.getByText(/https:\/\/schema\.invalid/)).toHaveCount(0);
+  expect(unexpectedRequests).toEqual([]);
+});
