@@ -15,6 +15,7 @@ export function validPendingAssist(value: unknown): value is PendingAssistReques
     Array.isArray(input) && input.length <= max && new Set(input).size === input.length
       && input.every(id => typeof id === 'string' && elementUuidPattern.test(id));
   const scope = item.scope;
+  const connected = item.connectedNode === true;
   if (typeof item.id !== 'string' || !requestIdPattern.test(item.id)
     || typeof item.requestHash !== 'string' || !digestPattern.test(item.requestHash)
     || !matchesBundledContract(item.baseToken, common.$defs.BaseToken)
@@ -24,7 +25,10 @@ export function validPendingAssist(value: unknown): value is PendingAssistReques
     || !Array.isArray(item.allowedOperations) || !item.allowedOperations.length
     || new Set(item.allowedOperations).size !== item.allowedOperations.length
     || !item.allowedOperations.every(operation => assistOperations.includes(operation))
-    || (!scope.writableElementIds.length && (item.allowedOperations.length !== 1 || item.allowedOperations[0] !== 'addNode'))
+    || (item.connectedNode !== undefined && !connected)
+    || (connected && (!item.allowedOperations.includes('addNode') || !item.allowedOperations.includes('addEdge')
+      || (!scope.writableElementIds.length && !scope.attachmentPointIds.length)))
+    || (!connected && !scope.writableElementIds.length && (item.allowedOperations.length !== 1 || item.allowedOperations[0] !== 'addNode'))
     || (scope.attachmentPointIds.length > 0 && !item.allowedOperations.includes('addEdge'))
     || !scope.attachmentPointIds.every(id => scope.readContextIds.includes(id) && !scope.writableElementIds.includes(id))) {
     return false;
@@ -33,6 +37,7 @@ export function validPendingAssist(value: unknown): value is PendingAssistReques
     const encoded = pendingAssistKey({
       id: item.id, requestHash: item.requestHash, baseToken: item.baseToken!,
       expiresAt: item.expiresAt!, allowedOperations: item.allowedOperations,
+      ...(connected ? { connectedNode: true } : {}),
       scope: {
         readContextIds: scope.readContextIds, writableElementIds: scope.writableElementIds, attachmentPointIds: scope.attachmentPointIds,
       },

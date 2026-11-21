@@ -93,7 +93,7 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
     operations: [{ op: 'setNodeLabel', targetId: writable.id, label: 'Reviewed label' }],
   };
   await review(dialog, { ...proposal, origin: 'canvas' });
-  await expect(dialog.getByRole('alert')).toContainText('one supported edit that preserves annotations');
+  await expect(dialog.getByRole('alert')).toContainText('one supported edit or a reviewed node and connection');
   await review(dialog, { ...proposal, operations: [{ ...proposal.operations[0], targetId: contextOnly.id }] });
   await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
   await review(dialog, { ...proposal, baseToken: { ...proposal.baseToken, stateDigest: 'a'.repeat(64) } });
@@ -415,6 +415,65 @@ test('allows one standalone assistant node with read-only scope and forgets the 
   await review(reopened, { ...proposal, operations: [operation] });
   await expect(reopened.getByRole('alert')).toContainText('no longer matches a live request');
   await reopened.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = JSON.parse(await download(page, backup));
+  expect(restored).toEqual({ ...original, revision: applied.revision + 1, updatedAt: restored.updatedAt });
+});
+
+test('reviews a connected assistant node through an explicit attachment and applies both changes atomically', async ({ page, context }, info) => {
+  const source = '\uFEFFflowchart LR\r\n  A[Current service]\r\n  B[Context service]\r\n';
+  const live = await openProject(page, 'Connected node proposal', source);
+  const backup = live.getByRole('button', { name: 'Download v3 project' });
+  const original = JSON.parse(await download(page, backup));
+  const dialog = await openExchange(page, live);
+  await context.setOffline(true);
+  await dialog.getByLabel('Instruction').fill('Suggest a connected queue.');
+  await dialog.getByRole('checkbox', { name: 'Allow one new node and its connection together' }).check();
+  const current = dialog.getByRole('combobox', { name: 'Current service', exact: true });
+  await current.selectOption('context');
+  await dialog.getByRole('combobox', { name: 'Context service', exact: true }).selectOption('context');
+  const reviewRequest = dialog.getByRole('button', { name: 'Review what will be shared' });
+  await expect(reviewRequest).toBeDisabled();
+  await current.selectOption('attachment');
+  await reviewRequest.click();
+  const disclosure = dialog.getByRole('region', { name: 'What will be shared' });
+  await expect(disclosure).toContainText('A proposal may add one node with a solid one-way connection');
+  await expect(disclosure).toContainText('Current service · Read-only attachment point');
+  const request = JSON.parse(await download(page, dialog.getByRole('button', { name: 'Download request' })));
+  const attachment = request.graph.nodes.find((item: { label: string }) => item.label === 'Current service').id;
+  const contextId = request.graph.nodes.find((item: { label: string }) => item.label === 'Context service').id;
+  expect(request.allowedOperations).toEqual(['addEdge', 'addNode']);
+  expect(request.scope.writableElementIds).toEqual([]);
+  expect(request.scope.attachmentPointIds).toEqual([attachment]);
+  const proposal = {
+    schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'ai',
+    requestId: request.requestId, requestHash: await canonicalDigest('meridian-assist-request/v1', request),
+    baseToken: request.baseToken,
+  };
+  const node = { op: 'addNode', ref: 'new:queue', shape: 'cylinder', label: 'Review queue', parentGroupId: null };
+  const edge = { op: 'addEdge', ref: 'new:handoff', sourceId: attachment, targetId: node.ref, label: 'Forwards', direction: 'forward', lineStyle: 'solid' };
+  await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+  await review(dialog, { ...proposal, operations: [node] });
+  await expect(dialog.getByRole('alert')).toContainText('allows the new node and its connection together');
+  await review(dialog, { ...proposal, operations: [node, { ...edge, sourceId: contextId }] });
+  await expect(dialog.getByRole('alert')).toContainText('explicitly shared as an attachment');
+  await review(dialog, { ...proposal, operations: [node, { ...edge, targetId: 'new:unrelated' }] });
+  await expect(dialog.getByRole('alert')).toContainText('one solid one-way connection to it');
+  await review(dialog, { ...proposal, operations: [node, edge] });
+  const preview = dialog.getByRole('region', { name: 'Unverified suggestion' });
+  await expect(preview).toContainText('Current service → Review queue · Forwards · solid');
+  await page.screenshot({ path: info.outputPath('connected-node-review-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('connected-node-review-mobile.png') });
+  await preview.getByRole('button', { name: 'Apply reviewed node and connection' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const applied = JSON.parse(await download(page, backup));
+  expect(applied.source).toBe(source + '  m_n1[("Review queue")]\r\n  A m_e1@-->|"Forwards"| m_n1\r\n');
+  expect(applied.revision).toBe(original.revision + 1);
+  expect(applied.identity.elements).toEqual([...original.identity.elements,
+    expect.objectContaining({ elementKind: 'node' }), expect.objectContaining({ elementKind: 'edge' }),
+  ]);
   await live.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const restored = JSON.parse(await download(page, backup));
