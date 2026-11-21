@@ -2,6 +2,7 @@ import type { EditorView } from "@codemirror/view";
 import { useEffect, useRef, useState } from "react";
 import { authoringLimits } from "../lib/authoring/flowchart-source";
 import { IdentityLimitError } from "../lib/authoring/identities";
+import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import { sourceLineEndings } from "../lib/authoring/manual-source";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
@@ -19,14 +20,33 @@ type Prepared = Awaited<ReturnType<Editor["prepareSource"]>>;
 export type SourceDraft = { base: string; text: string; normalize: boolean; recovery?: SourceRecoveryReason };
 const diagnosticTitles = { syntax: "Mermaid syntax", resource: "Resource restriction", unsupported: "Reviewed editing limitation", stale: "Stale preview" };
 
-export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, onClose }: {
+type Caret = { anchor: number; head: number };
+
+function mapSourceCaret(before: string, after: string, selected: Caret): Caret {
+  let prefix = 0;
+  let oldEnd = before.length;
+  let newEnd = after.length;
+  while (prefix < oldEnd && prefix < newEnd && before[prefix] === after[prefix]) prefix++;
+  while (oldEnd > prefix && newEnd > prefix && before[oldEnd - 1] === after[newEnd - 1]) {
+    oldEnd--;
+    newEnd--;
+  }
+  const map = (offset: number) => offset <= prefix ? offset : offset >= oldEnd
+    ? offset + newEnd - oldEnd : Math.min(offset, newEnd);
+  return { anchor: map(selected.anchor), head: map(selected.head) };
+}
+
+export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, onClose, canUndo, canRedo, onHistory }: {
   editor: Editor;
   savedDraft?: SourceDraft;
   onDraft: (draft: SourceDraft) => void;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
   onClose: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onHistory: (direction: "undo" | "redo") => MermaidProjectV3 | undefined;
 }) {
-  const [base] = useState(editor.snapshot);
+  const [base, setBase] = useState(editor.snapshot);
   const baseText = base.source.replace(/\r\n?/g, "\n");
   const [draft, setDraft] = useState<SourceDraft>(() => savedDraft?.base === base.source ? savedDraft
     : { base: base.source, text: baseText, normalize: false });
@@ -40,6 +60,7 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
   const [painted, setPainted] = useState(false);
   const request = useRef<AbortController | null>(null);
   const input = useRef<EditorView>(null);
+  const restoredCaret = useRef<Caret | undefined>(undefined);
   const [editorInstance, setEditorInstance] = useState(0);
   const lineEndings = sourceLineEndings(base.source);
   const source = lineEndings === "crlf" ? draft.text.replace(/\n/g, "\r\n") : draft.text;
@@ -107,6 +128,18 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
     });
   }
 
+  function history(direction: "undo" | "redo") {
+    if (hasDraft || locked || editor.snapshot() !== base) return;
+    const caret = input.current?.state.selection.main;
+    const next = onHistory(direction);
+    if (!next) return;
+    const text = next.source.replace(/\r\n?/g, "\n");
+    if (caret) restoredCaret.current = mapSourceCaret(baseText, text, caret);
+    setBase(next);
+    change({ base: next.source, text, normalize: false });
+    setEditorInstance(instance => instance + 1);
+  }
+
   async function prepare() {
     if (!canPreview || request.current) return;
     const controller = new AbortController();
@@ -160,6 +193,10 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
         <SourceEditor key={editorInstance} source={draft.text} onChange={text => change({ base: draft.base, normalize: draft.normalize, text })}
           draft={{ readOnly: locked, maxLength: authoringLimits.sourceCodeUnits, onReady: view => {
             input.current = view;
+            if (restoredCaret.current) {
+              view.dispatch({ selection: restoredCaret.current, scrollIntoView: true });
+              restoredCaret.current = undefined;
+            }
             view.focus();
           } }} />
       </div>
@@ -182,7 +219,11 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
           <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{diagnostic.detail}</pre>
         </details>}
       </div>}
-        <details open={!!draft.recovery || undefined}>
+        <div className="recovery-actions" role="group" aria-label="Project history">
+        <button className="button quiet" type="button" disabled={hasDraft || locked || !canUndo} onClick={() => history("undo")}>Undo project edit</button>
+        <button className="button quiet" type="button" disabled={hasDraft || locked || !canRedo} onClick={() => history("redo")}>Redo project edit</button>
+      </div>
+      <details open={!!draft.recovery || undefined}>
         <summary>Source recovery file</summary>
         <input ref={recoveryInput} type="file" accept=".json,application/json" aria-label="Source recovery file" hidden onChange={event => {
           const file = event.target.files?.[0];

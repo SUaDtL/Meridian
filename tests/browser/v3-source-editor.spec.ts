@@ -202,3 +202,64 @@ test('downloads and restores an over-limit annotation source draft with its exac
   await expect(editor.getByRole('alert')).toContainText('matching accepted project revision');
   await expect(input).toContainText('B[Second]');
 });
+
+test('undoes a structural edit from reviewed source and keeps caret and Outline selection', async ({ page }) => {
+  const source = 'flowchart LR\n  A[First]\n  B[Second]\n';
+  const project = { ...createDocument(), title: 'Source project history', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Source project history' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  const editSource = live.getByRole('button', { name: 'Edit Mermaid source', exact: true });
+  await editSource.click();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const input = editor.getByRole('textbox', { name: 'Mermaid source' });
+  const manual = source + '  C[Third]\n';
+  await input.fill(manual);
+  await editor.getByRole('button', { name: 'Preview source' }).click();
+  await editor.getByRole('button', { name: 'Apply source' }).click();
+  const accepted = await download(page, live);
+
+  const openOutline = live.getByRole('button', { name: 'Outline', exact: true });
+  await openOutline.click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  const second = outline.getByRole('treeitem', { name: /^Second/ });
+  await second.click();
+  await second.press('F2');
+  const rename = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await rename.getByRole('textbox', { name: 'Node label' }).fill('Reviewed second');
+  await rename.getByRole('button', { name: 'Preview change' }).click();
+  await rename.getByRole('button', { name: 'Apply change' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const edited = await download(page, live);
+  expect(edited.source).toContain('Reviewed second');
+
+  await editSource.click();
+  await expect(input).toBeFocused();
+  await input.press('Control+Home');
+  await input.press('ArrowDown');
+  await input.press('Home');
+  await input.press('Shift+End');
+  await expect.poll(() => input.evaluate(() => window.getSelection()?.toString())).toBe('A[First]');
+  const history = editor.getByRole('group', { name: 'Project history' });
+  await history.getByRole('button', { name: 'Undo project edit' }).press('Enter');
+  await expect(input).toBeFocused();
+  await expect(input).toContainText('B[Second]');
+  await expect(input).toContainText('C[Third]');
+  await expect.poll(() => input.evaluate(() => window.getSelection()?.toString())).toBe('A[First]');
+  await expect(history.getByRole('button', { name: 'Redo project edit' })).toBeEnabled();
+  await input.press('End');
+  await input.press('Space');
+  await expect(history.getByRole('button', { name: 'Undo project edit' })).toBeDisabled();
+  await editor.getByRole('button', { name: 'Discard draft' }).click();
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
+  const restored = await download(page, live);
+  expect(restored).toEqual({ ...accepted, revision: edited.revision + 1, updatedAt: restored.updatedAt });
+  await openOutline.click();
+  await expect(outline.getByRole('status')).toHaveText('1 selected · 0 hidden');
+  await expect(second).toHaveAttribute('aria-selected', 'true');
+});

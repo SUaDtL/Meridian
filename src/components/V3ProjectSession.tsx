@@ -398,11 +398,15 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     setEditTarget(selectedSource);
     setEditFlowchart("addEdge");
   }
+  function applyHistory(direction: "undo" | "redo") {
+    const current = editor.current;
+    if (!current?.[direction]()) return undefined;
+    const next = current.snapshot();
+    setProject(next);
+    return next;
+  }
   function changeHistory(direction: "undo" | "redo") {
-    void run(async () => {
-      const current = editor.current;
-      if (current?.[direction]()) setProject(current.snapshot());
-    });
+    void run(async () => { applyHistory(direction); });
   }
   function downloadProject() {
     if (project) downloadText(serializeProject(project), `${safeFilename(title)}.meridian.json`);
@@ -737,6 +741,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       </Suspense>}
       {editSource && editor.current && <Suspense>
         <V3SourceEditor editor={editor.current} savedDraft={sourceDraft} onDraft={setSourceDraft}
+          canUndo={!busy && editor.current.canUndo()} canRedo={!busy && editor.current.canRedo()}
+          onHistory={direction => inFlight.current ? undefined : applyHistory(direction)}
           onClose={() => setEditSource(false)} onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);
