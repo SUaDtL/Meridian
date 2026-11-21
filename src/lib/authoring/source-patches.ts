@@ -313,6 +313,14 @@ export function planGroupRemoval(source: string, sourceId: string) {
   return plan;
 }
 
+export function planGroupContentsRemoval(source: string, groupId: string, memberIds: readonly string[], incidentIds: readonly string[]) {
+  const group = planGroupRemoval(source, groupId);
+  const members = new Set(memberIds);
+  if (members.size !== memberIds.length || members.size !== group.memberIds.length
+    || group.memberIds.some(id => !members.has(id))) throw new Error('Review every current group member before deleting its contents.');
+  return { ...group, afterGroupRemoval: planNodeRemovals(group.flatSource, memberIds, incidentIds, true) };
+}
+
 function standaloneDeclaration(source: string, declaration: RecordSpan) {
   const from = source.lastIndexOf('\n', declaration.start - 1) + 1;
   const separator = source.indexOf('\n', declaration.end);
@@ -387,20 +395,31 @@ export function planEdgeSelectionRemoval(source: string, edgeIds: readonly strin
 
 /** Delete a declared node only when the supplied IDs cover every incident edge. */
 export function planNodeRemoval(source: string, nodeId: string, incidentIds: readonly string[]): SourcePatch[] {
+  return planNodeRemovals(source, [nodeId], incidentIds);
+}
+
+function planNodeRemovals(source: string, nodeIds: readonly string[], incidentIds: readonly string[], group = false): SourcePatch[] {
   const { nodes, edges, styles } = readSubset(source);
-  const node = nodes.get(nodeId);
-  if (!node) throw unsupported();
-  if (nodes.size === 1) throw new Error('Keep at least one node in the diagram.');
+  const selection = new Set(nodeIds);
+  if (!selection.size || selection.size !== nodeIds.length) throw unsupported();
+  const declarations = nodeIds.map(id => {
+    const node = nodes.get(id);
+    if (!node) throw unsupported();
+    return replace(node.declaration, '');
+  });
+  if (nodes.size === selection.size) throw new Error('Keep at least one node in the diagram.');
+  const scope = group ? 'this group and its contents' : 'this node';
+  const review = () => new Error(`Review all incident connections before deleting ${scope}.`);
   const expected = new Set(incidentIds);
   const removed = new Set<number>();
   edges.forEach((edge, index) => {
-    if (edge.from !== nodeId && edge.to !== nodeId) return;
-    if (!edge.id) throw new Error('An incident connection needs an explicit source ID before this node can be deleted.');
-    if (!expected.delete(edge.id)) throw new Error('Review all incident connections before deleting this node.');
+    if (!selection.has(edge.from) && !selection.has(edge.to)) return;
+    if (!edge.id) throw new Error(`An incident connection needs an explicit source ID before deleting ${scope}.`);
+    if (!expected.delete(edge.id)) throw review();
     removed.add(index);
   });
-  if (expected.size || incidentIds.length !== removed.size) throw new Error('Review all incident connections before deleting this node.');
-  return [replace(node.declaration, ''), ...planEdgeRemovals(edges, styles, removed)];
+  if (expected.size || incidentIds.length !== removed.size) throw review();
+  return [...declarations, ...planEdgeRemovals(edges, styles, removed)];
 }
 
 function planEdgeRemovals(

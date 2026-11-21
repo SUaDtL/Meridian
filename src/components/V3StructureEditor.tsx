@@ -21,7 +21,7 @@ const emptyBranches = (): DecisionBranch[] => [
 ];
 
 export default function V3StructureEditor({ editor, nodes, edges, group, movableNodes, initialOperation = "addNode", initialTarget = "",
-  deleteConnections, groupMembers, onApply, onClose }: {
+  deleteConnections, groupMembers, groupRemoval, onApply, onClose }: {
   editor: Editor;
   nodes: NodeChoice[];
   edges: EdgeChoice[];
@@ -31,6 +31,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   initialTarget?: string;
   deleteConnections?: { ids: string[]; hidden: number };
   groupMembers?: { ids: string[]; hidden: number };
+  groupRemoval?: { memberIds: string[]; connectionIds: string[]; unavailable?: string };
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
   onClose: () => void;
 }) {
@@ -44,7 +45,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   const [edgeDirection, setEdgeDirection] = useState<ConnectionDirection>("forward");
   const [approvedDuplicate, setApprovedDuplicate] = useState("");
   const [from, setFrom] = useState(initialOperation === "addEdge" ? initialTarget : "");
-  const [to, setTo] = useState(initialOperation === "removeGroup" ? group?.id ?? "" : initialOperation === "addEdge" ? "" : initialTarget);
+  const [to, setTo] = useState(initialOperation === "removeGroup" || initialOperation === "removeGroupContents"
+    ? group?.id ?? "" : initialOperation === "addEdge" ? "" : initialTarget);
   const [members, setMembers] = useState<ReadonlySet<string>>(() => new Set(groupMembers?.ids));
   const [branches, setBranches] = useState(emptyBranches);
   const [error, setError] = useState("");
@@ -58,6 +60,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   const grouping = operation === "addGroup";
   const selectedMembers = groupMembers?.ids.map(id => nodes.find(node => node.id === id));
   const ungrouping = operation === "removeGroup";
+  const deletingGroup = operation === "removeGroupContents";
   const movingToGroup = operation === "moveToGroup";
   const incident = (removingNode || movingToGroup) && to ? edges.filter(edge => edge.sourceId === to || edge.targetId === to) : [];
   const unidentified = incident.filter(edge => !edge.explicit);
@@ -98,6 +101,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         : operation === "addEdge" ? { op: operation, sourceId: from, targetId: to, label, direction: edgeDirection }
         : operation === "addGroup" ? { op: operation, memberIds: [...members], label }
         : operation === "moveToGroup" ? { op: operation, targetId: to, groupId: group?.id ?? "" }
+        : operation === "removeGroupContents" ? { op: operation, targetId: to, memberIds: groupRemoval?.memberIds ?? [],
+          incidentEdgeIds: groupRemoval?.connectionIds ?? [] }
         : operation === "removeNode" ? { op: operation, targetId: to, incidentEdgeIds: incident.map(edge => edge.id) }
         : operation === "removeEdges" ? { op: operation, targetIds: deleteConnections?.ids ?? [] }
         : { op: operation, targetId: to };
@@ -135,6 +140,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
     : operation === "setNodeLabel" ? !!label && !!to
     : operation === "addGroup" ? !!label && members.size > 0 && (!selectedMembers || selectedMembers.every(Boolean))
     : operation === "removeGroup" ? !!to
+    : deletingGroup ? !!to && !!groupRemoval && !groupRemoval.unavailable
     : movingToGroup ? !!group && movableNodes.some(node => node.id === to)
     : (operation === "removeEdge" || operation === "setEdgeLabel") ? !!to
     : removingEdges ? !!selectedEdges?.length && selectedEdges.every(Boolean)
@@ -157,7 +163,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
             setApprovedDuplicate("");
             setRole("");
             setFrom("");
-            setTo(next === "removeGroup" ? group?.id ?? "" : "");
+            setTo(next === "removeGroup" || next === "removeGroupContents" ? group?.id ?? "" : "");
             setMembers(new Set());
             setBranches(emptyBranches());
             resetPreview();
@@ -165,6 +171,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
             {removingEdges ? <option value="removeEdges">Delete selected connections</option>
               : group ? <>
                 <option value="removeGroup">Ungroup</option>
+                <option value="removeGroupContents" disabled={!groupRemoval || !!groupRemoval.unavailable}>Delete group and contents</option>
                 <option value="moveToGroup" disabled={!movableNodes.length}>Move node into group</option>
               </> : <>
               <option value="addNode">Add node</option>
@@ -218,7 +225,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
             {movableNodes.map(node => <option value={node.id} key={node.id}>{node.label}</option>)}
           </select>
         </label>}
-        {operation !== "removeEdge" && !removingEdges && !removingNode && !ungrouping && !movingToGroup && <label>{(operation === "addEdge" || operation === "setEdgeLabel")
+        {operation !== "removeEdge" && !removingEdges && !removingNode && !ungrouping && !movingToGroup && !deletingGroup && <label>{(operation === "addEdge" || operation === "setEdgeLabel")
           ? "Connection label (optional)" : grouping ? "Group label" : operation === "addDecision" ? "Decision label" : "Node label"}
           <input value={label} disabled={busy} onChange={event => { setLabel(event.target.value); resetPreview(); }} />
         </label>}
@@ -275,6 +282,14 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
           </label>)}
         </fieldset>}
         {ungrouping && <p>Ungroup {group?.label}. The member nodes and all connections will stay in the diagram.</p>}
+        {deletingGroup && groupRemoval && <section aria-label="Group contents to delete">
+          <p>Delete {group?.label}, its {groupRemoval.memberIds.length} member nodes and {groupRemoval.connectionIds.length} incident connections.</p>
+          <ul aria-label="Nodes to delete">{nodes.filter(item => groupRemoval.memberIds.includes(item.id)).map(item => <li key={item.id}>{item.label}</li>)}</ul>
+          {!!groupRemoval.connectionIds.length && <ul aria-label="Connections to delete">
+            {edges.filter(item => groupRemoval.connectionIds.includes(item.id)).map(item => <li key={item.id}>{item.label}</li>)}
+          </ul>}
+          {groupRemoval.unavailable && <p role="alert">{groupRemoval.unavailable}</p>}
+        </section>}
         {removingEdges && <section aria-label="Connections to delete">
           <p>{deleteConnections?.ids.length} selected · {deleteConnections?.hidden} hidden in the outline</p>
           <ul>{selectedEdges?.map((edge, index) => <li key={deleteConnections?.ids[index]}>{edge?.label || "Connection unavailable"}</li>)}</ul>
@@ -301,8 +316,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
           </div>
         )}
         {preview?.impact && <section aria-label="Deletion impact">
-          <h3>{removingEdges ? "Retained annotations" : ungrouping ? "Group container to remove" : removingNode ? "Node to remove" : "Connection to remove"}</h3>
-          {!removingEdges && <p>{ungrouping ? group?.label : (removingNode ? nodes : edges).find(item => item.id === to)?.label}</p>}
+          <h3>{removingEdges || deletingGroup ? "Retained annotations" : ungrouping ? "Group container to remove" : removingNode ? "Node to remove" : "Connection to remove"}</h3>
+          {!removingEdges && !deletingGroup && <p>{ungrouping ? group?.label : (removingNode ? nodes : edges).find(item => item.id === to)?.label}</p>}
           {removingNode && <>
             <h4>Incident connections to remove ({incident.length})</h4>
             {!!incident.length && <ul>{incident.map(edge => <li key={edge.id}>{edge.label}</li>)}</ul>}

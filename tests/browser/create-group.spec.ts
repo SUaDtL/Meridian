@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
+import { createScene } from '../../src/lib/storyboard';
 
 async function download(page: Page, dialog: Locator) {
   const [file] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('button', { name: 'Download v3 project' }).click()]);
@@ -100,4 +101,50 @@ test('moves an outside declaration into a reviewed group and preserves exact pro
   const restored = await download(page, live);
   expect(restored.source).toBe(original.source);
   expect(restored.identity).toEqual(original.identity);
+});
+
+test('reviews deleting one group with its full footprint and restores the exact snapshot with Undo', async ({ page }) => {
+  const source = '\uFEFFflowchart LR\r\n  subgraph Team [Review group]\r\n    A[Input]\r\n    %% Keep this comment\r\n    B[Review]\r\n  end\r\n  C[Retain]\r\n  D[Finish]\r\n  A inner@--> B\r\n  B crossing@-->|"Send"| C\r\n  C retained@--> D\r\n  linkStyle 0,1,2 stroke:#123456\r\n';
+  const scene = { ...createScene(), title: 'Original review', visible: ['node:A', 'edge:id:crossing', 'node:C'] };
+  const project = { ...createDocument(), title: 'Delete a reviewed group', source,
+    storyboard: { version: 1 as const, scenes: [scene], loop: false } };
+  project.design.elements['node:A'] = { color: '#abcdef' };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Delete a reviewed group' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Delete a reviewed group' })).toBeVisible();
+  const original = await download(page, live);
+  await expect(live.getByRole('button', { name: 'Ungroup', exact: true })).toBeVisible();
+  await live.getByRole('button', { name: 'Delete group and contents', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  const footprint = edit.getByRole('region', { name: 'Group contents to delete' });
+  await expect(footprint.getByRole('list', { name: 'Nodes to delete' }).getByRole('listitem')).toHaveText(['Input (A)', 'Review (B)']);
+  const connections = footprint.getByRole('list', { name: 'Connections to delete' });
+  await expect(connections.getByRole('listitem')).toHaveCount(2);
+  await expect(connections).toContainText('crossing');
+  await expect(edit.getByRole('button', { name: 'Apply change' })).toBeDisabled();
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  const retention = edit.getByRole('region', { name: 'Deletion impact' });
+  await expect(retention).toContainText('2 scene references');
+  await expect(retention).toContainText('Original review');
+  await expect(retention).toContainText('Appearance settings for 1 removed element');
+  await edit.getByRole('button', { name: 'Apply change' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const removed = await download(page, live);
+  expect(removed.source).toBe(source.replace('  subgraph Team [Review group]\r\n', '')
+    .replace('A[Input]', '').replace('B[Review]', '').replace('  end\r\n', '')
+    .replace('A inner@--> B', '').replace('B crossing@-->|"Send"| C', '').replace('linkStyle 0,1,2', 'linkStyle 0'));
+  expect(removed.identity.elements.filter((item: { status: string }) => item.status === 'resolved')).toEqual(
+    original.identity.elements.filter((item: { binding: { sourceId: string } }) => ['C', 'D', 'retained'].includes(item.binding.sourceId)),
+  );
+  expect(removed.identity.orphans).toHaveLength(2);
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await download(page, live);
+  expect(restored).toEqual({ ...original, revision: removed.revision + 1, updatedAt: restored.updatedAt });
 });
