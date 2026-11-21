@@ -127,6 +127,74 @@ test('uses touch checkboxes across filters and refuses selection beyond the inte
   } finally { await context.close(); }
 });
 
+test('renames nested node and explicit connection labels without rewriting grouped source or identities', async ({ page }) => {
+  const source = [
+    '\uFEFFflowchart LR',
+    '  subgraph Fleet [Fleet]',
+    '    subgraph Rack [Rack]',
+    '      A["Intake"]',
+    '    end',
+    '  end',
+    '  %% external connections retain their style indices',
+    '  B[Result]',
+    '  A delivery@-->|"Sends"| B',
+    '  A --> B',
+    '  linkStyle 0 stroke:#005500',
+    '',
+  ].join('\r\n');
+  const live = await openProject(page, 'Grouped labels', source);
+  const download = async () => {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing project backup.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  };
+  const original = await download();
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /Intake/ }).click();
+  await outline.getByRole('tree').press('F2');
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  const operation = edit.getByRole('combobox', { name: 'Operation' });
+  const label = edit.getByRole('textbox', { name: 'Node label' });
+  await expect(label).toHaveValue('Intake');
+  await expect(operation.locator('option')).toHaveCount(2);
+  await label.fill('Reviewed intake');
+  const preview = () => edit.getByRole('button', { name: 'Preview change' }).click();
+  const apply = async () => {
+    await edit.getByRole('button', { name: 'Apply change' }).click();
+    await expect(edit).toHaveCount(0);
+  };
+  await preview();
+  await apply();
+  const renamed = await download();
+  expect(renamed.source).toBe(source.replace('"Intake"', '"Reviewed intake"'));
+  expect(renamed.identity).toEqual(original.identity);
+
+  await live.getByRole('button', { name: 'Commands', exact: true }).click();
+  const query = page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox');
+  await query.fill('Edit connection label');
+  await query.press('Enter');
+  const edge = edit.getByRole('combobox', { name: 'Connection to edit' });
+  await expect(edge.locator('option')).toHaveCount(2);
+  await edge.selectOption({ label: 'Reviewed intake → Result · Sends (delivery)' });
+  const edgeLabel = edit.getByRole('textbox', { name: 'Connection label (optional)' });
+  await expect(edgeLabel).toHaveValue('Sends');
+  await edgeLabel.fill('Routes');
+  await preview();
+  await apply();
+  const relabeled = await download();
+  expect(relabeled.source).toBe(renamed.source.replace('"Sends"', '"Routes"'));
+  expect(relabeled.identity).toEqual(original.identity);
+  const undo = live.getByRole('button', { name: 'Undo', exact: true });
+  await undo.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  expect((await download()).source).toBe(renamed.source);
+  await undo.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  expect((await download()).source).toBe(source);
+});
+
 test('groups the complete reviewed outline selection and refuses a mixed selection', async ({ page }, info) => {
   const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  B[Second]\r\n  C[Third]\r\n  A internal@--> B\r\n  B outside@-->|"External"| C\r\n';
   const live = await openProject(page, 'Group outline selection', source);

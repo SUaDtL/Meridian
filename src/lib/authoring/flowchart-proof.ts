@@ -3,7 +3,7 @@ import type { FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram } from '../render';
 import { canonicalJson } from './base-token';
 import { flowchartEngineConnections, flowchartEngineShapes, type ConnectionDirection, type Shape } from './flowchart-source';
-import { applySourcePatches, flowchartSubsetTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planEdgeSelectionRemoval, planFlowchartFragment, planGroupContentsRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, type FlowchartFragment, type SourcePatch } from './source-patches';
+import { applySourcePatches, flowchartSubsetTopology, groupedFlowchartTopology, planAddNext, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planEdgeSelectionRemoval, planFlowchartFragment, planGroupContentsRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, type FlowchartFragment, type SourcePatch } from './source-patches';
 
 export type SourceIntent =
   | { op: 'addNode'; label: string; shape?: Shape }
@@ -147,6 +147,22 @@ function semanticTopology(graph: SemanticGraph) {
   };
 }
 
+const byId = (left: { id: string }, right: { id: string }) => left.id.localeCompare(right.id);
+
+function verifySourceTopology(
+  before: SemanticGraph, expected: ReturnType<typeof flowchartSubsetTopology>, groups?: ReadonlyMap<string, string[]>,
+) {
+  const topology = semanticTopology(before);
+  if (groups?.size) {
+    const declared = Array.from(groups, ([id, members]) => ({ id, members: [...members].sort() })).sort(byId);
+    const observed = before.groups.map(({ id, members }) => ({ id, members })).sort(byId);
+    if (canonicalJson(declared) !== canonicalJson(observed)) throw mismatch();
+    topology.nodes.sort(byId);
+    expected = { ...expected, nodes: [...expected.nodes].sort(byId) };
+  }
+  if (canonicalJson(topology) !== canonicalJson(expected)) throw mismatch();
+}
+
 /** Compare the complete parser graph and all new visible labels in one serialized render. */
 export async function proveFlowchartFragment(
   document: Pick<StudioDocument, 'source' | 'settings'>, fragment: FlowchartFragment, signal?: AbortSignal,
@@ -156,16 +172,7 @@ export async function proveFlowchartFragment(
   const render = (text: string) => renderDiagram(text, document.settings, {}, undefined, { signal });
   const current = await render(document.source);
   const before = readModel(flowchartModelFor(current), !!plan.existingGroups.size);
-  const topology = semanticTopology(before);
-  const byId = <Item extends { id: string }>(left: Item, right: Item) => left.id.localeCompare(right.id);
-  if (plan.existingGroups.size) {
-    const groups = Array.from(plan.existingGroups, ([id, members]) => ({ id, members: [...members].sort() })).sort(byId);
-    const observed = before.groups.map(({ id, members }) => ({ id, members })).sort(byId);
-    if (canonicalJson(groups) !== canonicalJson(observed)) throw mismatch();
-    topology.nodes.sort(byId);
-    plan.topology.nodes.sort(byId);
-  }
-  if (canonicalJson(topology) !== canonicalJson(plan.topology)) throw mismatch();
+  verifySourceTopology(before, plan.topology, plan.existingGroups);
   const rendered = await render(source);
   const grouped = !!(plan.existingGroups.size || plan.groups.length);
   const actual = readModel(flowchartModelFor(rendered), grouped);
@@ -212,15 +219,18 @@ export async function proveFlowchartEdit(
   const source = plan.afterGroupRemoval ? applySourcePatches(patched, plan.afterGroupRemoval) : patched;
   const groupId = intent.op === 'removeGroup' || intent.op === 'removeGroupContents' ? intent.sourceId
     : intent.op === 'moveToGroup' ? intent.groupId : undefined;
-  const sourceTopology = flowchartSubsetTopology(plan.flatSource ?? document.source);
+  const renaming = intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel';
+  const groupedSource = renaming ? groupedFlowchartTopology(document.source) : undefined;
+  const sourceTopology = groupedSource?.topology ?? flowchartSubsetTopology(plan.flatSource ?? document.source);
+  const groupedRename = !!groupedSource?.groups.size;
   const render = (text: string) => renderDiagram(text, document.settings, document.nodeAccents ?? {}, document.design, { signal });
   const initial = await render(document.source);
-  const before = readModel(flowchartModelFor(initial), !!groupId);
+  const before = readModel(flowchartModelFor(initial), !!groupId || groupedRename);
   if (groupId && (before.groups.length !== 1 || before.groups[0].id !== groupId
     || canonicalJson(before.groups[0].members) !== canonicalJson(plan.memberIds?.sort()))) throw mismatch();
-  if (canonicalJson(sourceTopology) !== canonicalJson(semanticTopology(before))) throw mismatch();
+  verifySourceTopology(before, sourceTopology, groupedSource?.groups);
   const output = source === document.source ? initial : await render(source);
-  const actual = readModel(flowchartModelFor(output), intent.op === 'addGroup' || intent.op === 'moveToGroup');
+  const actual = readModel(flowchartModelFor(output), groupedRename || intent.op === 'addGroup' || intent.op === 'moveToGroup');
   let expected: SemanticGraph;
   let addedEdgeId: string | undefined;
   if (intent.op === 'addNext') {
@@ -236,7 +246,7 @@ export async function proveFlowchartEdit(
     expected = expectedEdit(before, intent, plan.sourceId, source !== document.source);
   }
   const orderNodes = (graph: SemanticGraph) => intent.op === 'moveToGroup'
-    ? { ...graph, nodes: [...graph.nodes].sort((a, b) => a.id.localeCompare(b.id)) } : graph;
+    ? { ...graph, nodes: [...graph.nodes].sort(byId) } : graph;
   if (canonicalJson(orderNodes(actual)) !== canonicalJson(orderNodes(expected))) throw mismatch();
   return { source, sourceId: plan.sourceId, render: output, addedEdgeId };
 }

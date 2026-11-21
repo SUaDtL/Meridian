@@ -20,13 +20,16 @@ const emptyBranches = (): DecisionBranch[] => [
   { label: "", destination: { kind: "existing", id: "" } },
 ];
 
-export default function V3StructureEditor({ editor, nodes, edges, group, movableNodes, initialOperation = "addNode", initialTarget = "",
+export default function V3StructureEditor({ editor, nodes, edges, group, movableNodes, flatFlowchart, canEditLabels,
+  initialOperation = "addNode", initialTarget = "",
   deleteConnections, groupMembers, groupRemoval, onApply, onClose }: {
   editor: Editor;
-  nodes: NodeChoice[];
+  nodes: (NodeChoice & { text: string })[];
   edges: EdgeChoice[];
   group?: NodeChoice;
   movableNodes: NodeChoice[];
+  flatFlowchart: boolean;
+  canEditLabels: boolean;
   initialOperation?: Operation;
   initialTarget?: string;
   deleteConnections?: { ids: string[]; hidden: number };
@@ -37,7 +40,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
 }) {
   const [operation, setOperation] = useState<Operation>(initialOperation);
   const [shape, setShape] = useState<Shape>("rect");
-  const [label, setLabel] = useState(() => initialOperation === "setEdgeLabel" ? edges.find(edge => edge.id === initialTarget)?.text ?? "" : "");
+  const [label, setLabel] = useState(() => initialOperation === "setNodeLabel" ? nodes.find(node => node.id === initialTarget)?.text ?? ""
+    : initialOperation === "setEdgeLabel" ? edges.find(edge => edge.id === initialTarget)?.text ?? "" : "");
   const [edgeLabel, setEdgeLabel] = useState("");
   const [incoming, setIncoming] = useState(false);
   const [role, setRole] = useState<SemanticRole | "">("");
@@ -171,21 +175,27 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
             setShowSecondBranchFirst(false);
             resetPreview();
           }}>
-            {removingEdges ? <option value="removeEdges">Delete selected connections</option>
-              : group ? <>
+            {removingEdges ? <option value="removeEdges">Delete selected connections</option> : <>
+              {flatFlowchart && <>
+                <option value="addNode">Add node</option>
+                <option value="addNext" disabled={!nodes.length}>Add next</option>
+                <option value="addDecision">Add decision</option>
+              </>}
+              {canEditLabels && <>
+                <option value="setNodeLabel" disabled={!nodes.length}>Rename node</option>
+                <option value="setEdgeLabel" disabled={!edges.some(edge => edge.explicit)}>Edit connection label</option>
+              </>}
+              {flatFlowchart && <>
+                <option value="addEdge" disabled={!nodes.length}>Connect nodes</option>
+                <option value="addGroup" disabled={!nodes.length}>Create group</option>
+                <option value="removeEdge" disabled={!edges.some(edge => edge.explicit)}>Delete connection</option>
+                <option value="removeNode" disabled={nodes.length < 2}>Delete node</option>
+              </>}
+              {group && <>
                 <option value="removeGroup">Ungroup</option>
                 <option value="removeGroupContents" disabled={!groupRemoval || !!groupRemoval.unavailable}>Delete group and contents</option>
                 <option value="moveToGroup" disabled={!movableNodes.length}>Move node into group</option>
-              </> : <>
-              <option value="addNode">Add node</option>
-              <option value="addNext" disabled={!nodes.length}>Add next</option>
-              <option value="addDecision">Add decision</option>
-              <option value="setNodeLabel" disabled={!nodes.length}>Rename node</option>
-              <option value="setEdgeLabel" disabled={!edges.some(edge => edge.explicit)}>Edit connection label</option>
-              <option value="addEdge" disabled={!nodes.length}>Connect nodes</option>
-              <option value="addGroup" disabled={!nodes.length}>Create group</option>
-              <option value="removeEdge" disabled={!edges.some(edge => edge.explicit)}>Delete connection</option>
-              <option value="removeNode" disabled={nodes.length < 2}>Delete node</option>
+              </>}
             </>}
           </select>
         </label>
@@ -203,7 +213,11 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
           </select>
         </label>}
         {(operation === "addEdge" || operation === "setNodeLabel") && <label>{operation === "addEdge" ? "To" : "Node to rename"}
-          <select value={to} disabled={busy} onChange={event => { setTo(event.target.value); resetPreview(); }}>
+          <select value={to} disabled={busy} onChange={event => {
+            setTo(event.target.value);
+            if (operation === "setNodeLabel") setLabel(nodes.find(node => node.id === event.target.value)?.text ?? "");
+            resetPreview();
+          }}>
             <option value="">Choose a node</option>{nodeOptions}
           </select>
         </label>}

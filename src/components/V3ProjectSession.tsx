@@ -234,7 +234,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const nodes = useMemo(() => {
     const ids = new Map(identities?.map(record => [record.id, record.binding.sourceId]));
     return targetTable?.targets.filter(item => item.elementKind === "node")
-      .map(item => ({ id: item.id, label: `${item.label} (${ids.get(item.id)})` })) ?? [];
+      .map(item => ({ id: item.id, label: `${item.label} (${ids.get(item.id)})`, text: item.label })) ?? [];
   }, [identities, targetTable]);
   const edgeLabels = currentFrame?.rendered.edgeLabels;
   const edges = useMemo(() => {
@@ -271,6 +271,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const needsRecovery = save?.phase === "conflict" || save?.phase === "error";
   const editingUnavailable = busy ? "Wait for the current action to finish."
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
+  const labelEditingUnavailable = busy ? "Wait for the current action to finish."
+    : !targetTable || !componentInsertionSupported ? "Open a rendered flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
     if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || savedScenesOpen
@@ -307,7 +309,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     requestAnimationFrame(() => sourceMark.current?.focus());
   }
   function renameFromOutline(id: string) {
-    if (editingUnavailable || !nodes.some(node => node.id === id)) return;
+    if (labelEditingUnavailable || !nodes.some(node => node.id === id)) return;
     setOutlineOpen(false);
     setEditTarget(id);
     setEditFlowchart("setNodeLabel");
@@ -370,7 +372,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose a current node to connect." : undefined), run: () => setEditFlowchart("addNext") },
     { id: "add-decision", title: "Add decision", category: "Diagram", synonyms: ["branch", "diamond"],
       unavailable: editingUnavailable, run: () => setEditFlowchart("addDecision") },
-    { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
+    { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: labelEditingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
     { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: openConnection },
     { id: "create-group", title: "Create group", category: "Diagram", synonyms: ["group nodes", "add subgraph"],
@@ -387,7 +389,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         : "Open a supported top-level group with a standalone node outside it.",
       run: () => setEditFlowchart("moveToGroup") },
     { id: "rename-connection", title: "Edit connection label", category: "Diagram", synonyms: ["rename edge", "label relationship"],
-      unavailable: editingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined),
+      unavailable: labelEditingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined),
       run: () => setEditFlowchart("setEdgeLabel") },
     { id: "remove-connection", title: "Delete connection", category: "Diagram", synonyms: ["remove edge", "delete edge"],
       unavailable: editingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined), run: () => setEditFlowchart("removeEdge") },
@@ -488,7 +490,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       </Modal>
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
-        canRename={!editingUnavailable} onClose={() => setOutlineOpen(false)}
+        canRename={!labelEditingUnavailable} onClose={() => setOutlineOpen(false)}
         onRename={renameFromOutline} onSource={jumpToSource} onBulkText={setBulkTextHidden}
         onConnect={!editingUnavailable && selectedSource ? openConnection : undefined}
         onGroup={!editingUnavailable ? hidden => {
@@ -542,7 +544,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         highlightTargets={ids => buildReadabilityHighlight(currentFrame.rendered, currentFrame.document, ids)}
         dismissed={dismissedReadability} onDismissed={setDismissedReadability}
         onCompareLayouts={() => { setReadabilityOpen(false); setComparison("layout"); }}
-        onRename={!editingUnavailable ? id => { setReadabilityOpen(false); renameFromOutline(id); } : undefined}
+        onRename={!labelEditingUnavailable ? id => { setReadabilityOpen(false); renameFromOutline(id); } : undefined}
         onResetRolePaint={(id, field) => {
           setReadabilityOpen(false);
           setDesignReset({ selection: new Set([id]), hidden: 0, field });
@@ -629,6 +631,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         }} />}
       {editFlowchart && editor.current && (
         <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} movableNodes={movableNodes}
+          flatFlowchart={flatFlowchart} canEditLabels={!labelEditingUnavailable}
           initialOperation={editFlowchart} initialTarget={editTarget}
           deleteConnections={deleteConnections} groupMembers={groupMembers} groupRemoval={groupRemoval}
           onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); setGroupMembers(undefined); }}
