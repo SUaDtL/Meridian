@@ -9,7 +9,7 @@ async function download(page: Page, live: Locator) {
   return JSON.parse(await readFile(path, 'utf8'));
 }
 
-test('keeps a mobile source draft while moving through the four workspace panels', async ({ page }, info) => {
+test('keeps a mobile source draft and a pending save across the four workspace panels', async ({ page }, info) => {
   const source = 'flowchart LR\n  A[Start] --> B[Finish]\n';
   const draft = source.replace('Finish', 'Review result');
   const project = { ...createDocument(), title: 'Mobile authoring', source };
@@ -62,4 +62,51 @@ test('keeps a mobile source draft while moving through the four workspace panels
   await button('Build').press('Enter');
   await edit.click();
   await expect.poll(() => input.locator('.cm-line').allTextContents()).toEqual(draft.split('\n'));
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
+
+  const original = await download(page, live);
+  await page.evaluate(id => {
+    const put = IDBObjectStore.prototype.put;
+    let hold = true;
+    window.addEventListener('finish-mobile-fixture-save', () => {
+      hold = false;
+      IDBObjectStore.prototype.put = put;
+    }, { once: true });
+    IDBObjectStore.prototype.put = function (value, key) {
+      const request = put.call(this, value, key);
+      if (this.name === 'documents' && value.id === id && value.document?.revision === 1) {
+        const keepTransactionOpen = () => { if (hold) this.get(id).onsuccess = keepTransactionOpen; };
+        keepTransactionOpen();
+        document.documentElement.dataset.mobileFixtureSave = 'pending';
+      }
+      return request;
+    };
+  }, original.id);
+  const pending = page.getByRole('dialog', { name: 'Mobile authoring updated' });
+  try {
+    await live.getByRole('button', { name: 'Edit heading' }).click();
+    const heading = page.getByRole('dialog', { name: 'Edit heading' });
+    await heading.getByRole('textbox', { name: 'Title', exact: true }).fill('Mobile authoring updated');
+    await heading.getByRole('button', { name: 'Apply heading' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-mobile-fixture-save', 'pending');
+    const panels = pending.getByRole('navigation', { name: 'Workspace panels' });
+    for (const [name, hidden] of [
+      ['Canvas', 'Edit Mermaid source'], ['Design', 'Suggest scenes'], ['Story', 'Check readability'], ['Build', 'Suggest scenes'],
+    ]) {
+      const switchPanel = panels.getByRole('button', { name, exact: true });
+      await switchPanel.press('Enter');
+      await expect(switchPanel).toBeFocused();
+      await expect(switchPanel).toHaveAttribute('aria-pressed', 'true');
+      await expect(pending.getByText('Saving changes…', { exact: true })).toBeVisible();
+      await expect(pending.getByRole('button', { name: hidden, exact: true })).toHaveCount(0);
+    }
+    await pending.getByRole('button', { name: 'Edit Mermaid source', exact: true }).press('Enter');
+    await expect.poll(() => input.locator('.cm-line').allTextContents()).toEqual(draft.split('\n'));
+    await editor.getByRole('button', { name: 'Close', exact: true }).press('Enter');
+  } finally {
+    await page.evaluate(() => window.dispatchEvent(new Event('finish-mobile-fixture-save')));
+  }
+  await expect(pending.getByText('Saved in this browser.', { exact: true })).toBeVisible();
+  const accepted = await download(page, pending);
+  expect(accepted).toEqual({ ...original, title: 'Mobile authoring updated', revision: 1, updatedAt: accepted.updatedAt });
 });
