@@ -1,5 +1,5 @@
 const forbidden = new Set(['__proto__', 'prototype', 'constructor']);
-const maxDepth = 64;
+const defaultMaxDepth = 64;
 const maxEntries = 50_000;
 
 export class JsonInputError extends Error {
@@ -22,6 +22,7 @@ export function decodeJson(
   entryLimit = maxEntries,
   numericTokens: 'number' | 'text' | 'skip' = 'number',
   onEntries?: (count: number) => void,
+  maxDepth = defaultMaxDepth,
 ): unknown {
   const scalar = /(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/y;
   let offset = 0;

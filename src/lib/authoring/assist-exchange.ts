@@ -10,7 +10,7 @@ import common from './schemas/common.schema.json';
 import { flowchartSubsetTopology } from './source-patches';
 import { matchesBundledContract } from './validate-mermaid-project';
 
-const requestDomain = 'meridian-assist-request/v1';
+export const assistRequestDomain = 'meridian-assist-request/v1';
 export const assistFileLimit = 128 * 1024;
 export { requestIdPattern } from './assist-request-id';
 export const digestPattern = /^[a-f0-9]{64}$/;
@@ -194,7 +194,7 @@ export async function buildAssistRequest(
   const text = JSON.stringify(request, null, 2);
   if (encoder.encode(text).byteLength > assistFileLimit) throw new Error('Narrow the request to 128 KiB.');
   const pending: PendingAssistRequest = {
-    id: request.requestId, requestHash: await canonicalDigest(requestDomain, request), baseToken: token,
+    id: request.requestId, requestHash: await canonicalDigest(assistRequestDomain, request), baseToken: token,
     scope: request.scope, allowedOperations: request.allowedOperations, expiresAt: now + day,
     ...(connectedNode ? { connectedNode: true } : {}),
   };
