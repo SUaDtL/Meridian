@@ -127,6 +127,34 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   await dialog.getByRole('checkbox', { name: 'Customer', exact: true }).check();
   await dialog.getByLabel('Find schemas').fill('audit');
   await expect(dialog.getByRole('status')).toHaveText('2 selected · 2 selected outside visible rows · 2 selected references');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(dialog).toBeHidden();
+  await page.reload();
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Engineering file' }).click();
+  const draftList = dialog.getByRole('list', { name: 'Saved OpenAPI scopes' });
+  await draftList.getByRole('button', { name: /Resume OpenAPI schema relationships/ }).click();
+  await expect(dialog.getByText('Saved schema scope restored. Preview it before creating a diagram.')).toBeVisible();
+  await expect(dialog.getByRole('checkbox', { name: 'Account', exact: true })).toBeChecked();
+  await expect(dialog.getByRole('checkbox', { name: 'Customer', exact: true })).toBeChecked();
+  await expect(dialog.getByRole('textbox', { name: 'Display label' }).first()).toHaveValue('Account record');
+  const readDrafts = () => page.evaluate(() => new Promise<unknown[]>((resolve, reject) => {
+    const open = indexedDB.open('meridian-workspace');
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction('drafts');
+      const read = tx.objectStore('drafts').getAll();
+      tx.oncomplete = () => { db.close(); resolve(read.result); };
+      tx.onabort = () => { db.close(); reject(tx.error); };
+    };
+    open.onerror = () => reject(open.error);
+  }));
+  const drafts = await readDrafts();
+  expect(drafts).toEqual([expect.objectContaining({ feature: 'engineering-facts',
+    payload: expect.objectContaining({ adapter: 'openapi', title: 'OpenAPI schema relationships',
+      selectedFactIds: ['s1', 's2'], selectedRelationshipIds: ['r1', 'r2'] }),
+  })]);
+  expect(JSON.stringify(drafts)).not.toMatch(/private-schema|example\.invalid/);
   await dialog.getByRole('button', { name: 'Preview diagram' }).click();
   await expect(dialog.getByRole('img', { name: 'Proposed OpenAPI schema diagram' })).toBeVisible();
   await expect(dialog.getByText('2 nodes · 2 connections · 1 schema omitted')).toBeVisible();
@@ -163,6 +191,7 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   })));
   expect(text).not.toMatch(/private-schema|example\.invalid|Audit/);
   expect(requested).toEqual([]);
+  expect(await readDrafts()).toEqual([]);
 });
 
 test('requires reviewed distinct virtual paths and retains provenance across supplied OpenAPI files', async ({ page }) => {

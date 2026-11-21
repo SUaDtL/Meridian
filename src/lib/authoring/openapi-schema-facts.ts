@@ -4,8 +4,9 @@ type RecordValue = Record<string, unknown>;
 type Location = { virtualPath: string; pointer: string };
 type OpenApiSchema = Location & { key: string; name: string };
 type OpenApiReference = Location & { from: string; to: string };
-type UnresolvedReason = 'Unsupported reference form' | 'Target component unavailable in supplied files'
-  | 'Unsupported target schema semantics' | 'Unsupported dynamic or recursive reference';
+export const unresolvedOpenApiReasons = ['Unsupported reference form', 'Target component unavailable in supplied files',
+  'Unsupported target schema semantics', 'Unsupported dynamic or recursive reference'] as const;
+type UnresolvedReason = typeof unresolvedOpenApiReasons[number];
 type UnresolvedReference = Location & { from: string; reason: UnresolvedReason };
 export type OpenApiSchemaSource = { virtualPath: string; version: string; schemas: RecordValue; dialect: unknown };
 

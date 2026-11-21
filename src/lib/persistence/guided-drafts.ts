@@ -28,7 +28,9 @@ function expiredGuidedDraft(record: Record<string, unknown>, now: number) {
     && (record.payload.strategy === 'groups' || record.payload.strategy === 'paths');
   const component = record.feature === 'component' && (token === null || validToken) && 'definitionId' in record.payload
     && typeof record.payload.definitionId === 'string' && elementUuidPattern.test(record.payload.definitionId);
-  if (!guided && !chart && !story && !component) return false;
+  const engineering = token === null && record.feature === 'engineering-facts' && 'adapter' in record.payload
+    && record.payload.adapter === 'openapi' && 'step' in record.payload && record.payload.step === 'scope';
+  if (!guided && !chart && !story && !component && !engineering) return false;
   const created = Date.parse(record.createdAt);
   const expires = Date.parse(record.expiresAt);
   return expires <= now && expires - created === draftWeek;
