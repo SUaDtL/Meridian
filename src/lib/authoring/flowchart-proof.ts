@@ -96,8 +96,12 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
     };
     case 'addGroup':
       return { ...graph, groups: [{ id: sourceId, label: intent.label, members: [...intent.members].sort() }] };
-    case 'removeGroup':
-      return { ...graph, groups: [] };
+    case 'removeGroup': {
+      const removed = graph.groups.find(group => group.id === sourceId);
+      if (!removed) throw mismatch();
+      return { ...graph, groups: graph.groups.filter(group => group !== removed).map(group => group.members.includes(sourceId)
+        ? { ...group, members: [...group.members.filter(id => id !== sourceId), ...removed.members].sort() } : group) };
+    }
     case 'moveToGroup':
       return { ...graph, groups: graph.groups.map(group => group.id === intent.groupId
         ? { ...group, members: [...group.members, sourceId].sort() } : group) };
@@ -217,20 +221,20 @@ export async function proveFlowchartEdit(
   const plan = planSourceEdit(document.source, intent);
   const patched = applySourcePatches(document.source, plan.patches);
   const source = plan.afterGroupRemoval ? applySourcePatches(patched, plan.afterGroupRemoval) : patched;
-  const groupId = intent.op === 'removeGroup' || intent.op === 'removeGroupContents' ? intent.sourceId
+  const groupId = intent.op === 'removeGroupContents' ? intent.sourceId
     : intent.op === 'moveToGroup' ? intent.groupId : undefined;
-  const renaming = intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel';
-  const groupedSource = renaming ? groupedFlowchartTopology(document.source) : undefined;
+  const canReadGroups = intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel' || intent.op === 'removeGroup';
+  const groupedSource = canReadGroups ? groupedFlowchartTopology(document.source) : undefined;
   const sourceTopology = groupedSource?.topology ?? flowchartSubsetTopology(plan.flatSource ?? document.source);
-  const groupedRename = !!groupedSource?.groups.size;
+  const groupedEdit = !!groupedSource?.groups.size;
   const render = (text: string) => renderDiagram(text, document.settings, document.nodeAccents ?? {}, document.design, { signal });
   const initial = await render(document.source);
-  const before = readModel(flowchartModelFor(initial), !!groupId || groupedRename);
+  const before = readModel(flowchartModelFor(initial), !!groupId || groupedEdit);
   if (groupId && (before.groups.length !== 1 || before.groups[0].id !== groupId
     || canonicalJson(before.groups[0].members) !== canonicalJson(plan.memberIds?.sort()))) throw mismatch();
   verifySourceTopology(before, sourceTopology, groupedSource?.groups);
   const output = source === document.source ? initial : await render(source);
-  const actual = readModel(flowchartModelFor(output), groupedRename || intent.op === 'addGroup' || intent.op === 'moveToGroup');
+  const actual = readModel(flowchartModelFor(output), groupedEdit || intent.op === 'addGroup' || intent.op === 'moveToGroup');
   let expected: SemanticGraph;
   let addedEdgeId: string | undefined;
   if (intent.op === 'addNext') {
@@ -245,8 +249,8 @@ export async function proveFlowchartEdit(
     verifyVisibleLabel(output, intent, plan.sourceId);
     expected = expectedEdit(before, intent, plan.sourceId, source !== document.source);
   }
-  const orderNodes = (graph: SemanticGraph) => intent.op === 'moveToGroup'
-    ? { ...graph, nodes: [...graph.nodes].sort(byId) } : graph;
-  if (canonicalJson(orderNodes(actual)) !== canonicalJson(orderNodes(expected))) throw mismatch();
+  const ordered = (graph: SemanticGraph) => intent.op === 'removeGroup' || intent.op === 'moveToGroup'
+    ? { ...graph, nodes: [...graph.nodes].sort(byId), groups: [...graph.groups].sort(byId) } : graph;
+  if (canonicalJson(ordered(actual)) !== canonicalJson(ordered(expected))) throw mismatch();
   return { source, sourceId: plan.sourceId, render: output, addedEdgeId };
 }

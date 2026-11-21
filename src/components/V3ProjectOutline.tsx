@@ -43,7 +43,7 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
 }
 
 export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onFrame, onConnect, onGroup, onBulkText,
-  onDesign, onResetDesign, onSaveComponent, onStory, onDeleteConnections, onClose }: {
+  onDesign, onResetDesign, onSaveComponent, onStory, onDeleteConnections, canUngroup, onUngroup, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
   onSelection: Dispatch<SetStateAction<ReadonlySet<string>>>;
@@ -59,6 +59,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   onSaveComponent?: (hidden: number) => void;
   onStory?: (hidden: number) => void;
   onDeleteConnections?: (hidden: number) => void;
+  canUngroup: (id: string) => boolean;
+  onUngroup: (id: string) => void;
   onClose: () => void;
 }) {
   const id = useId();
@@ -228,6 +230,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           {active.branch && !needle && <button type="button" className="button quiet" onClick={() => setExpanded(active.item.id, !active.expanded)}>
             {active.expanded ? "Collapse group" : "Expand group"}</button>}
           {canRename && active.item.kind === "node" && <button type="button" className="button quiet" onClick={() => onRename(active.item.id)}>Rename node</button>}
+          {active.item.kind === "group" && canUngroup(active.item.id) && <button type="button" className="button quiet"
+            onClick={() => onUngroup(active.item.id)}>Ungroup</button>}
           <button type="button" className="button secondary" disabled={!active.item.source}
             onClick={() => { if (active.item.source) onSource(active.item.source); }}>Jump to source</button>
         </div>}

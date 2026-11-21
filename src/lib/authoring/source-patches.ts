@@ -89,22 +89,24 @@ function readSubset(source: string, allowGroups = false) {
   const styles: { record: RecordSpan; indices: string }[] = [];
   const groups = new Map<string, string[]>();
   const groupDeclarations = new Map<string, RecordSpan>();
-  const parents: string[][] = [];
+  const groupEndings = new Map<string, RecordSpan>();
+  const parents: string[] = [];
 
   for (const record of records) {
+    const parent = parents.length ? groups.get(parents.at(-1)!) : undefined;
     const opening = allowGroups ? subgraph.exec(record.text) : null;
     if (opening) {
       const id = opening[1];
       if (reserved.has(id) || groups.has(id) || groups.size >= authoringLimits.graphGroups) throw unsupported();
-      parents.at(-1)?.push(id);
-      const members: string[] = [];
-      groups.set(id, members);
+      parent?.push(id);
+      groups.set(id, []);
       groupDeclarations.set(id, record);
-      parents.push(members);
+      parents.push(id);
       continue;
     }
     if (allowGroups && record.text === 'end') {
-      if (!parents.pop()?.length) throw unsupported();
+      if (!parent?.length) throw unsupported();
+      groupEndings.set(parents.pop()!, record);
       continue;
     }
     let match = node.exec(record.text);
@@ -114,7 +116,7 @@ function readSubset(source: string, allowGroups = false) {
       if (!notation || notation.close !== close || reserved.has(name) || nodes.has(name)) throw unsupported();
       const start = record.start + name.length + open.length;
       nodes.set(name, { start, end: start + label.length, text: label, shape: notation.shape, declaration: record });
-      parents.at(-1)?.push(name);
+      parent?.push(name);
       continue;
     }
     if (parents.length) throw unsupported();
@@ -141,7 +143,8 @@ function readSubset(source: string, allowGroups = false) {
       throw unsupported();
     }
   }
-  return { heading: first, records, direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles, groups, groupDeclarations };
+  return { heading: first, records, direction: direction === 'TD' ? 'TB' : direction, nodes, edges, edgeIds, styles,
+    groups, groupDeclarations, groupEndings };
 }
 
 function subsetTopology({ direction, nodes, edges }: ReturnType<typeof readSubset>) {
@@ -362,15 +365,9 @@ export function supportedUngroupSourceId(source: string) {
   catch { return undefined; }
 }
 
-/** Remove only a single, explicit top-level group's wrappers and verify all remaining statements. */
-export function planGroupRemoval(source: string, sourceId: string) {
-  const plan = groupRemovalPlan(source);
-  if (plan.sourceId !== sourceId) throw unsupported();
-  return plan;
-}
-
 export function planGroupContentsRemoval(source: string, groupId: string, memberIds: readonly string[], incidentIds: readonly string[]) {
-  const group = planGroupRemoval(source, groupId);
+  const group = groupRemovalPlan(source);
+  if (group.sourceId !== groupId) throw unsupported();
   const members = new Set(memberIds);
   if (members.size !== memberIds.length || members.size !== group.memberIds.length
     || group.memberIds.some(id => !members.has(id))) throw new Error('Review every current group member before deleting its contents.');
@@ -384,6 +381,42 @@ function standaloneDeclaration(source: string, declaration: RecordSpan) {
   if (!/^[ \t]*$/.test(source.slice(from, declaration.start))
     || !/^(?:;[ \t]*)?(?:%%[^\r\n]*)?$/.test(source.slice(declaration.end, to).trim())) return;
   return { from, to, separator };
+}
+
+function removeGroupWrappers(source: string, group: ReturnType<typeof readSubset>, sourceId: string) {
+  const opening = group.groupDeclarations.get(sourceId);
+  const ending = group.groupEndings.get(sourceId);
+  if (!opening || !ending) throw unsupported();
+  if (group.edges.some(({ from, to }) => from === sourceId || to === sourceId)) {
+    throw new Error('A group with a connection on its container cannot be ungrouped. Review that connection first.');
+  }
+  return [opening, ending].map(record => {
+    const line = standaloneDeclaration(source, record);
+    if (!line) throw unsupported();
+    const tail = source.slice(record.end, line.to);
+    const comment = tail.indexOf('%%');
+    if (comment >= 0) {
+      const to = record.end + tail.slice(0, comment).indexOf(';') + 1;
+      return { from: record.start, to, expectedText: source.slice(record.start, to), replacement: '' };
+    }
+    return { from: line.from, to: line.to, expectedText: source.slice(line.from, line.to), replacement: '' };
+  });
+}
+
+/** Remove a proven container while retaining all source inside it. */
+export function planGroupRemoval(source: string, sourceId: string) {
+  const parsed = readSubset(source, true);
+  return { sourceId, patches: removeGroupWrappers(source, parsed, sourceId), memberIds: parsed.groups.get(sourceId)! };
+}
+
+export function supportedGroupRemovals(source: string) {
+  try {
+    const parsed = readSubset(source, true);
+    return [...parsed.groups.keys()].filter(sourceId => {
+      try { removeGroupWrappers(source, parsed, sourceId); return true; }
+      catch { return false; }
+    });
+  } catch { return []; }
 }
 
 export function supportedGroupMoves(source: string, groupId: string) {

@@ -232,8 +232,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
               </>}
               {group && <>
                 <option value="removeGroup">Ungroup</option>
-                <option value="removeGroupContents" disabled={!groupRemoval || !!groupRemoval.unavailable}>Delete group and contents</option>
-                <option value="moveToGroup" disabled={!movableNodes.length}>Move node into group</option>
+                {groupRemoval && <option value="removeGroupContents" disabled={!!groupRemoval.unavailable}>Delete group and contents</option>}
+                {!!movableNodes.length && <option value="moveToGroup">Move node into group</option>}
               </>}
             </>}
           </select>
@@ -344,7 +344,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
             }} /> {node.label}
           </label>)}
         </fieldset>}
-        {ungrouping && <p>Ungroup {group?.label}. The member nodes and all connections will stay in the diagram.</p>}
+        {ungrouping && <p>Ungroup {group?.label}. Its members and connections will stay in the diagram.</p>}
         {deletingGroup && groupRemoval && <section aria-label="Group contents to delete">
           <p>Delete {group?.label}, its {groupRemoval.memberIds.length} member nodes and {groupRemoval.connectionIds.length} incident connections.</p>
           <ul aria-label="Nodes to delete">{nodes.filter(item => groupRemoval.memberIds.includes(item.id)).map(item => <li key={item.id}>{item.label}</li>)}</ul>

@@ -16,7 +16,7 @@ import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-pr
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
-import { flowchartSubsetTopology, supportedGroupMoves, supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
+import { flowchartSubsetTopology, supportedGroupMoves, supportedGroupRemovals, supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
@@ -257,6 +257,15 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     const target = targetTable?.targets.find(item => item.id === identity?.id && item.elementKind === "group");
     return target ? { id: target.id, label: target.label || "Diagram group", members: target.members } : undefined;
   }, [identities, targetTable, ungroupSourceId]);
+  const ungroupableGroups = useMemo(() => {
+    const allowed = new Set(source && !flatFlowchart ? supportedGroupRemovals(source) : []);
+    const ids = new Set(identities?.filter(record => record.status === "resolved" && record.elementKind === "group"
+      && allowed.has(record.binding.sourceId)).map(record => record.id));
+    return new Map(targetTable?.targets.filter(target => target.elementKind === "group" && ids.has(target.id))
+      .map(target => [target.id, { id: target.id, label: target.label || "Diagram group" }]));
+  }, [source, flatFlowchart, identities, targetTable]);
+  const structureGroup = editFlowchart === "removeGroup" && editTarget ? ungroupableGroups.get(editTarget) : removableGroup;
+  const singleGroupOperations = !!structureGroup && structureGroup.id === removableGroup?.id;
   const groupRemoval = useMemo(() => {
     if (!removableGroup) return;
     const members = new Set(removableGroup.members);
@@ -401,8 +410,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "create-group", title: "Create group", category: "Diagram", synonyms: ["group nodes", "add subgraph"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose current node declarations." : undefined), run: () => setEditFlowchart("addGroup") },
     { id: "ungroup", title: "Ungroup", category: "Diagram", synonyms: ["remove container", "keep group members"],
-      unavailable: busy ? "Wait for the current action to finish." : removableGroup ? undefined : "Open a rendered flowchart with one supported top-level group.",
-      run: () => setEditFlowchart("removeGroup") },
+      unavailable: busy ? "Wait for the current action to finish." : ungroupableGroups.size ? undefined : "Choose a supported group in a rendered flowchart.",
+      run: () => removableGroup ? setEditFlowchart("removeGroup") : setOutlineOpen(true) },
     { id: "delete-group-contents", title: "Delete group and contents", category: "Diagram",
       unavailable: busy ? "Wait for the current action to finish." : groupRemoval ? groupRemoval.unavailable
         : "Open a rendered flowchart with one supported top-level group.",
@@ -523,6 +532,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
         canRename={!labelEditingUnavailable} onClose={() => setOutlineOpen(false)}
         onRename={renameFromOutline} onSource={jumpToSource} onFrame={frameOutlineTargets} onBulkText={setBulkTextHidden}
+        canUngroup={id => !busy && ungroupableGroups.has(id)} onUngroup={id => {
+          setOutlineOpen(false);
+          setEditTarget(id);
+          setEditFlowchart("removeGroup");
+        }}
         onConnect={!editingUnavailable && selectedSource ? openConnection : undefined}
         onGroup={!editingUnavailable ? hidden => {
           setGroupMembers({ ids: [...outlineSelection], hidden });
@@ -662,10 +676,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return result.status;
         }} />}
       {editFlowchart && editor.current && (
-        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} movableNodes={movableNodes}
+        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={structureGroup} movableNodes={singleGroupOperations ? movableNodes : []}
           flatFlowchart={flatFlowchart} canEditLabels={!labelEditingUnavailable}
           initialOperation={editFlowchart} initialTarget={editTarget}
-          deleteConnections={deleteConnections} groupMembers={groupMembers} groupRemoval={groupRemoval}
+          deleteConnections={deleteConnections} groupMembers={groupMembers} groupRemoval={singleGroupOperations ? groupRemoval : undefined}
           onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); setGroupMembers(undefined); }}
           onApply={proposal => {
             const current = editor.current!;
