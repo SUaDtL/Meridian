@@ -186,6 +186,20 @@ test('removes one explicitly authorized connection offline and retains its scene
   });
   const projectFile = live.getByRole('button', { name: 'Download v3 project' });
   const original = JSON.parse(await download(page, projectFile));
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  async function showRelationships() {
+    await live.getByRole('button', { name: 'Outline', exact: true }).click();
+    await outline.getByRole('button', { name: 'Relationships', exact: true }).click();
+  }
+  const closeOutline = () => outline.getByRole('button', { name: 'Close dialog' }).click();
+  await showRelationships();
+  await outline.getByRole('button', { name: 'Select visible results' }).click();
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 0 hidden');
+  const drop = outline.getByRole('option', { name: /Remove this.*drop/ });
+  const keep = outline.getByRole('option', { name: /Keep this.*keep/ });
+  await expect(drop).toHaveAttribute('aria-selected', 'true');
+  await expect(keep).toHaveAttribute('aria-selected', 'true');
+  await closeOutline();
   const dialog = await openExchange(page, live);
   await context.setOffline(true);
   await dialog.getByLabel('Instruction').fill('Review removing the obsolete connection.');
@@ -234,10 +248,21 @@ test('removes one explicitly authorized connection offline and retains its scene
   expect(removed.identity.orphans).toContainEqual(expect.objectContaining({ formerElementId: edgeId, retained: {
     style: { stroke: '#abcdef' }, sceneReferences: [{ sceneId: scene.id, field: 'visible', index: 2 }, { sceneId: scene.id, field: 'flow', index: 0 }],
   } }));
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
+  await showRelationships();
+  await expect(outline.getByRole('status')).toHaveText('1 selected · 0 hidden');
+  await expect(drop).toHaveCount(0);
+  await expect(keep).toHaveAttribute('aria-selected', 'true');
+  await closeOutline();
   await live.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const undone = JSON.parse(await download(page, projectFile));
   expect(undone).toEqual({ ...original, revision: removed.revision + 1, updatedAt: undone.updatedAt });
+  await showRelationships();
+  await expect(outline.getByRole('status')).toHaveText('2 selected · 0 hidden');
+  await expect(drop).toHaveAttribute('aria-selected', 'true');
+  await expect(keep).toHaveAttribute('aria-selected', 'true');
+  await closeOutline();
   await openExchange(page, live);
   await dialog.getByRole('button', { name: 'Review a proposal' }).click();
   await review(dialog, proposal);
