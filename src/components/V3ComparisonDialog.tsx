@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { runAuthoringWorker } from "../lib/authoring/authoring-worker";
+import type { CrossingSummary, LayoutCrossingComparison } from "../lib/authoring/crossing-findings";
 import { designRecipeIds, readDesignRecipe, type DesignRecipeId, type DesignScope } from "../lib/authoring/design-recipes";
 import { layoutAlternativeIds, readLayoutAlternative, type LayoutAlternativeId, type LayoutIntent } from "../lib/authoring/layout-alternatives";
+import CrossingWorker from "../lib/authoring/layout-crossings.worker?worker&inline";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { SemanticRole } from "../lib/authoring/mermaid-project";
 import type { ReadyProposal } from "../lib/authoring/proposals";
@@ -15,7 +18,7 @@ type ComparisonMode = "design" | "layout";
 type ReadabilityEvidence = { smallest: number | null; measured: number; unknown: number };
 type ScopeSummary = NonNullable<NonNullable<ReturnType<Editor["readDesignPreview"]>>["scope"]>;
 type Preview = { scope?: ScopeSummary; proposal: ReadyProposal; changes: { label: string; before: unknown; after: unknown }[]; url: string; width: number; height: number;
-  evidence?: { current: ReadabilityEvidence; proposed: ReadabilityEvidence } };
+  evidence?: { current: ReadabilityEvidence; proposed: ReadabilityEvidence; crossings?: LayoutCrossingComparison | null } };
 
 const viewingProfile = { width: 1280, height: 720, padding: 32 };
 function labelEvidence(result: RenderResult, frame: FrameGeometry): ReadabilityEvidence {
@@ -23,6 +26,10 @@ function labelEvidence(result: RenderResult, frame: FrameGeometry): ReadabilityE
   const labels = result.elements?.filter(item => item.capabilities.includes("typography")) ?? [];
   const sizes = labels.flatMap(item => typeof item.appearance?.labelSizeInDiagram === "number" ? [item.appearance.labelSizeInDiagram * scale] : []);
   return { smallest: sizes.length ? Math.min(...sizes) : null, measured: sizes.length, unknown: labels.length - sizes.length };
+}
+
+function connectionRoutes(result: RenderResult) {
+  return result.elements?.filter(item => item.kind === "edge").map(({ key, kind, measuredRoute }) => ({ id: key, kind, measuredRoute })) ?? [];
 }
 
 export default function V3ComparisonDialog({ mode, allowDirection, selection, selectedRoleCounts, currentUrl, currentSize, editor, onApply, onClose }: {
@@ -77,9 +84,24 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
       const candidate = layoutCandidate ?? designCandidate;
       if (!candidate) throw new Error("The project changed. Refresh the preview.");
       const { svg, ...geometry } = buildExportFrame(candidate.rendered.result, candidate.document);
+      let crossings: LayoutCrossingComparison | null | undefined;
+      if (layoutCandidate) {
+        const current = connectionRoutes(layoutCandidate.current.result);
+        const proposed = connectionRoutes(layoutCandidate.rendered.result);
+        if (current.length || proposed.length) {
+          try {
+            crossings = await runAuthoringWorker<LayoutCrossingComparison>(() => new CrossingWorker(), { current, proposed },
+              work.signal, "Comparing measured routes", false);
+          } catch {
+            work.signal.throwIfAborted();
+            crossings = null;
+          }
+        }
+      }
       work.signal.throwIfAborted();
       setPreview({ proposal, changes: candidate.changes, ...geometry, scope: designCandidate?.scope,
-        evidence: layoutCandidate ? { current: labelEvidence(layoutCandidate.current.result, currentSize), proposed: labelEvidence(candidate.rendered.result, geometry) } : undefined,
+        evidence: layoutCandidate ? { current: labelEvidence(layoutCandidate.current.result, currentSize),
+          proposed: labelEvidence(candidate.rendered.result, geometry), crossings } : undefined,
         url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) });
       setView("proposed");
     } catch (reason) {
@@ -107,6 +129,10 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
   function label(value: unknown) { return typeof value === "boolean" ? value ? "On" : "Off" : String(value); }
   function labelSize(evidence: ReadabilityEvidence) {
     return `${evidence.smallest === null ? "No measured labels" : `${evidence.smallest.toFixed(1)} CSS pixels for the smallest measured label`} · ${evidence.measured} measured · ${evidence.unknown} unknown`;
+  }
+  function routeSummary(summary: CrossingSummary) {
+    return `${summary.count} crossing ${summary.count === 1 ? "candidate" : "candidates"} in checked routes · ${summary.measured} measured · ${summary.unknown} unknown · ${summary.checked.toLocaleString()} pairs checked`
+      + (summary.skipped ? ` · ${summary.skipped.toLocaleString()} pairs skipped` : "");
   }
   return (
     <Modal title={layout ? "Compare layouts" : "Explore designs"} wide onClose={onClose}>
@@ -180,6 +206,13 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
       {preview?.evidence && <section aria-label="Viewed label sizes">
         <h3>Viewed labels at 1280 × 720 CSS pixels</h3>
         <p>Current · {labelSize(preview.evidence.current)}</p><p>Proposed · {labelSize(preview.evidence.proposed)}</p>
+      </section>}
+      {preview?.evidence?.crossings !== undefined && <section aria-label="Connection crossings">
+        <h3>Connection crossing candidates</h3>
+        {preview.evidence.crossings ? <>
+          <p>Current · {routeSummary(preview.evidence.crossings.current)}</p>
+          <p>Proposed · {routeSummary(preview.evidence.crossings.proposed)}</p>
+        </> : <p>The route comparison did not produce measurements.</p>}
       </section>}
       {busy && <p role="status">Rendering the {title} {mode}…</p>}
       {error && <p role="alert">{error}</p>}

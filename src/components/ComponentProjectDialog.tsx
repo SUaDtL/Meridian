@@ -9,7 +9,7 @@ import type { ReadyProposal } from "../lib/authoring/proposals";
 import { buildComponentProject, materializeComponent } from "../lib/authoring/component-project";
 import { curatedComponents } from "../lib/authoring/curated-components";
 import { buildExportFrame } from "../lib/export";
-import { readComponentLibrary, saveComponentDefinitions } from "../lib/persistence/component-library";
+import { readComponentLibrary, removeComponentDefinition, restoreComponentDefinition, saveComponentDefinitions } from "../lib/persistence/component-library";
 import { listComponentCheckpoints, saveComponentCheckpoint, type ComponentCheckpoint, type ComponentDraft } from "../lib/persistence/component-drafts";
 import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
@@ -28,6 +28,8 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
   const [sessionComponents, setSessionComponents] = useState<ComponentDefinition[]>([]);
   const [library, setLibrary] = useState<ComponentDefinition[]>([]);
   const [libraryStatus, setLibraryStatus] = useState("");
+  const [removeCandidate, setRemoveCandidate] = useState<ComponentDefinition>();
+  const [removedDefinition, setRemovedDefinition] = useState<ComponentDefinition>();
   const [retryFile, setRetryFile] = useState<File>();
   const [definition, setDefinition] = useState<ComponentDefinition>();
   const [drafts, setDrafts] = useState<ComponentCheckpoint[]>([]);
@@ -39,9 +41,11 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
   const [disconnected, setDisconnected] = useState(false);
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
-  const [busy, setBusy] = useState<"read" | "preview" | "create" | "draft">();
+  const [busy, setBusy] = useState<"read" | "preview" | "create" | "draft" | "library">();
   const [error, setError] = useState("");
   const work = useRef<AbortController | undefined>(undefined);
+  const removalHeading = useRef<HTMLHeadingElement>(null);
+  const undoRemoval = useRef<HTMLButtonElement>(null);
   const projectId = insertion?.editor.snapshot().id ?? null;
   const targetIds = new Set(insertion?.nodes.map(node => node.id));
   const choices = [...(insertion ? [] : sessionComponents), ...library, ...curatedComponents].filter(component =>
@@ -55,6 +59,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
   const targetNeedle = targetQuery.trim().toLowerCase();
 
   useEffect(() => () => work.current?.abort(), []);
+  useEffect(() => { if (removeCandidate) removalHeading.current?.focus(); }, [removeCandidate]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
   useEffect(() => {
     let closed = false;
@@ -294,10 +299,51 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
     });
   }
 
+  async function removeDefinition(signal: AbortSignal) {
+    if (!removeCandidate) return;
+    const db = await openWorkspaceDatabase();
+    try {
+      signal.throwIfAborted();
+      const removed = await removeComponentDefinition(db, removeCandidate);
+      setLibrary(previous => previous.filter(item => item.id !== removed.id || item.version !== removed.version));
+      setRemovedDefinition(removed);
+      setRemoveCandidate(undefined);
+      setLibraryStatus(`Removed ${removed.name} from the library.`);
+      requestAnimationFrame(() => undoRemoval.current?.focus());
+    } finally { db.close(); }
+  }
+
+  async function restoreDefinition(signal: AbortSignal) {
+    if (!removedDefinition) return;
+    const db = await openWorkspaceDatabase();
+    try {
+      signal.throwIfAborted();
+      const restored = await restoreComponentDefinition(db, removedDefinition);
+      setLibrary(previous => [...previous.filter(item => item.id !== restored.id || item.version !== restored.version), restored]
+        .sort((left, right) => left.name.localeCompare(right.name)));
+      setRemovedDefinition(undefined);
+      setLibraryStatus(`Restored ${restored.name} to the library.`);
+      requestAnimationFrame(() => document.getElementById(`component-${restored.id}-${restored.version}`)?.focus());
+    } finally { db.close(); }
+  }
+
   return (
-    <Modal title={insertion ? "Insert component" : "Components"} wide busy={busy === "create" || busy === "read" || busy === "draft"}
+    <Modal title={insertion ? "Insert component" : "Components"} wide busy={!!busy && busy !== "preview"}
       onClose={() => leaveChoices(onClose)}>
-      {!definition && <div className="heading-form">
+      {removeCandidate && <section className="heading-form" aria-label="Review library removal">
+        <h3 ref={removalHeading} tabIndex={-1}>Remove {removeCandidate.name} from the local library</h3>
+        <p>Version {removeCandidate.version} · {removeCandidate.id.slice(0, 8)}</p>
+        <p>Inserted copies belong to their projects. You can undo the most recent library removal while this dialog stays open.</p>
+        <div className="dialog-actions">
+          <button className="button quiet" disabled={!!busy} onClick={() => {
+            const id = removeCandidate.id, version = removeCandidate.version;
+            setRemoveCandidate(undefined); setError("");
+            requestAnimationFrame(() => document.getElementById(`remove-component-${id}-${version}`)?.focus());
+          }}>Cancel removal</button>
+          <button className="button primary" disabled={!!busy} onClick={() => void run("library", removeDefinition)}>Remove definition</button>
+        </div>
+      </section>}
+      {!definition && !removeCandidate && <div className="heading-form">
         <button className="button quiet" disabled={!!busy} onClick={onBack}>{insertion ? "Back to diagram" : "Process steps"}</button>
         {!!drafts.length && <ul className="project-list" aria-label="Component drafts">
           {drafts.map(saved => {
@@ -322,11 +368,20 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
           onClick={() => downloadText(JSON.stringify({ schema: "meridian-library/v1", definitions: library }, null, 2), "Meridian-component-library.json")}>Download component library</button>}
         {sessionComponents.length > 0 && <button className="button secondary" disabled={!!busy}
           onClick={() => downloadText(JSON.stringify({ schema: "meridian-library/v1", definitions: sessionComponents }, null, 2), "Meridian-session-components.json")}>Download session components</button>}
+        {removedDefinition && <div className="dialog-actions" role="group" aria-label="Library removal recovery">
+          <button ref={undoRemoval} className="button secondary" disabled={!!busy}
+            onClick={() => void run("library", restoreDefinition)}>Undo library removal</button>
+          <button className="button quiet" disabled={!!busy} onClick={() =>
+            downloadText(JSON.stringify(removedDefinition, null, 2), "Meridian-removed-component.json")}>Download removed definition</button>
+        </div>}
         <ul className="project-list">{choices.map((component, index) => <li key={`${component.id}-${index}`} className="project-row">
-          <button className="project-open" disabled={!!busy} onClick={() => select(component)}>
+          <button id={`component-${component.id}-${component.version}`} className="project-open" disabled={!!busy} onClick={() => select(component)}>
             <span><strong>{component.name}</strong><small>{component.description}</small>
               <small>{component.fragment.nodes.length} nodes · {component.fragment.edges.length} connections</small></span>
           </button>
+          {library.includes(component) && <button id={`remove-component-${component.id}-${component.version}`} className="button quiet" disabled={!!busy}
+            aria-label={`Remove ${component.name} version ${component.version} ${component.id.slice(0, 8)}`}
+            onClick={() => { setRemoveCandidate(component); setError(""); }}>Remove</button>}
         </li>)}</ul>
         {!choices.length && <p>No matching components.</p>}
       </div>}
@@ -408,7 +463,8 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
         </div>
       </div>}
       {busy && <p role="status">{busy === "read" ? "Reading the local component file…" : busy === "preview" ? "Checking and rendering the component…"
-        : busy === "draft" ? "Updating the local component draft…" : insertion ? "Inserting the reviewed component…" : "Saving the new project…"}</p>}
+        : busy === "draft" ? "Updating the local component draft…" : busy === "library" ? "Updating the local component library…"
+        : insertion ? "Inserting the reviewed component…" : "Saving the new project…"}</p>}
       {!busy && libraryStatus && <p role="status">{libraryStatus}</p>}
       {error && <p role="alert">{error}</p>}
     </Modal>
