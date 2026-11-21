@@ -2,6 +2,8 @@ import { flowchartSourceLocations } from './source-patches';
 import type { MermaidProjectV3 } from './mermaid-project';
 import type { RenderTargetTable } from './project-render';
 
+export const interactiveSelectionLimit = 200;
+
 export interface OutlineSourceLocation { from: number; to: number; line: number }
 
 function provenSourceLocations(source: string) {

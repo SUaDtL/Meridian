@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import BulkTextColorDialog from "./BulkTextColorDialog";
 import HeadingEditor from "./HeadingEditor";
 import CommandPalette from "./CommandPalette";
@@ -15,15 +15,15 @@ import { designResetFields } from "../lib/authoring/design-reset";
 import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
-import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
+import { interactiveSelectionLimit, projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
 import { flowchartSubsetTopology, groupContentsDeletionScopes, planGroupCreation, supportedGroupMoveTargets, supportedGroupRemovals,
   supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
-import { rolePaintFields, type FrameGeometry, type ReadabilityTarget, type RolePaintField, type ViewingProfile } from "../lib/authoring/readability";
+import { rolePaintFields, type ReadabilityTarget, type RolePaintField, type ViewingProfile } from "../lib/authoring/readability";
 import { buildReadabilityHighlight } from "../lib/authoring/readability-highlight";
-import { buildExportFrame, buildMermaidProjectPresentation, type ExportFrameOptions } from "../lib/export";
+import { buildExportFrame, buildMermaidProjectPresentation, type ExportFrame, type ExportFrameOptions } from "../lib/export";
 import type { ProjectSaveState } from "../lib/persistence/project-save-queue";
 import { openWorkspaceDatabase, saveWorkspaceProjectCopy } from "../lib/persistence/workspace-db";
 import { downloadText, safeFilename, serializeProject } from "../lib/storage";
@@ -39,7 +39,7 @@ const V3SourceEditor = lazy(() => import("./V3SourceEditor"));
 const ExportDialog = lazy(() => import("./ExportDialog"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
-type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
+type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: Omit<ExportFrame, "svg">; url: string };
 
 const workspacePanels = ["Build", "Canvas", "Design", "Story"] as const;
 type WorkspacePanel = typeof workspacePanels[number];
@@ -86,6 +86,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [outlineReturn, setOutlineReturn] = useState<{ source: string; view: OutlineView }>();
   const [orphanReviewOpen, setOrphanReviewOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
+  const [canvasMessage, setCanvasMessage] = useState("");
   const [editTarget, setEditTarget] = useState<string>();
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
   const [dismissedReadability, setDismissedReadability] = useState<ReadonlySet<string>>(new Set());
@@ -283,7 +284,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       ? [{ id: item.id, label: ids.has(item.id) ? `${item.label} (${ids.get(item.id)})` : item.label,
         sourceId: item.sourceId, targetId: item.targetId, direction: item.direction, explicit: ids.has(item.id), text: edgeLabels?.get(item.id) ?? "" }] : []) ?? [];
   }, [identities, targetTable, edgeLabels]);
-  const selectedSource = outlineSelection.size === 1 ? nodes.find(node => outlineSelection.has(node.id))?.id : undefined;
+  const selectedCanvasNode = outlineSelection.size === 1 ? nodes.find(node => outlineSelection.has(node.id)) : undefined;
+  const selectedSource = selectedCanvasNode?.id;
+  const selectedCanvasBounds = targetTable?.targets.filter(target => target.elementKind === "node" && outlineSelection.has(target.id)) ?? [];
   const canGroupWithinParent = useMemo(() => {
     if (!source || flatFlowchart || !componentSourceSupported || !outlineSelection.size) return false;
     const members = identities?.filter(record => outlineSelection.has(record.id) && record.elementKind === "node"
@@ -417,7 +420,35 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       return reason instanceof Error ? reason.message : "The selected elements could not be framed.";
     }
   }
-  function renameFromOutline(id: string) {
+  function selectCanvasNode(event: MouseEvent<HTMLImageElement>) {
+    if (!currentFrame || !targetTable || focusedFrame || busy) return;
+    const { width, height, diagramScale, diagramOrigin } = currentFrame.geometry;
+    const box = event.currentTarget.getBoundingClientRect();
+    const scale = Math.min(box.width / width, box.height / height);
+    if (scale <= 0 || !Number.isFinite(diagramOrigin.x) || !Number.isFinite(diagramOrigin.y)) return;
+    const x = ((event.clientX - box.left - (box.width - width * scale) / 2) / scale - diagramOrigin.x) / diagramScale;
+    const y = ((event.clientY - box.top - (box.height - height * scale) / 2) / scale - diagramOrigin.y) / diagramScale;
+    const matches = targetTable.targets.filter(({ elementKind, bounds }) => elementKind === "node"
+      && x >= bounds.x && x <= bounds.x + bounds.width && y >= bounds.y && y <= bounds.y + bounds.height);
+    if (matches.length > 1) {
+      setCanvasMessage("These nodes overlap here. Choose the exact node in Outline.");
+      return;
+    }
+    const node = matches[0];
+    const next = event.shiftKey ? new Set(outlineSelection) : new Set<string>();
+    if (node) {
+      if (event.shiftKey && next.has(node.id)) next.delete(node.id);
+      else next.add(node.id);
+    }
+    if (next.size > interactiveSelectionLimit) {
+      setCanvasMessage(`The selection limit is ${interactiveSelectionLimit} elements. ${outlineSelection.size} are selected.`);
+      return;
+    }
+    setCanvasMessage("");
+    setOutlineSelection(next);
+  }
+
+  function renameNode(id: string) {
     if (labelEditingUnavailable || !nodes.some(node => node.id === id)) return;
     setOutlineOpen(false);
     setEditTarget(id);
@@ -536,7 +567,26 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
             </nav>
             <div className="v3-panel-workspace" data-active-panel={mobilePanel}>
               <section data-v3-panel="Canvas" aria-label="Diagram canvas" className="migration-preview">
-                {currentFrame && <img ref={previewImage} src={previewUrl} alt={`Diagram preview for ${title}`} />}
+                {currentFrame && <div className="v3-canvas-image">
+                  <img ref={previewImage} src={previewUrl} alt={`Diagram preview for ${title}`} draggable={false} onClick={selectCanvasNode} />
+                  {!focusedFrame && selectedCanvasBounds.length > 0 && (
+                    <svg aria-hidden="true" className="v3-canvas-selection" viewBox={`0 0 ${currentFrame.geometry.width} ${currentFrame.geometry.height}`}>
+                      {selectedCanvasBounds.map(target => {
+                        const { diagramScale, diagramOrigin } = currentFrame.geometry;
+                        return <rect key={target.id} x={diagramOrigin.x + target.bounds.x * diagramScale}
+                          y={diagramOrigin.y + target.bounds.y * diagramScale} width={target.bounds.width * diagramScale}
+                          height={target.bounds.height * diagramScale} vectorEffect="non-scaling-stroke" rx={4} />;
+                      })}
+                    </svg>
+                  )}
+                </div>}
+                {canvasMessage && <p role="status">{canvasMessage}</p>}
+                {!canvasMessage && outlineSelection.size > 1 && <p role="status">{outlineSelection.size} selected</p>}
+                {selectedCanvasNode && <div className="recovery-actions" role="group" aria-label="Selected diagram node">
+                  <p>{selectedCanvasNode.text} selected</p>
+                  <button className="button secondary" disabled={!!labelEditingUnavailable} onClick={() => renameNode(selectedCanvasNode.id)}>Rename selected node</button>
+                  <button className="button secondary" disabled={!!editingUnavailable} onClick={openConnection}>Connect selected node</button>
+                </div>}
                 {focusedFrame && <div className="recovery-actions">
                   <p>Framed around {focusedFrame.count} {focusedFrame.count === 1 ? "element" : "elements"}.</p>
                   <button type="button" className="button quiet" ref={fitDiagram} onClick={() => {
@@ -660,7 +710,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} restoredView={restoredOutline} onSelection={setOutlineSelection}
         canRename={!labelEditingUnavailable} onClose={() => setOutlineOpen(false)}
-        onRename={renameFromOutline} onSource={jumpToSource} onFrame={frameOutlineTargets} onBulkText={setBulkTextHidden}
+        onRename={renameNode} onSource={jumpToSource} onFrame={frameOutlineTargets} onBulkText={setBulkTextHidden}
         canUngroup={id => !busy && ungroupableGroups.has(id)} onUngroup={id => {
           setOutlineOpen(false);
           setEditTarget(id);
@@ -729,7 +779,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         highlightTargets={ids => buildReadabilityHighlight(currentFrame.rendered, currentFrame.document, ids)}
         dismissed={dismissedReadability} onDismissed={setDismissedReadability}
         onCompareLayouts={() => { setReadabilityOpen(false); setComparison("layout"); }}
-        onRename={!labelEditingUnavailable ? id => { setReadabilityOpen(false); renameFromOutline(id); } : undefined}
+        onRename={!labelEditingUnavailable ? id => { setReadabilityOpen(false); renameNode(id); } : undefined}
         onResetRolePaint={(id, field) => {
           setReadabilityOpen(false);
           setDesignReset({ selection: new Set([id]), hidden: 0, field });
