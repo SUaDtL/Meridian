@@ -141,6 +141,56 @@ test('creates a component project with nested verified containment and durable g
   } finally { await offline.close(); }
 });
 
+test('explicit replacement preserves the distinct library entry made by Import as copy', async ({ page }) => {
+  const original = { ...serviceComponent, id: crypto.randomUUID(), name: 'Original approval' };
+  const alternative = { ...original, name: 'Independent approval' };
+  const replacement = { ...original, name: 'Reviewed approval update' };
+  const shelf = page.getByRole('dialog', { name: 'Components' });
+  const compare = shelf.getByRole('region', { name: 'Compare component definitions' });
+  const back = shelf.getByRole('button', { name: 'Back to components' });
+  async function openShelf() {
+    await page.getByRole('button', { name: 'Build with guidance' }).click();
+    await page.getByRole('button', { name: 'Browse components' }).click();
+  }
+  async function importDefinition(value: typeof original) {
+    await shelf.getByLabel('Import a component definition or library').setInputFiles({
+      name: 'approval.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)),
+    });
+  }
+  async function exportDefinitions() {
+    const [file] = await Promise.all([page.waitForEvent('download'), shelf.getByRole('button', { name: 'Download component library' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing library backup.');
+    return (JSON.parse(await readFile(path, 'utf8')) as { definitions: (typeof original)[] }).definitions;
+  }
+
+  await page.goto('/');
+  await openShelf();
+  await importDefinition(original);
+  await back.click();
+  expect(await exportDefinitions()).toEqual([original]);
+
+  await importDefinition(alternative);
+  await compare.getByRole('button', { name: 'Import as copy' }).click();
+  await back.click();
+  const withCopy = await exportDefinitions();
+  expect(withCopy).toHaveLength(2);
+  expect(withCopy).toContainEqual(original);
+  const copy = withCopy.find(entry => entry.name === alternative.name);
+  expect(copy?.id).toBeTruthy();
+  expect(copy?.id).not.toBe(original.id);
+  expect(copy).toEqual({ ...alternative, id: copy?.id });
+
+  await importDefinition(replacement);
+  await compare.getByRole('button', { name: 'Replace saved definition' }).click();
+  await back.click();
+  await page.reload();
+  await openShelf();
+  const saved = await exportDefinitions();
+  expect(saved).toHaveLength(2);
+  expect(saved).toEqual(expect.arrayContaining([replacement, copy]));
+});
+
 test('imports library conflicts as copies and restores an explicitly removed definition', async ({ page }) => {
   async function openShelf() {
     await page.getByRole('button', { name: 'Build with guidance' }).click();

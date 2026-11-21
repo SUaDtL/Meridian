@@ -17,7 +17,7 @@ jobs:
   verify:
     name: Source, browser and visual regression checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       PAGES_ARTIFACT_NAME: github-pages-${{ github.run_attempt }}
     outputs:
