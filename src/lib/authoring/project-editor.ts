@@ -10,7 +10,7 @@ import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } fr
 import type { ComponentDefinition } from './component-definition';
 import type { PortAssignment } from './component-insertion';
 import { buildContrastCandidate, measureTargetContrast, type ContrastKind } from './contrast-fix';
-import { buildDesignRecipeCandidate, buildScopedDesignRecipe, readDesignRecipe, verifyScopedDesign, type DesignRecipeId, type DesignScope } from './design-recipes';
+import { buildDesignRecipeCandidate, buildScopedDesignRecipe, readDesignRecipe, verifyPresentationRoleShapes, verifyScopedDesign, type DesignRecipeId, type DesignScope } from './design-recipes';
 import { buildDesignReset, measuredResetValues, type DesignReset } from './design-reset';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
@@ -252,11 +252,13 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     signal?.throwIfAborted();
     const base = current.document;
     const scope = structuredClone(intent);
-    const accepted = scope.kind === 'diagram' ? undefined : await renderMermaidProject(base, signal);
+    const accepted = scope.kind === 'diagram' && !scope.applyRoleShapes ? undefined : await renderMermaidProject(base, signal);
     if (closed || current.document !== base) throw new Error('The project changed. Refresh the design preview.');
-    const candidate = scope.kind === 'diagram' ? buildDesignRecipeCandidate(base, id) : buildScopedDesignRecipe(base, id, scope, accepted!);
+    const candidate = scope.kind === 'diagram' ? buildDesignRecipeCandidate(base, id, scope.applyRoleShapes === true, accepted)
+      : buildScopedDesignRecipe(base, id, scope, accepted!);
     const rendered = candidate.document === base && accepted ? accepted : await renderMermaidProject(candidate.document, signal);
-    if (accepted) verifyScopedDesign(accepted, rendered, candidate.proof);
+    if (accepted && scope.kind !== 'diagram') verifyScopedDesign(accepted, rendered, candidate.proof);
+    if (accepted && 'shapeIds' in candidate && candidate.shapeIds.length) verifyPresentationRoleShapes(accepted, rendered, candidate.shapeIds);
     signal?.throwIfAborted();
     if (!rendered.targetTable) throw new Error('This design can only be previewed on a verified flowchart.');
     if (closed || current.document !== base) throw new Error('The project changed. Refresh the design preview.');

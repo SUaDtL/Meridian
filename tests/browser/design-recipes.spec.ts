@@ -306,3 +306,59 @@ test('reviews scoped paint inside nested groups and preserves other elements and
   const undone = await downloadProject(page, live);
   expect(undone).toEqual({ ...before, revision: after.revision + 1, updatedAt: undone.updatedAt });
 });
+
+test('reviews a verified Decision diamond while preserving authored source and explicit shape overrides', async ({ page, browser }, info) => {
+  const base = JSON.parse(await readFile(new URL('../../src/lib/authoring/fixtures/example-project.json', import.meta.url), 'utf8'));
+  const source = '\uFEFF' + base.source.replace(/\n/g, '\r\n');
+  const [decision, manual] = base.identity.elements;
+  const project = {
+    ...base, source, title: 'Reviewed Decision shapes',
+    design: { ...base.design, elements: { [manual.id]: { shape: 'circle' } } },
+    roles: [{ elementId: decision.id, role: 'decision' }, { elementId: manual.id, role: 'decision' }],
+  };
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  const library = page.getByRole('dialog', { name: 'Project migration and recovery' });
+  await library.getByLabel('Import v3 project file').setInputFiles({
+    name: 'decisions.meridian.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await library.getByRole('button', { name: 'Open v3 project Reviewed Decision shapes' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  const before = await downloadProject(page, live);
+  await live.getByRole('button', { name: 'Explore designs' }).click();
+  const review = page.getByRole('dialog', { name: 'Explore designs' });
+  await review.getByRole('group', { name: 'Design recipes' }).getByRole('button', { name: /^Presentation/ }).click();
+  const useShapes = review.getByRole('checkbox', { name: 'Use diamonds for Decision nodes' });
+  await expect(useShapes).not.toBeChecked();
+  await useShapes.check();
+  await expect(review.getByText(/Mermaid source keeps its original notation/)).toBeVisible();
+  await review.getByRole('button', { name: 'Preview Presentation' }).click();
+  const changes = review.getByRole('list', { name: 'Design changes' });
+  await expect(changes).toContainText('Client · Presentation shape · Existing shape → Diamond');
+  await expect(changes).not.toContainText('API · Presentation shape');
+  await review.getByRole('img', { name: 'Proposed Presentation design' }).waitFor();
+  await page.screenshot({ path: info.outputPath('presentation-decision-shape-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('presentation-decision-shape-mobile.png') });
+  await review.getByRole('button', { name: 'Apply Presentation' }).click();
+  const after = await downloadProject(page, live);
+  expect(after).toMatchObject({ source, identity: before.identity, roles: before.roles,
+    design: { elements: before.design.elements, recipe: { id: 'presentation', version: '1.0.0' }, applyRoleShapes: true } });
+
+  const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download HTML presentation' }).click()]);
+  const path = await file.path();
+  if (!path) throw new Error('Missing presentation download.');
+  const offline = await browser.newContext({ offline: true });
+  try {
+    const exported = await offline.newPage();
+    await exported.setContent(await readFile(path, 'utf8'));
+    await expect(exported.locator(`[data-element-key="${decision.id}"] polygon`)).toBeVisible();
+    await expect(exported.locator(`[data-element-key="${manual.id}"] circle`)).toBeVisible();
+  } finally {
+    await offline.close();
+  }
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  const restored = await downloadProject(page, live);
+  expect(restored).toEqual({ ...before, revision: after.revision + 1, updatedAt: restored.updatedAt });
+});

@@ -1,6 +1,7 @@
 import type { StudioSettings } from '../../types';
 import type { ElementCapability, ElementStyle } from '../../types/design';
 import type { MermaidProjectV3, SemanticRole } from './mermaid-project';
+import { presentationRoleShape } from './presentation-role-shape';
 import { verifiedTopology, type renderMermaidProject } from './project-render';
 import { groupedFlowchartTopology } from './source-patches';
 import { validateMermaidProject } from './validate-mermaid-project';
@@ -33,7 +34,8 @@ const recipeVersion = '1.0.0';
 export function readDesignRecipe(id: DesignRecipeId) {
   if (!Object.hasOwn(definitions, id)) throw new Error('Choose one of the available design recipes.');
   const { title, description, settings, nodeStyle } = definitions[id];
-  return { id, version: recipeVersion, title, description, settings: { ...settings }, nodeStyle: { ...nodeStyle } };
+  return { id, version: recipeVersion, title, description, settings: { ...settings }, nodeStyle: { ...nodeStyle },
+    decisionShape: presentationRoleShape({ id, version: recipeVersion }, 'decision') ?? null };
 }
 
 const display: Record<keyof RecipeSettings, string> = {
@@ -41,7 +43,7 @@ const display: Record<keyof RecipeSettings, string> = {
 };
 
 type ScopedDesign = ({ kind: 'selection'; ids: readonly string[] } | { kind: 'role'; role: SemanticRole }) & { preserveOverrides?: boolean };
-export type DesignScope = { kind: 'diagram' } | ScopedDesign;
+export type DesignScope = { kind: 'diagram'; applyRoleShapes?: boolean } | ScopedDesign;
 type Frame = Awaited<ReturnType<typeof renderMermaidProject>>;
 type RecipeChange = { label: string; before: unknown; after: unknown };
 type ScopeSummary = { eligible: number; total: number; protectedFields: number; clearedFields: number; clearedTargets: number;
@@ -51,22 +53,39 @@ type PaintProof = { targetId: string; field: PaintField; value: string };
 const paintFields = { fill: 'Fill', color: 'Text', stroke: 'Border' } as const;
 const capability: Record<PaintField, ElementCapability> = { fill: 'fill', color: 'text', stroke: 'stroke' };
 
-export function buildDesignRecipeCandidate(base: MermaidProjectV3, id: DesignRecipeId) {
+export function buildDesignRecipeCandidate(base: MermaidProjectV3, id: DesignRecipeId, applyRoleShapes: boolean, current?: Frame) {
   const recipe = readDesignRecipe(id);
-  const changes = (Object.keys(recipe.settings) as (keyof RecipeSettings)[]).flatMap(field => {
+  const changes: RecipeChange[] = (Object.keys(recipe.settings) as (keyof RecipeSettings)[]).flatMap(field => {
     const before = base.settings[field];
     const after = recipe.settings[field];
     return before === after ? [] : [{ field, label: display[field], before, after }];
   });
+  const shapeIds: string[] = [];
+  if (applyRoleShapes) {
+    groupedFlowchartTopology(base.source);
+    if (!recipe.decisionShape || !current?.targetTable) throw new Error('Choose Presentation for a verified decision shape review.');
+    const roles = new Map(base.roles.map(item => [item.elementId, item.role]));
+    for (const item of current.result.elements ?? []) {
+      if (item.kind !== 'node' || !presentationRoleShape(recipe, roles.get(item.key)) || !item.capabilities.includes('shape')
+        || base.design.elements[item.key]?.shape || base.design.recipeElements[item.key]?.style.shape) continue;
+      if (item.appearance?.diamondShape === undefined) throw new Error('The renderer could not measure a decision node’s current shape.');
+      shapeIds.push(item.key);
+      if (!item.appearance.diamondShape) changes.push({ label: `${item.label} · Presentation shape`, before: 'Existing shape', after: 'Diamond' });
+    }
+    if (!shapeIds.length) throw new Error('Assign the Decision role to a current node without a shape override.');
+  }
+  if (applyRoleShapes !== base.design.applyRoleShapes) {
+    changes.push({ label: 'Presentation role shapes', before: base.design.applyRoleShapes, after: applyRoleShapes });
+  }
   const unchanged = !changes.length && base.design.recipe?.id === recipe.id && base.design.recipe.version === recipe.version;
   const document = unchanged ? base : validateMermaidProject({
     ...base,
     settings: { ...base.settings, ...recipe.settings },
-    design: { ...base.design, recipe: { id: recipe.id, version: recipe.version } },
+    design: { ...base.design, recipe: { id: recipe.id, version: recipe.version }, applyRoleShapes },
     revision: base.revision + 1,
     updatedAt: new Date().toISOString(),
   });
-  return { recipe, document, changes, scope: undefined, proof: [] as PaintProof[] };
+  return { recipe, document, changes, scope: undefined, proof: [] as PaintProof[], shapeIds };
 }
 
 /** Scope appearance to measured nodes and clear only explicitly reviewed paint overrides. */
@@ -156,6 +175,22 @@ export function verifyScopedDesign(current: Frame, preview: Frame, proof: readon
     for (const field of Object.keys(paintFields) as PaintField[]) {
       const expected = changes.get(`${item.key}:${field}`) ?? item.appearance?.[field];
       if (next?.appearance?.[field] !== expected) throw new Error('Meridian could not verify the reviewed scope and its rendered paint.');
+    }
+  }
+}
+
+export function verifyPresentationRoleShapes(current: Frame, preview: Frame, shapeIds: readonly string[]) {
+  if (!current.targetTable || !preview.targetTable || verifiedTopology(current.targetTable) !== verifiedTopology(preview.targetTable)) {
+    throw new Error('The presentation shapes did not preserve the diagram topology and labels.');
+  }
+  const expected = new Set(shapeIds);
+  const measured = new Map(preview.result.elements?.map(item => [item.key, item.appearance?.diamondShape]));
+  for (const id of expected) {
+    if (measured.get(id) !== true) throw new Error('The renderer did not display every reviewed Decision diamond.');
+  }
+  for (const item of current.result.elements ?? []) {
+    if (item.kind === 'node' && !expected.has(item.key) && item.appearance?.diamondShape !== measured.get(item.key)) {
+      throw new Error('The renderer changed an unreviewed node shape.');
     }
   }
 }
