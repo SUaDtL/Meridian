@@ -47,9 +47,11 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   const layout = mode === "layout";
   const [scopeKind, setScopeKind] = useState<DesignScope["kind"]>(selection?.ids.length ? "selection" : "diagram");
   const [preserveOverrides, setPreserveOverrides] = useState(true);
+  const [applyRoleShapes, setApplyRoleShapes] = useState(() => editor.snapshot().design.applyRoleShapes);
   const [role, setRole] = useState<SemanticRole | "">(selectedRoleCounts[0]?.[0] ?? "");
   const [choice, setChoice] = useState<Choice>(layout ? "balanced" : "clear");
   const [direction, setDirection] = useState<LayoutIntent["direction"]>("keep");
+  const offerRoleShapes = allowScopedDesign && choice === "presentation" && selectedRoleCounts.some(([id]) => id === "decision");
   const [preview, setPreview] = useState<Preview>();
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -86,7 +88,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   async function prepare() {
     if (active.current || (!layout && scopeKind === "role" && !role)) return;
     const scope: DesignScope = scopeKind === "selection" ? { kind: scopeKind, ids: selection?.ids ?? [], preserveOverrides }
-      : scopeKind === "role" && role ? { kind: scopeKind, role, preserveOverrides } : { kind: "diagram" };
+      : scopeKind === "role" && role ? { kind: scopeKind, role, preserveOverrides } : { kind: "diagram", applyRoleShapes: offerRoleShapes && applyRoleShapes };
     const work = new AbortController();
     active.current = work;
     setBusy(true);
@@ -184,6 +186,16 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
           {allowScopedDesign && !!selection?.ids.length && <option value="selection">Selected elements</option>}
           {allowScopedDesign && selectedRoleCounts.length > 0 && <option value="role">Selected role</option>}
         </select></label>
+        {scopeKind === "diagram" && offerRoleShapes && <>
+          <label className="check-label">
+            <input type="checkbox" checked={applyRoleShapes} disabled={busy} onChange={event => {
+              setApplyRoleShapes(event.target.checked);
+              resetPreview();
+            }} />
+            Use diamonds for Decision nodes
+          </label>
+          {applyRoleShapes && <p>Project and presentation downloads keep the reviewed shapes. Mermaid source keeps its original notation. Explicit shape overrides take precedence.</p>}
+        </>}
         {scopeKind === "selection" && selection && <p>{selection.ids.length} selected · {selection.hidden} hidden in the outline</p>}
         {scopeKind === "role" && <label>Role<select value={role} disabled={busy} onChange={event => {
           setRole(event.target.value as SemanticRole);
