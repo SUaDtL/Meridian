@@ -13,8 +13,19 @@ test('compares measured layouts and undoes an exact direction patch with the cho
   const source = '\uFEFFflowchart LR\r\n  %% keep the LR explanation\r\n  A["Client LR"]\r\n  B["Service"]\r\n  A main@-->|"Call"| B\r\n';
   const project = { ...createDocument(), title: 'Layout comparison', source };
   project.design.elements['node:A'] = { fill: '#abcdef' };
-  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
-    { key: STORAGE_KEY, project });
+  await page.addInitScript(({ key, project }) => {
+    localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] }));
+    let held = false;
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, options) {
+      if (!held && Array.isArray(message?.current) && Array.isArray(message?.proposed)) {
+        held = true;
+        document.documentElement.dataset.layoutTestWorkerHeld = 'true';
+        return;
+      }
+      return post.call(this, message, options ?? []);
+    };
+  }, { key: STORAGE_KEY, project });
   await page.goto('/');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   await page.getByRole('button', { name: 'Project migration and recovery' }).click();
@@ -31,8 +42,16 @@ test('compares measured layouts and undoes an exact direction patch with the cho
   await choices.getByRole('button', { name: /Compact/ }).click();
   await layouts.getByRole('combobox', { name: 'Source direction' }).selectOption('TB');
   const apply = layouts.getByRole('button', { name: 'Apply Compact', exact: true });
+  const preview = layouts.getByRole('button', { name: 'Preview Compact', exact: true });
   await expect(apply).toBeDisabled();
-  await layouts.getByRole('button', { name: 'Preview Compact', exact: true }).click();
+  await preview.click();
+  await expect(page.locator('html')).toHaveAttribute('data-layout-test-worker-held', 'true');
+  await layouts.getByRole('button', { name: 'Cancel preview' }).click();
+  await expect(layouts.getByRole('status')).toContainText('Preview cancelled.');
+  await expect(apply).toBeDisabled();
+  await expect(preview).toBeFocused();
+  await expect(layouts.getByRole('combobox', { name: 'Source direction' })).toHaveValue('TB');
+  await preview.click();
   await expect(layouts.getByRole('img', { name: 'Proposed Compact layout' })).toBeVisible();
   await expect(layouts.getByRole('list', { name: 'Layout changes' })).toContainText('Source direction · LR → TB');
   const measured = layouts.getByRole('region', { name: 'Viewed label sizes' });
@@ -42,6 +61,7 @@ test('compares measured layouts and undoes an exact direction patch with the cho
   const crossings = layouts.getByRole('region', { name: 'Connection crossings' });
   await expect(crossings.getByText(/Current · 0 crossing candidates in checked routes · 1 measured · 0 unknown/)).toBeVisible();
   await expect(crossings.getByText(/Proposed · 0 crossing candidates in checked routes · 1 measured · 0 unknown/)).toBeVisible();
+  await expect(crossings).toContainText('The checked routes have the same crossing candidate count.');
   await apply.click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const applied = await downloadProject(page, live);

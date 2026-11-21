@@ -114,6 +114,7 @@ test('reports measured route candidates and opens the normal layout review', asy
   const comparison = layouts.getByRole('region', { name: 'Connection crossings' });
   await expect(comparison.getByText(/Current · 1 crossing candidate in checked routes · 4 measured · 0 unknown/)).toBeVisible();
   await expect(comparison.getByText(/Proposed · 0 crossing candidates in checked routes · 3 measured · 1 unknown/)).toBeVisible();
+  await expect(comparison).toContainText('Crossing coverage is incomplete for this comparison.');
 });
 
 test('reports an ELK bridge arc as unknown route geometry', async ({ page }) => {
