@@ -162,6 +162,31 @@ test('applies the reviewed paint recipe only to nodes of one explicit role', asy
   expect(after.settings).toEqual(before.settings);
   expect(after.roles).toEqual(before.roles);
   expect(after.source).toBe(before.source);
+
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^Store/ }).click();
+  await outline.getByRole('button', { name: 'Change selected text color' }).click();
+  const paint = page.getByRole('dialog', { name: 'Change selected text color' });
+  await paint.getByRole('textbox', { name: 'New text color' }).fill('#334455');
+  await paint.getByRole('button', { name: 'Preview text color' }).click();
+  await paint.getByRole('button', { name: 'Apply to 1 eligible labels' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  await live.getByRole('button', { name: 'Check readability' }).click();
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  const report = check.getByRole('region', { name: 'Readability results' });
+  await expect(report.getByText('Explicit role styling · 1 measured · 0 unknown · 1 not applicable')).toBeVisible();
+  await expect(report.getByText('Store has the database role. Text color renders as #334455. The saved recipe specifies #0f172a. User override #334455.')).toBeVisible();
+  await report.getByRole('button', { name: 'Review reset for Store' }).click();
+  const reset = page.getByRole('dialog', { name: 'Reset selected styles' });
+  await expect(reset.getByRole('combobox', { name: 'Property' })).toHaveValue('color');
+  await reset.getByRole('button', { name: 'Preview reset' }).click();
+  await reset.getByRole('button', { name: 'Apply reset' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await downloadProject(page, live);
+  expect(restored.design).toEqual(after.design);
+  expect(restored.source).toBe(before.source);
 });
 
 test('resets user and recipe styles separately, previews the revealed value, and restores either layer', async ({ page }) => {
