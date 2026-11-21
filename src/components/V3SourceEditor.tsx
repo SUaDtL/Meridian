@@ -11,6 +11,7 @@ import { sourceLineRange, SourceDiagnosticError } from "../lib/authoring/source-
 import { readMatchingSourceRecovery, serializeSourceRecovery, sourceRecoveryByteLimit, type SourceRecoveryReason } from "../lib/authoring/source-recovery";
 import { PortableProjectLimitError } from "../lib/authoring/validate-mermaid-project";
 import { downloadText, safeFilename } from "../lib/storage";
+import { missingNodeBracket } from "../lib/authoring/source-diagnostic-repair";
 import { buildExportFrame } from "../lib/export";
 import Modal from "./Modal";
 import SourceEditor from "./SourceEditor";
@@ -21,6 +22,7 @@ export type SourceDraft = { base: string; text: string; normalize: boolean; reco
 const diagnosticTitles = { syntax: "Mermaid syntax", resource: "Resource restriction", unsupported: "Reviewed editing limitation", stale: "Stale preview" };
 
 type Caret = { anchor: number; head: number };
+type Repair = NonNullable<ReturnType<typeof missingNodeBracket>> & { base: MermaidProjectV3; draft: SourceDraft };
 
 function mapSourceCaret(before: string, after: string, selected: Caret): Caret {
   let prefix = 0;
@@ -56,6 +58,8 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
   const [recoveryError, setRecoveryError] = useState("");
   const recoveryInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | SourceDiagnosticError>("");
+  const [repair, setRepair] = useState<Repair>();
+  const [repairMessage, setRepairMessage] = useState("");
   const [preview, setPreview] = useState<(Prepared & { url: string })>();
   const [painted, setPainted] = useState(false);
   const request = useRef<AbortController | null>(null);
@@ -70,6 +74,21 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
   const diagnostic = error instanceof SourceDiagnosticError ? error : undefined;
   const affectedLine = diagnostic?.line;
   const location = affectedLine ? sourceLineRange(draft.text, affectedLine) : undefined;
+  const staleRepair = repair && (repair.draft !== draft || repair.base !== base || editor.snapshot() !== base);
+
+  function repairDraft() {
+    const view = input.current;
+    if (!repair || locked || !view) return;
+    if (staleRepair || view.state.doc.toString() !== repair.draft.text) {
+      setRepairMessage("The draft changed after this fix was reviewed. Preview the current source for a fresh fix.");
+      return;
+    }
+    view.dispatch({ changes: { from: repair.insertAt, insert: "]" }, selection: { anchor: repair.insertAt + 1 }, scrollIntoView: true });
+    setRepair(undefined);
+    setRepairMessage("The bracket was added to the draft. Preview the source before applying the edit.");
+    view.focus();
+  }
+
 
   useEffect(() => () => request.current?.abort(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
@@ -82,6 +101,7 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
     setError("");
     setRecoveryMessage("");
     setRecoveryError("");
+    setRepairMessage("");
   }
 
   async function useRecovery(action: (signal: AbortSignal) => Promise<void>) {
@@ -147,6 +167,8 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
     setBusy(true);
     setPreview(undefined);
     setPainted(false);
+    setRepair(undefined);
+    setRepairMessage("");
     setError("");
     try {
       const checked = await editor.prepareSource(source, base, controller.signal);
@@ -161,6 +183,10 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
       if (!controller.signal.aborted) {
         setError(reason instanceof SourceDiagnosticError ? reason
           : reason instanceof Error ? reason.message : "The revised source could not be previewed.");
+        if (reason instanceof SourceDiagnosticError) {
+          const suggestion = missingNodeBracket(draft.text, reason);
+          if (suggestion) setRepair({ ...suggestion, base, draft });
+        }
         const recovery = reason instanceof IdentityLimitError ? reason.reason
           : reason instanceof PortableProjectLimitError ? "project-size" : undefined;
         if (recovery) {
@@ -219,7 +245,15 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
           <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{diagnostic.detail}</pre>
         </details>}
       </div>}
-        <div className="recovery-actions" role="group" aria-label="Project history">
+      {repair && <section aria-label="Reviewed diagnostic fix">
+        <p>Add a closing bracket on line {repair.line}.</p>
+        <p>Current line <code>{repair.before}</code></p>
+        <p>Proposed line <code>{repair.after}</code></p>
+        {staleRepair && <p>Preview the current source to refresh this fix.</p>}
+        <button className="button secondary" type="button" disabled={locked} onClick={repairDraft}>Apply fix to draft</button>
+      </section>}
+      {repairMessage && <p role="status">{repairMessage}</p>}
+      <div className="recovery-actions" role="group" aria-label="Project history">
         <button className="button quiet" type="button" disabled={hasDraft || locked || !canUndo} onClick={() => history("undo")}>Undo project edit</button>
         <button className="button quiet" type="button" disabled={hasDraft || locked || !canRedo} onClick={() => history("redo")}>Redo project edit</button>
       </div>
