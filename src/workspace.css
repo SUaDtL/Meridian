@@ -946,13 +946,6 @@
   max-height: 55svh;
 }
 
-.story-canvas-return {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding-block: 4px 10px;
-}
-
 .v3-panel-nav { display: none; }
 @media (max-width: 800px) {
   .v3-panel-nav {
@@ -971,4 +964,19 @@
   .v3-panel-workspace[data-active-panel="Canvas"] [data-v3-panel]:not([data-v3-panel="Canvas"]),
   .v3-panel-workspace[data-active-panel="Design"] [data-v3-panel]:not([data-v3-panel="Design"]),
   .v3-panel-workspace[data-active-panel="Story"] [data-v3-panel]:not([data-v3-panel="Story"]) { display: none; }
+}
+
+.story-canvas-return {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-block: 4px 10px;
+}
+
+.annotation-list { padding-inline-start: 0; }
+.annotation-list .project-row {
+  display: grid;
+  gap: .35rem;
+  padding: .65rem .8rem;
+  overflow-wrap: anywhere;
 }

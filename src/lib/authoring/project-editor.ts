@@ -28,6 +28,7 @@ import { validateMermaidProject } from './validate-mermaid-project';
 
 const historyByteLimit = 8 * 1024 * 1024;
 const historyEntryLimit = 50;
+export const orphanCleanupLimit = 500;
 const encoder = new TextEncoder();
 export type StoryDestination = 'append' | 'replace' | 'duplicate';
 export type StorySceneDetails = Pick<StoryScene, 'title' | 'duration' | 'transition' | 'easing' | 'reveal'> & { padding: number };
@@ -121,6 +122,23 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     structure.set(proposal, { base, next: freezeSnapshot(document) });
     return { proposal, added, preserved };
+  }
+
+  function prepareOrphanCleanup(ids: readonly string[], expected: MermaidProjectV3): ReadyProposal {
+    const base = current.document;
+    if (closed || base !== expected) throw new Error('This project changed. Review the current annotations again.');
+    const selection = new Set(ids);
+    const orphans = base.identity.orphans.filter(record => !selection.has(record.id));
+    if (!selection.size || selection.size > orphanCleanupLimit || selection.size !== ids.length
+      || base.identity.orphans.length - orphans.length !== selection.size) {
+      throw new Error(`Choose up to ${orphanCleanupLimit} distinct unresolved annotations from this project.`);
+    }
+    const next = freezeSnapshot(validateMermaidProject({
+      ...base, identity: { ...base.identity, orphans }, revision: base.revision + 1, updatedAt: new Date().toISOString(),
+    }));
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    structure.set(proposal, { base, next });
+    return proposal;
   }
 
   function applyStructure(proposal: ReadyProposal) {
@@ -556,6 +574,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareHeading,
     applyHeading,
     prepareStructure,
+    prepareOrphanCleanup,
     prepareSource,
     readStructurePreview,
     readStructureImpact,

@@ -16,7 +16,8 @@ import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-pr
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import { projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
-import { flowchartSubsetTopology, groupContentsDeletionScopes, supportedGroupMoveTargets, supportedGroupRemovals, supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
+import { flowchartSubsetTopology, groupContentsDeletionScopes, planGroupCreation, supportedGroupMoveTargets, supportedGroupRemovals,
+  supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
@@ -33,18 +34,19 @@ const ComponentProjectDialog = lazy(() => import("./ComponentProjectDialog"));
 const AssistExchangeDialog = lazy(() => import("./AssistExchangeDialog"));
 const SavedScenesDialog = lazy(() => import("./V3SavedScenesDialog"));
 const DesignResetDialog = lazy(() => import("./DesignResetDialog"));
+const OrphanReviewDialog = lazy(() => import("./OrphanReviewDialog"));
+
+type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
+type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
 
 const workspacePanels = ["Build", "Canvas", "Design", "Story"] as const;
+type WorkspacePanel = typeof workspacePanels[number];
 
 function measureCanvas(image: HTMLImageElement | null): ViewingProfile | undefined {
   const bounds = image?.getBoundingClientRect();
   return bounds && bounds.width >= 100 && bounds.height >= 100
     ? { width: Math.floor(bounds.width), height: Math.floor(bounds.height), padding: 0 } : undefined;
 }
-type WorkspacePanel = typeof workspacePanels[number];
-
-type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
-type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
 
 export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   id: string; onBack: () => void; onOpenCopy: (id: string) => void;
@@ -77,6 +79,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [restoredOutline, setRestoredOutline] = useState<OutlineView>();
   const [outlineReturn, setOutlineReturn] = useState<{ source: string; view: OutlineView }>();
+  const [orphanReviewOpen, setOrphanReviewOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [editTarget, setEditTarget] = useState<string>();
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
@@ -276,6 +279,14 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         sourceId: item.sourceId, targetId: item.targetId, direction: item.direction, explicit: ids.has(item.id), text: edgeLabels?.get(item.id) ?? "" }] : []) ?? [];
   }, [identities, targetTable, edgeLabels]);
   const selectedSource = outlineSelection.size === 1 ? nodes.find(node => outlineSelection.has(node.id))?.id : undefined;
+  const canGroupWithinParent = useMemo(() => {
+    if (!source || flatFlowchart || !componentSourceSupported || !outlineSelection.size) return false;
+    const members = identities?.filter(record => outlineSelection.has(record.id) && record.elementKind === "node"
+      && record.status === "resolved").map(record => record.binding.sourceId);
+    if (members?.length !== outlineSelection.size) return false;
+    try { planGroupCreation(source, members, "New group"); return true; }
+    catch { return false; }
+  }, [source, flatFlowchart, componentSourceSupported, identities, outlineSelection]);
   const removableGroup = useMemo(() => {
     const identity = identities?.find(record => record.status === "resolved" && record.elementKind === "group"
       && record.binding.sourceId === ungroupSourceId);
@@ -342,7 +353,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     : !targetTable || !componentSourceSupported ? "Open a rendered flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || savedScenesOpen
+    if (!project || busy || commandsOpen || outlineOpen || orphanReviewOpen || readabilityOpen || comparison || storyOpen || savedScenesOpen
       || editHeading || editFlowchart || editSource || detachOpen || insertOpen || assistOpen
       || bulkTextHidden !== undefined || componentHidden !== undefined) return;
     const openCommands = (event: KeyboardEvent) => {
@@ -353,7 +364,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, outlineOpen, readabilityOpen, comparison, storyOpen, savedScenesOpen, editHeading,
+  }, [project, busy, commandsOpen, outlineOpen, orphanReviewOpen, readabilityOpen, comparison, storyOpen, savedScenesOpen, editHeading,
     editFlowchart, editSource, detachOpen, insertOpen, assistOpen, bulkTextHidden, componentHidden]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
@@ -443,6 +454,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "detach-component", title: "Detach component", category: "Diagram", synonyms: ["component instance"],
       unavailable: busy ? "Wait for the current action to finish." : project?.componentInstances.length ? undefined : "This project has no component instances.",
       run: () => setDetachOpen(true) },
+    { id: "review-orphan-annotations", title: "Review unresolved annotations", category: "Diagram",
+      synonyms: ["retained annotations", "orphan records", "cleanup"],
+      unavailable: project?.identity.orphans.length ? undefined : "This project has no unresolved annotations.",
+      run: () => setOrphanReviewOpen(true) },
     { id: "find-element", title: "Find element", category: "Diagram", synonyms: ["outline", "relationships"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to show its elements.", run: () => openOutline() },
     { id: "check-readability", title: "Check readability", category: "Design", synonyms: ["quality", "label size"],
@@ -540,6 +555,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                 )}
                 <div className="recovery-actions">
                   {outlineAvailable && <button ref={outlineButton} className="button secondary" disabled={busy} onClick={() => openOutline()}>Outline</button>}
+                  {project.identity.orphans.length > 0 && <button className="button secondary" disabled={busy}
+                    onClick={() => setOrphanReviewOpen(true)}>Review unresolved annotations</button>}
                   <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
                   {targetTable && <button className="button secondary" disabled={busy} onClick={() => setEditSource(true)}>Edit Mermaid source</button>}
                   {!!project.componentInstances.length && <button className="button secondary" disabled={busy} onClick={() => setDetachOpen(true)}>Detach component</button>}
@@ -633,11 +650,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setEditFlowchart("moveToGroup");
         }}
         onConnect={!editingUnavailable && selectedSource ? openConnection : undefined}
-        onGroup={!editingUnavailable ? hidden => {
+        onGroup={!busy && (!editingUnavailable || canGroupWithinParent) ? hidden => {
           setGroupMembers({ ids: [...outlineSelection], hidden });
           setEditFlowchart("addGroup");
         } : undefined}
-        onDesign={flatFlowchart ? hidden => {
+        onDesign={componentSourceSupported ? hidden => {
           setComparisonSelection({ ids: [...outlineSelection], hidden });
           setOutlineOpen(false);
           setComparison("design");
@@ -697,6 +714,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return status;
         }} />}
       {comparison && currentFrame && editor.current && <V3ComparisonDialog mode={comparison} allowDirection={flatFlowchart}
+        allowScopedDesign={componentSourceSupported}
         editor={editor.current} currentUrl={currentFrame.url}
         currentSize={currentFrame.geometry} selection={comparisonSelection} selectedRoleCounts={selectedRoleCounts} onClose={() => {
           setComparisonSelection(undefined);
@@ -770,6 +788,18 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           }
           return result.status;
         }} />}
+      {orphanReviewOpen && project && editor.current && <Suspense fallback={null}>
+        <OrphanReviewDialog editor={editor.current} project={project} onClose={() => setOrphanReviewOpen(false)}
+          onApply={proposal => {
+            const current = editor.current!;
+            const result = current.applyStructure(proposal);
+            if (result.status === "applied") {
+              setOrphanReviewOpen(false);
+              setProject(current.snapshot());
+            }
+            return result.status;
+          }} />
+      </Suspense>}
       {editFlowchart && editor.current && (
         <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={structureGroup} movableNodes={movableNodes}
           canUngroup={!!structureGroup && ungroupableGroups.has(structureGroup.id)}

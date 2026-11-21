@@ -2,7 +2,7 @@ import type { StudioSettings } from '../../types';
 import type { ElementCapability, ElementStyle } from '../../types/design';
 import type { MermaidProjectV3, SemanticRole } from './mermaid-project';
 import { verifiedTopology, type renderMermaidProject } from './project-render';
-import { flowchartSubsetTopology } from './source-patches';
+import { groupedFlowchartTopology } from './source-patches';
 import { validateMermaidProject } from './validate-mermaid-project';
 
 type PaintField = 'fill' | 'color' | 'stroke';
@@ -69,9 +69,9 @@ export function buildDesignRecipeCandidate(base: MermaidProjectV3, id: DesignRec
   return { recipe, document, changes, scope: undefined, proof: [] as PaintProof[] };
 }
 
-/** Scope appearance to measured flat nodes and clear only explicitly reviewed paint overrides. */
+/** Scope appearance to measured nodes and clear only explicitly reviewed paint overrides. */
 export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipeId, intent: ScopedDesign, frame: Frame) {
-  flowchartSubsetTopology(base.source);
+  groupedFlowchartTopology(base.source);
   if (!frame.targetTable) throw new Error('Open a verified flowchart before styling a selection.');
   const recipe = readDesignRecipe(id);
   const selected = new Set(intent.kind === 'role'

@@ -322,3 +322,83 @@ test('recovers an oversized typed dataset by explicitly excluding a column befor
   expect(dataset.fields.map((field: { name: string }) => field.name)).toEqual(['Category', 'Value']);
   expect(dataset.rows.map((row: { cells: string[] }) => row.cells)).toEqual(rows.map(() => ['All', '1']));
 });
+
+test('round-trips exact chart data, series, transforms and domains through a fresh workspace', async ({ page, browser }) => {
+  const base = JSON.parse(await readFile(new URL('../../src/lib/authoring/fixtures/example-chart.json', import.meta.url), 'utf8'));
+  const day = '66666666-6666-4666-8666-666666666666';
+  const value = '77777777-7777-4777-8777-777777777777';
+  const series = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const include = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const fixture = {
+    ...base,
+    title: 'Exact weekly measures',
+    dataset: {
+      version: 1,
+      fields: [
+        { id: day, name: 'Day', type: 'date', unit: '' },
+        { id: value, name: 'Measure', type: 'number', unit: 'seconds' },
+        { id: series, name: 'Region', type: 'string', unit: '' },
+        { id: include, name: 'Reviewed', type: 'boolean', unit: '' },
+      ],
+      rows: [
+        ['2026-11-03', '0.25', 'Öst', true], ['2026-11-01', '0.1', 'Öst', true],
+        ['2026-11-01', '0.2', 'Öst', true], ['2026-11-02', null, 'Öst', true],
+        ['2026-11-02', '0.001', 'West', true], ['2026-11-03', '0.09', 'West', false],
+      ].map((cells, index) => ({ id: `12222222-2222-4222-8222-22222222222${index}`, cells })),
+    },
+    chartSpec: {
+      ...base.chartSpec, mark: 'line', xField: day, yField: value, seriesField: series,
+      aggregation: 'mean', missing: 'gap', duplicateX: 'aggregate', ordering: 'ascending',
+      xDomain: ['2026-11-01', '2026-11-03'], yDomain: ['0', '0.2'],
+      filters: [{ fieldId: include, operator: 'eq', value: true }],
+      description: 'Daily measurements by region. Reviewed rows are plotted.',
+    },
+  };
+  const openImport = async (at: Page) => {
+    await at.goto('/');
+    await at.getByRole('button', { name: 'Build with guidance' }).click();
+    await at.getByRole('button', { name: 'Chart values' }).click();
+    return at.getByRole('dialog', { name: 'Chart values' });
+  };
+  const importProject = async (chart: Locator, body: string) => {
+    await chart.getByLabel('Import a Meridian chart project').setInputFiles({
+      name: 'weekly.meridian.json', mimeType: 'application/json', buffer: Buffer.from(body),
+    });
+    await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
+  };
+  const chart = await openImport(page);
+  await importProject(chart, JSON.stringify(fixture));
+  const exportProject = (at: Page, dialog: Locator) =>
+    download(at, dialog.getByRole('button', { name: 'Download chart project' }));
+  const firstBytes = await exportProject(page, chart);
+  const original = JSON.parse(firstBytes);
+  expect(original).toEqual({ ...fixture, id: original.id, revision: 0, updatedAt: original.updatedAt });
+  const table = chart.getByRole('table', { name: 'Displayed values' });
+  await expect(table.getByRole('row', { name: '2026-11-01 0.15 Öst 2 2 Included' })).toBeVisible();
+  await expect(table.getByRole('row', { name: '2026-11-03 0.25 Öst 1 1 Outside range' })).toBeVisible();
+
+  const context = await browser.newContext({ baseURL: new URL(page.url()).origin, acceptDownloads: true });
+  try {
+    const fresh = await context.newPage();
+    const imported = await openImport(fresh);
+    await importProject(imported, firstBytes);
+    const copy = JSON.parse(await exportProject(fresh, imported));
+    expect(copy.id).not.toBe(original.id);
+    expect(authoredBytes(copy)).toBe(authoredBytes(original));
+    await fresh.reload();
+    await fresh.getByRole('button', { name: 'Manage projects' }).click();
+    await fresh.getByRole('button', { name: 'Chart projects' }).click();
+    const library = fresh.getByRole('dialog', { name: 'Chart projects' });
+    await library.getByRole('button', { name: fixture.title, exact: true }).click();
+    await expect(library.getByText('Chart saved in this browser.')).toBeVisible();
+    expect(JSON.parse(await exportProject(fresh, library))).toEqual(copy);
+    expect(await exportProject(page, chart)).toBe(firstBytes);
+  } finally {
+    await context.close();
+  }
+
+  function authoredBytes(project: typeof base) {
+    const { id, revision, updatedAt, ...authored } = project;
+    return JSON.stringify(authored);
+  }
+});
