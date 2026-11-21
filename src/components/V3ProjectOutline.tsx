@@ -4,6 +4,7 @@ import { bulkConnectionLimit } from "../lib/authoring/project-flowchart";
 import Modal from "./Modal";
 
 const pageSize = 80;
+const selectionLimit = 200;
 type OutlineRow = { item: ProjectOutlineItem; depth: number; branch: boolean; expanded: boolean };
 
 function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolean, query: string, collapsed: ReadonlySet<string>): OutlineRow[] {
@@ -41,7 +42,8 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
   return rows;
 }
 
-export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onBulkText, onDesign, onResetDesign, onSaveComponent,
+export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onConnect, onBulkText,
+  onDesign, onResetDesign, onSaveComponent,
   onDeleteConnections, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
@@ -49,6 +51,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   canRename: boolean;
   onRename: (id: string) => void;
   onSource: (location: OutlineSourceLocation) => void;
+  onConnect?: () => void;
   onBulkText: (hidden: number) => void;
   onDesign?: (hidden: number) => void;
   onResetDesign?: (hidden: number) => void;
@@ -62,6 +65,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   const [limit, setLimit] = useState(pageSize);
   const [activeId, setActiveId] = useState<string>();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [checkboxSelection, setCheckboxSelection] = useState(false);
+  const [refusedCount, setRefusedCount] = useState<number>();
   const list = useRef<HTMLUListElement>(null);
   const needle = query.trim().toLowerCase();
   const rows = useMemo(() => outlineRows(items, relationships, needle, collapsed), [items, relationships, needle, collapsed]);
@@ -81,12 +86,19 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
 
   function select(itemId: string, toggle = false) {
     setActiveId(itemId);
-    onSelection(current => {
-      const next = new Set(toggle ? current : []);
-      if (toggle && next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
-      return next;
-    });
+    const next = new Set(toggle ? selected : []);
+    if (toggle && next.has(itemId)) next.delete(itemId);
+    else next.add(itemId);
+    updateSelection(next);
+  }
+
+  function updateSelection(next: ReadonlySet<string>) {
+    if (next.size > selectionLimit) {
+      setRefusedCount(next.size);
+      return;
+    }
+    setRefusedCount(undefined);
+    onSelection(next);
   }
 
   function setExpanded(itemId: string, expanded: boolean) {
@@ -136,18 +148,27 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
       <div className="heading-form project-outline">
         <label>Find an element<input name="outline-search" value={query} maxLength={160}
           onChange={event => { setQuery(event.target.value); setLimit(pageSize); setActiveId(undefined); }}
-          onKeyDown={event => { if (event.key === "ArrowDown" && visible.length) { event.preventDefault(); list.current?.focus(); } }} /></label>
+          onKeyDown={event => {
+            if (event.key !== "ArrowDown" || !visible.length) return;
+            event.preventDefault();
+            if (checkboxSelection) list.current?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.focus();
+            else list.current?.focus();
+          }} /></label>
         <div className="recovery-actions" role="group" aria-label="Outline views">
           <button type="button" className="button secondary" aria-pressed={!relationships} onClick={() => setTab(false)}>Nodes and groups</button>
           <button type="button" className="button secondary" aria-pressed={relationships} onClick={() => setTab(true)}>Relationships</button>
         </div>
         <p role="status">{selected.size} selected · {hidden} hidden</p>
+        {refusedCount !== undefined && <p role="alert">That action would select {refusedCount} elements. The limit is {selectionLimit}. {selected.size} are selected.</p>}
         <div className="recovery-actions" role="group" aria-label="Outline selection">
+          <button type="button" className="button secondary" aria-pressed={checkboxSelection}
+            onClick={() => setCheckboxSelection(current => !current)}>Select multiple</button>
+          {onConnect && <button type="button" className="button secondary" onClick={onConnect}>Connect from selected node</button>}
           <button type="button" className="button quiet" disabled={!visible.length}
-            onClick={() => onSelection(current => new Set([...current, ...visible.map(row => row.item.id)]))}>Select visible results</button>
+            onClick={() => updateSelection(new Set([...selected, ...visible.map(row => row.item.id)]))}>Select visible results</button>
           <button type="button" className="button quiet" disabled={!items.length}
-            onClick={() => onSelection(new Set(items.map(item => item.id)))}>Select all diagram elements</button>
-          <button type="button" className="button quiet" disabled={!selected.size} onClick={() => onSelection(new Set())}>Clear selection</button>
+            onClick={() => updateSelection(new Set(items.map(item => item.id)))}>Select all diagram elements</button>
+          <button type="button" className="button quiet" disabled={!selected.size} onClick={() => updateSelection(new Set())}>Clear selection</button>
           <button type="button" className="button secondary" disabled={!selected.size} onClick={() => onBulkText(hidden)}>Change selected text color</button>
           {onDesign && <button type="button" className="button secondary" disabled={!selected.size}
             onClick={() => onDesign(hidden)}>Explore designs for selection</button>}
@@ -160,19 +181,31 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
         </div>
         {onDeleteConnections && relationships && selected.size > 0 && !canDeleteConnections
           && <p>Choose up to {bulkConnectionLimit} connections with verified source IDs to delete together.</p>}
-        <ul ref={list} role={relationships ? "listbox" : "tree"} aria-label={relationships ? "Relationships" : "Diagram elements"}
-          aria-activedescendant={active && `${id}-${active.item.id}`} aria-multiselectable="true" tabIndex={visible.length ? 0 : -1} onKeyDown={keyboard}>
-          {visible.map(({ item, depth, branch, expanded }) => (
-            <li id={`${id}-${item.id}`} key={item.id} role={relationships ? "option" : "treeitem"}
-              aria-selected={selected.has(item.id)} aria-level={relationships ? undefined : depth} aria-expanded={branch ? expanded : undefined}
-              data-current={active?.item.id === item.id ? "true" : undefined} style={{ paddingInlineStart: `${8 + Math.min(depth - 1, 12) * 13}px` }}
-              onClick={event => { list.current?.focus(); select(item.id, event.shiftKey || event.ctrlKey || event.metaKey); }}>
+        <ul ref={list} role={checkboxSelection ? "list" : relationships ? "listbox" : "tree"}
+          aria-label={relationships ? "Relationships" : "Diagram elements"}
+          aria-activedescendant={!checkboxSelection && active ? `${id}-${active.item.id}` : undefined}
+          aria-multiselectable={checkboxSelection ? undefined : true} tabIndex={!checkboxSelection && visible.length ? 0 : undefined}
+          onKeyDown={checkboxSelection ? undefined : keyboard}>
+          {visible.map(({ item, depth, branch, expanded }) => {
+            const checked = selected.has(item.id);
+            const content = <>
               <strong>{item.kind === "edge" ? item.endpoints || "Relationship" : item.label || item.sourceId || "Unnamed element"}</strong>
               <small>{item.kind === "edge" ? item.label && item.label !== item.endpoints ? item.label : "Relationship"
                 : `${item.kind}${item.role ? ` · ${item.role}` : ""} · ${item.connections} ${item.connections === 1 ? "connection" : "connections"}`}
                 {item.sourceId && ` · ${item.sourceId}`}{item.source && ` · Line ${item.source.line}`}</small>
-            </li>
-          ))}
+            </>;
+            return <li id={`${id}-${item.id}`} key={item.id} role={checkboxSelection ? undefined : relationships ? "option" : "treeitem"}
+              aria-selected={checkboxSelection ? undefined : checked} aria-level={checkboxSelection || relationships ? undefined : depth}
+              aria-expanded={!checkboxSelection && branch ? expanded : undefined}
+              data-current={active?.item.id === item.id ? "true" : undefined} data-checked={checkboxSelection && checked ? "true" : undefined}
+              style={{ paddingInlineStart: `${8 + Math.min(depth - 1, 12) * 13}px` }}
+              onClick={checkboxSelection ? undefined : event => { list.current?.focus(); select(item.id, event.shiftKey || event.ctrlKey || event.metaKey); }}>
+              {checkboxSelection ? <label className="outline-row-checkbox">
+                <input type="checkbox" checked={checked} onFocus={() => setActiveId(item.id)} onChange={() => select(item.id, true)} />
+                <span>{content}</span>
+              </label> : content}
+            </li>;
+          })}
         </ul>
         {!visible.length && <p>{needle ? "No matching elements in this view." : "There are no elements in this view."}</p>}
         {visible.length < rows.length && <button className="button quiet" onClick={() => setLimit(current => current + pageSize)}>Show more</button>}
