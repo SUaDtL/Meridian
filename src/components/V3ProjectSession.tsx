@@ -69,6 +69,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [storyDraft, setStoryDraft] = useState(initialGroupStoryDraft);
   const [canvasProfile, setCanvasProfile] = useState<ViewingProfile>();
   const previewImage = useRef<HTMLImageElement>(null);
+  const suggestScenesButton = useRef<HTMLButtonElement>(null);
   const sourceDetails = useRef<HTMLDetailsElement>(null);
   const sourceMark = useRef<HTMLElement>(null);
   const [outcome, setOutcome] = useState<ProposalOutcome>();
@@ -367,7 +368,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               {!!targetTable?.targets.length && <button className="button secondary" disabled={busy} onClick={openReadability}>Check readability</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("design")}>Explore designs</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
-              {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
+              {outlineAvailable && <button ref={suggestScenesButton} className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
               {outlineAvailable && !!project.storyboard.scenes.length && <button className="button secondary"
                 disabled={busy} onClick={() => setSavedScenesOpen(true)}>Edit saved scenes</button>}
               <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
@@ -477,8 +478,16 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           }
           return status;
         }} />}
-      {savedScenesOpen && editor.current && !!project?.storyboard.scenes.length && <Suspense>
-        <SavedScenesDialog editor={editor.current} onClose={() => setSavedScenesOpen(false)} onApply={proposal => {
+      {savedScenesOpen && editor.current && <Suspense>
+        <SavedScenesDialog editor={editor.current} onClose={() => {
+          setSavedScenesOpen(false);
+          if (!editor.current?.snapshot().storyboard.scenes.length) requestAnimationFrame(() => suggestScenesButton.current?.focus());
+        }} onOrderChange={(...args) => {
+          const current = editor.current!;
+          const status = current.editStorySceneOrder(...args);
+          if (status === "applied") setProject(current.snapshot());
+          return status;
+        }} onApply={proposal => {
           const current = editor.current!;
           const status = current.applyStory(proposal);
           if (status === "applied") setProject(current.snapshot());

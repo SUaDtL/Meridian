@@ -150,6 +150,73 @@ test('follows explicitly chosen connections to a loop and keeps unrelated group 
   });
 });
 
+test('moves saved scenes by keyboard, reviews deletion, and restores the exact scenes with Undo', async ({ page, browser }) => {
+  const source = 'flowchart LR\n A[Start]\n B[Finish]\n A route@--> B\n';
+  const scenes = [{ ...createScene(), title: 'First scene' }, { ...createScene(), title: 'Second scene' }];
+  const project = { ...createDocument(), title: 'Saved scene order', source, storyboard: { version: 1 as const, scenes, loop: true } };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Saved scene order' }).click();
+  const live = page.getByRole('dialog', { name: 'Saved scene order' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Saved scene order' })).toBeVisible();
+  const original = JSON.parse(await download(page, live, 'Download v3 project'));
+  const edit = live.getByRole('button', { name: 'Edit saved scenes' });
+  const dialog = page.getByRole('dialog', { name: 'Edit saved scenes' });
+  const dismiss = () => dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await edit.click();
+  await expect(dialog.getByRole('button', { name: 'Move earlier' })).toBeDisabled();
+  await dialog.getByRole('button', { name: /^2\. Second scene/ }).click();
+  await dialog.getByRole('textbox', { name: 'Scene title' }).fill('Unapplied title');
+  await dialog.getByRole('button', { name: 'Move earlier' }).press('Enter');
+  await expect(dialog.getByRole('status')).toHaveText('Scene moved to position 1 of 2.');
+  await expect(dialog.getByRole('button', { name: /^1\. Second scene/ })).toBeFocused();
+  await expect(dialog.getByRole('textbox', { name: 'Scene title' })).toHaveValue('Unapplied title');
+  await dismiss();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const ordered = JSON.parse(await download(page, live, 'Download v3 project'));
+  expect(ordered).toEqual({ ...original, revision: original.revision + 1, updatedAt: ordered.updatedAt,
+    storyboard: { ...original.storyboard, scenes: [...original.storyboard.scenes].reverse() } });
+  const html = await download(page, live, 'Download HTML presentation');
+  const context = await browser.newContext({ offline: true, reducedMotion: 'reduce' });
+  try {
+    const offline = await context.newPage();
+    await offline.setContent(html);
+    await expect(offline.getByLabel('Choose scene', { exact: true }).getByRole('option')).toHaveText(['1. Second scene', '2. First scene']);
+  } finally { await context.close(); }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await edit.click();
+  const remove = dialog.getByRole('button', { name: 'Delete scene', exact: true });
+  const confirm = dialog.getByRole('button', { name: 'Delete selected scene' });
+  await remove.click();
+  await expect(dialog.getByText('Delete “Second scene” from this storyboard?')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Keep scene' })).toBeFocused();
+  await dialog.getByRole('button', { name: 'Keep scene' }).click();
+  await expect(dialog.getByRole('button', { name: /^1\. Second scene/ })).toBeFocused();
+  await remove.click();
+  await confirm.click();
+  await expect(dialog.getByRole('button', { name: /^1\. First scene/ })).toBeFocused();
+  await remove.click();
+  await confirm.click();
+  await expect(dialog.getByText('No saved scenes.')).toBeFocused();
+  await dismiss();
+  await expect(live.getByRole('button', { name: 'Suggest scenes' })).toBeFocused();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  expect(JSON.parse(await download(page, live, 'Download v3 project')).storyboard.scenes).toEqual([]);
+  const undo = live.getByRole('button', { name: 'Undo', exact: true });
+  await undo.click();
+  await undo.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  expect(JSON.parse(await download(page, live, 'Download v3 project')).storyboard).toEqual(ordered.storyboard);
+  await undo.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  expect(JSON.parse(await download(page, live, 'Download v3 project')).storyboard).toEqual(original.storyboard);
+});
+
 test('resumes a local path draft after reload and reviews it against the newer project revision', async ({ page }) => {
   const source = 'flowchart LR\nA[Start]\nB[Review]\nC[Archive]\nA review@-->|"Send"| B\nB archive@--> C\n';
   const project = { ...createDocument(), title: 'Story draft example', source };

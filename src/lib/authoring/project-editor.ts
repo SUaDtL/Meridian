@@ -28,6 +28,7 @@ const historyEntryLimit = 50;
 const encoder = new TextEncoder();
 export type StoryDestination = 'append' | 'replace' | 'duplicate';
 export type StorySceneDetails = Pick<StoryScene, 'title' | 'duration' | 'transition' | 'easing' | 'reveal'> & { padding: number };
+export type StorySceneOrderEdit = 'earlier' | 'later' | 'remove';
 
 function freezeSnapshot<Value>(value: Value): Value {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -439,6 +440,22 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return change.base === current.document ? commit(change.next) : 'stale';
   }
 
+  function editStorySceneOrder(sceneId: string, action: StorySceneOrderEdit, base: MermaidProjectV3) {
+    if (closed) return 'invalid';
+    if (base !== current.document) return 'stale';
+    const scenes = [...base.storyboard.scenes];
+    const index = scenes.findIndex(scene => scene.id === sceneId);
+    if (index < 0) return 'invalid';
+    if (action === 'remove') scenes.splice(index, 1);
+    else {
+      const destination = index + (action === 'earlier' ? -1 : 1);
+      if (destination < 0 || destination >= scenes.length) return 'invalid';
+      [scenes[destination], scenes[index]] = [scenes[index], scenes[destination]];
+    }
+    return commit(freezeSnapshot(validateMermaidProject({ ...base, revision: base.revision + 1, updatedAt: new Date().toISOString(),
+      storyboard: { ...base.storyboard, scenes } })));
+  }
+
   async function saveStoryCopy(proposal: ReadyProposal) {
     const change = stories.get(proposal);
     if (closed || !change || change.destination !== 'duplicate' || change.savingCopy || change.base !== current.document) {
@@ -521,6 +538,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     readStoryPreview,
     prepareStoryScene,
     applyStory,
+    editStorySceneOrder,
     saveStoryCopy,
     undo: () => restore(past, future),
     redo: () => restore(future, past),
