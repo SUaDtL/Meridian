@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Modal from "./Modal";
+import GuidedAttachmentPicker, { emptyGuidedAttachment, GuidedAttachmentSummary, readyGuidedAttachment,
+  type GuidedAttachmentTarget } from "./GuidedAttachmentPicker";
+import type { GuidedAttachment } from "../lib/authoring/guided-systems-insertion";
+import type { ReadyProposal } from "../lib/authoring/proposals";
 import { AuthoringWorkerTimeout } from "../lib/authoring/authoring-worker";
 import { tableInputLimits, type DelimitedRow, type TableDelimiter } from "../lib/authoring/delimited-input";
 import { prepareGuidedFlowchart } from "../lib/authoring/guided-flowchart";
@@ -26,16 +30,25 @@ export type RelationshipTableDraft = {
   checkpoint?: RelationshipCheckpoint;
   recovered?: ReturnType<typeof normalizedRelationshipDraft>;
 };
-type Review = { document: Awaited<ReturnType<typeof prepareGuidedFlowchart>>["document"]; url: string; graph: RelationshipGraph };
-
-export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreated, onProcess, onSystems, onClose }: {
+type PreparedTable = Pick<Awaited<ReturnType<typeof prepareGuidedFlowchart>>, "document" | "rendered">;
+type Review = Pick<PreparedTable, "document"> & { url: string; graph: RelationshipGraph; proposal?: ReadyProposal };
+type ExistingTarget = GuidedAttachmentTarget & {
+  title: string;
+  prepare: (graph: RelationshipGraph, attachment: GuidedAttachment | undefined,
+    signal: AbortSignal) => Promise<PreparedTable & { proposal: ReadyProposal }>;
+  apply: (proposal: ReadyProposal, signal: AbortSignal) => Promise<"applied" | "stale">;
+  onCompleted: (draftRetained: boolean) => void;
+};
+type Props = {
   draft: RelationshipTableDraft;
   onDraft: Dispatch<SetStateAction<RelationshipTableDraft>>;
-  onCreated: (id: string, draftRetained?: boolean) => void;
-  onProcess: () => void;
-  onSystems: () => void;
   onClose: () => void;
-}) {
+} & (
+  | { target?: never; onCreated: (id: string, draftRetained?: boolean) => void; onProcess: () => void; onSystems: () => void }
+  | { target: ExistingTarget; onCreated?: never; onProcess?: never; onSystems?: never }
+);
+
+export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreated, onProcess, onSystems, onClose, target }: Props) {
   const [busy, setBusy] = useState<"file" | "read" | "checkpoint" | "preview" | "save" | "discard">();
   const [retry, setRetry] = useState<"once" | "narrow">();
   const [inputVisible, setInputVisible] = useState(!draft.rows && !draft.recovered);
@@ -49,10 +62,12 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
   const stageHeading = useRef<HTMLHeadingElement>(null);
   const reviewing = !!review;
   const recovered = draft.recovered;
+  const reviewMapped = !!recovered;
   const columns = draft.columns ?? emptyColumns;
+  const draftNodes = recovered?.graph.nodes.map(node => ({ id: node.key, label: `${node.label} (row ${node.sourceRow})` })) ?? [];
   useEffect(() => () => { currentWork.current?.abort(); }, []);
   useEffect(() => () => { if (review) URL.revokeObjectURL(review.url); }, [review]);
-  useEffect(() => { if (!inputVisible) stageHeading.current?.focus(); }, [inputVisible, reviewing]);
+  useEffect(() => { if (!inputVisible) stageHeading.current?.focus(); }, [inputVisible, reviewing, reviewMapped]);
   useEffect(() => {
     let closed = false;
     void withDatabase(listRelationshipCheckpoints).then(records => { if (!closed) setSavedDrafts(records); }).catch(() => {
@@ -62,6 +77,7 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
   }, []);
 
   function editInput(update: Partial<RelationshipTableDraft>) {
+    target?.onAttachment(emptyGuidedAttachment);
     setError("");
     setRetry(undefined);
     onDraft(current => ({ ...current, ...update, rows: undefined, columns: undefined, recovered: undefined }));
@@ -134,25 +150,45 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
         setDraftError(reason instanceof Error ? reason.message : "The table draft could not be saved.");
         setRecoveryExport(makeRelationshipCheckpoint(draft.title, graph, mapped.columns, draft.checkpoint?.id ?? crypto.randomUUID(), Date.now()));
       }
+      if (target) {
+        onDraft(current => ({ ...current, recovered: mapped }));
+        return;
+      }
       setBusy("preview");
     }
-    const { document, rendered } = await prepareGuidedFlowchart(draft.title.trim() || "Untitled systems diagram", { ...graph, direction: "LR" }, signal);
+    const prepared: PreparedTable & { proposal?: ReadyProposal } = target
+      ? await target.prepare(graph, readyGuidedAttachment(target.attachment), signal)
+      : await prepareGuidedFlowchart(draft.title.trim() || "Untitled systems diagram", { ...graph, direction: "LR" }, signal);
+    const { document, rendered, proposal } = prepared;
     signal.throwIfAborted();
     const svg = buildExportFrame(rendered, document).svg;
     setPainted(false);
-    setReview({ document, graph, url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) });
+    setReview({ document, graph, proposal, url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) });
   }
 
-  async function create() {
+  async function create(signal: AbortSignal) {
     if (!review || !painted) return;
+    if (target) {
+      if (!review.proposal) throw new Error("Preview the current insertion first.");
+      if (await target.apply(review.proposal, signal) === "stale") {
+        setReview(undefined);
+        throw new Error("The saved project changed. Your mapping and attachment are still in this draft. Preview against the current project.");
+      }
+      const checkpoint = draft.checkpoint;
+      const draftRetained = !!checkpoint &&
+        await withDatabase(db => discardGuidedCheckpoint(db, checkpoint)).then(() => false, () => true);
+      target.onCompleted(draftRetained);
+      return;
+    }
     const draftRetained = await withDatabase(async db => {
       await writeWorkspaceProject(db, review.document, null);
       return draft.checkpoint ? discardGuidedCheckpoint(db, draft.checkpoint).then(() => false, () => true) : false;
     });
-    onCreated(review.document.id, draftRetained);
+    onCreated?.(review.document.id, draftRetained);
   }
 
   function resume(saved: RelationshipCheckpoint) {
+    target?.onAttachment(emptyGuidedAttachment);
     setError("");
     setDraftError("");
     setRecoveryExport(undefined);
@@ -173,10 +209,13 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
     return run("preview", signal => prepare(signal, extended), extended);
   }
   return (
-    <Modal title="Systems and relationships" wide initialFocus="[name='table-title']" busy={busy === "checkpoint" || busy === "save" || busy === "discard"} onClose={onClose}>
+    <Modal title={target ? "Insert relationship table" : "Systems and relationships"} wide
+      initialFocus={target ? "[name='relationship-table']" : "[name='table-title']"} busy={busy === "checkpoint" || busy === "save" || busy === "discard"} onClose={onClose}>
       {inputVisible && <div className="heading-form">
-        <button type="button" className="button quiet" disabled={!!busy} onClick={onProcess}>Process steps</button>
-        <button type="button" className="button secondary" disabled={!!busy} onClick={onSystems}>Enter systems manually</button>
+        {!target && <>
+          <button type="button" className="button quiet" disabled={!!busy} onClick={onProcess}>Process steps</button>
+          <button type="button" className="button secondary" disabled={!!busy} onClick={onSystems}>Enter systems manually</button>
+        </>}
         {!!savedDrafts.length && <ul className="project-list">{savedDrafts.map(saved => (
           <li className="project-row" key={saved.id}>
             <button type="button" className="project-open" disabled={!!busy} onClick={() => resume(saved)}>
@@ -187,11 +226,12 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
               onClick={() => void run("discard", () => discard(saved))}>Discard draft</button>
           </li>
         ))}</ul>}
-        <label>Project title<input name="table-title" value={draft.title} maxLength={120} disabled={!!busy}
-          onChange={event => onDraft(current => ({ ...current, title: event.target.value }))} /></label>
+        {target ? <p>Destination <strong>{target.title}</strong></p>
+          : <label>Project title<input name="table-title" value={draft.title} maxLength={120} disabled={!!busy}
+            onChange={event => onDraft(current => ({ ...current, title: event.target.value }))} /></label>}
         <label>Choose a CSV or TSV file<input type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" disabled={!!busy}
           onChange={event => { const file = event.target.files?.[0]; if (file) void readFile(file); }} /></label>
-        <label>Paste a relationship table<textarea rows={8} value={draft.text} readOnly={!!busy}
+        <label>Paste a relationship table<textarea name="relationship-table" rows={8} value={draft.text} readOnly={!!busy}
           onChange={event => editInput({ text: event.target.value })} /></label>
         <label>Delimiter<select value={draft.delimiter} disabled={!!busy}
           onChange={event => editInput({ delimiter: event.target.value === "\t" ? "\t" : "," })}>
@@ -204,13 +244,19 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
         </div>
       </div>}
       {!inputVisible && !review && recovered && <div>
-        <h3 ref={stageHeading} tabIndex={-1}>Resume mapped systems</h3>
+        <h3 ref={stageHeading} tabIndex={-1}>{target ? "Review mapped systems" : "Resume mapped systems"}</h3>
         <p>{recovered.graph.nodes.length} systems · {recovered.graph.edges.length} relationships</p>
         <ul>{(Object.keys(names) as Column[]).map(key => {
           const column = recovered.columns[key];
           return <li key={key}>{names[key]} {column === null ? "was left unmapped" : `uses column ${column + 1}`}</li>;
         })}</ul>
+        {target && <GuidedAttachmentPicker target={target} draftNodes={draftNodes} disabled={!!busy} />}
         <div className="dialog-actions">
+          {target && draft.rows && <button type="button" className="button quiet" disabled={!!busy} onClick={() => {
+            target.onAttachment(emptyGuidedAttachment);
+            setError("");
+            onDraft(current => ({ ...current, recovered: undefined }));
+          }}>Back to mapping</button>}
           <button type="button" className="button quiet" disabled={!!busy} onClick={() => setInputVisible(true)}>Back to table input</button>
           <button type="button" className="button primary" disabled={!!busy} onClick={() => void preview()}>Preview relationships</button>
         </div>
@@ -238,26 +284,28 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
         <div className="dialog-actions">
           <button type="button" className="button quiet" disabled={!!busy} onClick={() => { setError(""); setInputVisible(true); }}>Back to table input</button>
           <button type="button" className="button primary" disabled={!!busy || columns.label === null || retry === "narrow"}
-            onClick={() => void preview()}>{retry === "once" ? "Retry for five seconds" : "Preview relationships"}</button>
+            onClick={() => void preview()}>{retry === "once" ? "Retry for five seconds"
+              : target ? "Review mapped relationships" : "Preview relationships"}</button>
         </div>
       </div>}
       {review && <div className="migration-preview">
         <h3 ref={stageHeading} tabIndex={-1}>Review your systems diagram</h3>
-        <p>{review.graph.nodes.length} systems · {review.graph.edges.length} relationships · New project</p>
+        <p>{review.graph.nodes.length} systems · {review.graph.edges.length} relationships · {target ? target.title : "New project"}</p>
         <ul aria-label="Reviewed relationships">{review.graph.edges.map((edge, index) => {
           const from = review.graph.nodes.find(node => node.key === edge.from)!;
           const to = review.graph.nodes.find(node => node.key === edge.to)!;
           return <li key={index}>{from.label} (row {from.sourceRow}) → {to.label} (row {to.sourceRow})</li>;
         })}</ul>
+        {target && <GuidedAttachmentSummary target={target} draftNodes={draftNodes} />}
         <img src={review.url} alt="Proposed systems diagram" onLoad={() => setPainted(true)} onError={() => setError("The preview image could not be displayed.")} />
         <div className="dialog-actions">
-          <button type="button" className="button quiet" disabled={!!busy} onClick={() => setReview(undefined)}>Back to mapping</button>
-          <button type="button" className="button primary" disabled={!painted || !!busy} onClick={() => void run("save", create)}>Create systems diagram</button>
+          <button type="button" className="button quiet" disabled={!!busy} onClick={() => setReview(undefined)}>{target ? "Back to mapped systems" : "Back to mapping"}</button>
+          <button type="button" className="button primary" disabled={!painted || !!busy} onClick={() => void run("save", create)}>{target ? "Insert mapped systems" : "Create systems diagram"}</button>
         </div>
       </div>}
       <p role="status">{busy === "file" ? "Reading your file…" : busy === "read" ? "Reading table rows…"
         : busy === "checkpoint" ? "Saving the mapped draft…"
-        : busy === "preview" ? "Checking and rendering the diagram…" : busy === "save" ? "Saving the new project…"
+        : busy === "preview" ? "Checking and rendering the diagram…" : busy === "save" ? (target ? "Saving the insertion…" : "Saving the new project…")
           : !draftError && (review || draft.recovered) && draft.checkpoint ? `Draft saved locally · expires ${formatTime(draft.checkpoint.expiresAt)}`
           : "Raw table inputs stay in this session."}</p>
       {draftError && <p role="alert">Session-only draft. {draftError}</p>}

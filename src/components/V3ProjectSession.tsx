@@ -24,6 +24,8 @@ import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
 import type { GuidedAttachment } from "../lib/authoring/guided-systems-insertion";
 import { emptyGuidedAttachment } from "./GuidedAttachmentPicker";
 import type { GuidedProcessDraft } from "./GuidedProcessDialog";
+import type { RelationshipTableDraft } from "./GuidedRelationshipTableDialog";
+import type { RelationshipGraph } from "../lib/authoring/relationship-table";
 import type { ProcessStep } from "../lib/authoring/process-steps";
 import type { ProcessConnections } from "../lib/authoring/process-connections";
 import type { SystemsDraft } from "../lib/authoring/systems-draft";
@@ -47,11 +49,13 @@ const V3SourceEditor = lazy(() => import("./V3SourceEditor"));
 const ExportDialog = lazy(() => import("./ExportDialog"));
 const GuidedSystemsDialog = lazy(() => import("./GuidedSystemsDialog"));
 const GuidedProcessDialog = lazy(() => import("./GuidedProcessDialog"));
+const GuidedRelationshipTableDialog = lazy(() => import("./GuidedRelationshipTableDialog"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: Omit<ExportFrame, "svg">; url: string };
 
 const emptyGuidedProcess: GuidedProcessDraft = { title: "Process draft", text: "" };
+const emptyGuidedTable: RelationshipTableDraft = { title: "Relationship table draft", text: "", delimiter: ",", header: true };
 
 const workspacePanels = ["Build", "Canvas", "Design", "Story"] as const;
 type WorkspacePanel = typeof workspacePanels[number];
@@ -81,11 +85,13 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [assistOpen, setAssistOpen] = useState(false);
   const [editSource, setEditSource] = useState(false);
   const [insertOpen, setInsertOpen] = useState(false);
-  const [guidedKind, setGuidedKind] = useState<"systems" | "process">();
+  const [guidedKind, setGuidedKind] = useState<"systems" | "process" | "table">();
   const [guidedSystems, setGuidedSystems] = useState(emptySystemsSession);
   const [guidedSystemsAttachment, setGuidedSystemsAttachment] = useState(emptyGuidedAttachment);
   const [guidedProcess, setGuidedProcess] = useState(emptyGuidedProcess);
   const [guidedProcessAttachment, setGuidedProcessAttachment] = useState(emptyGuidedAttachment);
+  const [guidedTable, setGuidedTable] = useState(emptyGuidedTable);
+  const [guidedTableAttachment, setGuidedTableAttachment] = useState(emptyGuidedAttachment);
   const guidedNeedsRefresh = useRef(false);
   const [detachOpen, setDetachOpen] = useState(false);
   // The mounted source editor owns its draft. Retain a copy for reopening
@@ -530,6 +536,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     return reviewGuidedInsertion(target => target.prepareGuidedProcess(steps, connections, attachment, signal), signal);
   }
 
+  function reviewGuidedTable(graph: RelationshipGraph, attachment: GuidedAttachment | undefined, signal: AbortSignal) {
+    return reviewGuidedInsertion(target => target.prepareGuidedTable(graph, attachment, signal), signal);
+  }
+
   async function insertGuidedDiagram(proposal: ReadyProposal, signal?: AbortSignal) {
     const current = editor.current;
     if (!current) return "stale";
@@ -546,6 +556,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     { id: "insert-guided-process", title: "Insert process diagram", category: "Diagram", synonyms: ["guided process", "add process steps"],
       unavailable: busy || !targetTable || !componentSourceSupported ? "Open a supported flowchart before inserting a process." : undefined,
       run: () => setGuidedKind("process") },
+    { id: "insert-guided-table", title: "Insert relationship table", category: "Diagram", synonyms: ["add CSV systems", "insert TSV"],
+      unavailable: busy || !targetTable || !componentSourceSupported ? "Open a supported flowchart before inserting a table." : undefined,
+      run: () => setGuidedKind("table") },
     { id: "export-diagram", title: "Export diagram", category: "Export", synonyms: ["PNG", "SVG", "Mermaid"],
       run: () => setExportOpen(true) },
     { id: "external-assistant", title: "External assistant file exchange", category: "Advanced", synonyms: ["request file", "import AI proposal"],
@@ -703,6 +716,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                     onClick={() => setGuidedKind("systems")}>Insert systems diagram</button>}
                   {targetTable && componentSourceSupported && <button className="button secondary" disabled={busy}
                     onClick={() => setGuidedKind("process")}>Insert process diagram</button>}
+                  {targetTable && componentSourceSupported && <button className="button secondary" disabled={busy}
+                    onClick={() => setGuidedKind("table")}>Insert relationship table</button>}
                   {!!project.componentInstances.length && <button className="button secondary" disabled={busy} onClick={() => setDetachOpen(true)}>Detach component</button>}
                   {targetTable && flatFlowchart && (
                     <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
@@ -810,6 +825,17 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               setGuidedProcessAttachment(emptyGuidedAttachment);
               guidedNeedsRefresh.current = false;
               if (draftRetained) setError("Process inserted. The saved draft could not be cleared.");
+            } }} />
+      </Suspense>}
+      {guidedKind === "table" && project && <Suspense fallback={<p role="status">Opening table editor…</p>}>
+        <GuidedRelationshipTableDialog draft={guidedTable} onDraft={setGuidedTable} onClose={() => setGuidedKind(undefined)}
+          target={{ title, nodes, attachment: guidedTableAttachment, onAttachment: setGuidedTableAttachment,
+            prepare: reviewGuidedTable, apply: insertGuidedDiagram, onCompleted: draftRetained => {
+              setGuidedKind(undefined);
+              setGuidedTable(emptyGuidedTable);
+              setGuidedTableAttachment(emptyGuidedAttachment);
+              guidedNeedsRefresh.current = false;
+              if (draftRetained) setError("Mapped systems inserted. The saved draft could not be cleared.");
             } }} />
       </Suspense>}
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}

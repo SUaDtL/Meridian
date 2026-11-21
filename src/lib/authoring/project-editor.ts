@@ -16,6 +16,7 @@ import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
 import type { GuidedAttachment } from './guided-systems-insertion';
 import type { ProcessStep } from './process-steps';
 import type { ProcessConnections } from './process-connections';
+import type { RelationshipGraph } from './relationship-table';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
 import { prepareManualSource } from './manual-source';
 import type { MermaidProjectV3 } from './mermaid-project';
@@ -228,6 +229,18 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return prepareGuidedInsertion(async base => {
       const { prepareGuidedProcessInsertion } = await import('./guided-process');
       return prepareGuidedProcessInsertion(base, draft.steps, draft.connections, draft.attachment, signal);
+    }, signal);
+  }
+
+  function prepareGuidedTable(graph: RelationshipGraph, attachment?: GuidedAttachment, signal?: AbortSignal) {
+    const draft = structuredClone({ graph, attachment });
+    return prepareGuidedInsertion(async base => {
+      const { prepareGuidedFragmentInsertion } = await import('./guided-systems-insertion');
+      const nodes = draft.graph.nodes.map(({ key, label, role }) => ({ key, label, role, shape: 'rect' as const }));
+      const edges = draft.graph.edges.map(({ from, to }, index) => ({
+        key: `row-edge-${index + 1}`, from: { key: from }, to: { key: to }, label: '',
+      }));
+      return prepareGuidedFragmentInsertion(base, nodes, edges, draft.attachment, signal);
     }, signal);
   }
 
@@ -673,6 +686,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     applyInsertion,
     prepareGuidedSystems,
     prepareGuidedProcess,
+    prepareGuidedTable,
     applyGuidedInsertion,
     prepareAssistSuggestion,
     applyAssistSuggestion,
