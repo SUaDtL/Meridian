@@ -945,3 +945,10 @@
   height: auto;
   max-height: 55svh;
 }
+
+.story-canvas-return {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-block: 4px 10px;
+}
