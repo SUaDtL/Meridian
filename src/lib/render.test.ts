@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { flowchartSourceKey, layoutFingerprint, renderDiagram, renderFingerprint } from './render';
 import { DEFAULT_SETTINGS } from './themes';
 import { createDesign } from './design';
-import { RenderCache } from './render-cache';
+import { RenderCache, RenderMemoryBudget } from './render-cache';
 import { latestRenderQueue } from './render-queue';
 import type { StudioSettings } from '../types';
 
@@ -94,6 +94,69 @@ describe('bounded render caches', () => {
     expect(cache.get('a')).toBeUndefined();
     cache.set('a'.repeat(11), 'small body, large key', 0);
     expect(cache.get('a'.repeat(11))).toBeUndefined();
+  });
+});
+
+describe('shared renderer memory budget', () => {
+  it('counts the same retained strings and model across both renderer caches and the visible preview', () => {
+    const memory = new RenderMemoryBudget(40);
+    const layout = new RenderCache<string>(3, 40, memory);
+    const results = new RenderCache<string>(3, 40, memory);
+    const model = { object: {}, bytes: 4 };
+    const svg = 'SVG!';
+    layout.set('l', 'layout', { parts: [svg, model] });
+    results.set('r', 'result', { parts: [svg, model], privateBytes: 4 }, 'foreground');
+    expect(memory.estimatedBytes()).toBe(20);
+
+    const removed = vi.fn();
+    const preview = memory.reserve({ parts: [svg, svg, { object: {}, bytes: 7 }] }, 'selected', removed);
+    expect(preview).toBeDefined();
+    expect(memory.estimatedBytes()).toBe(27);
+    preview?.release();
+    expect(memory.estimatedBytes()).toBe(20);
+    expect(removed).not.toHaveBeenCalled();
+    layout.set('l', 'replacement', { parts: [] });
+    expect(memory.estimatedBytes()).toBe(20);
+    results.set('r', 'replacement', { parts: [] });
+    expect(memory.estimatedBytes()).toBe(4);
+  });
+
+  it('evicts older optional drawings before selected and foreground drawings and refuses oversized entries', () => {
+    const memory = new RenderMemoryBudget(32);
+    const evicted: string[] = [];
+    const retain = (name: string, bytes: number, priority: 'optional' | 'selected' | 'foreground') =>
+      memory.reserve({ parts: [], privateBytes: bytes }, priority, () => evicted.push(name));
+    retain('accepted', 12, 'foreground');
+    const selected = retain('selected', 8, 'selected');
+    retain('older', 5, 'optional');
+    retain('newer', 5, 'optional');
+    retain('waiting', 6, 'optional');
+    expect(evicted).toEqual(['older']);
+    expect(memory.estimatedBytes()).toBe(31);
+    expect(retain('too large', 33, 'foreground')).toBeUndefined();
+    expect(retain('competing optional', 13, 'optional')).toBeUndefined();
+    expect(evicted).toEqual(['older']);
+
+    selected?.touch('optional');
+    retain('new selection', 15, 'selected');
+    expect(evicted).toEqual(['older', 'newer', 'waiting', 'selected']);
+    expect(memory.estimatedBytes()).toBe(27);
+  });
+
+  it('shares cache eviction and keeps a foreground result at an owner entry limit', () => {
+    const memory = new RenderMemoryBudget(22);
+    const results = new RenderCache<string>(2, 22, memory);
+    const previews = new RenderCache<string>(2, 22, memory);
+    results.set('a', 'foreground', 6, 'foreground');
+    results.set('b', 'optional old', 4);
+    results.set('c', 'optional recent', 4);
+    expect(results.get('b')).toBeUndefined();
+    expect(results.get('a')).toBe('foreground');
+    previews.set('p', 'selected', 10, 'selected');
+    expect(results.get('c')).toBeUndefined();
+    expect(results.get('a')).toBe('foreground');
+    expect(previews.get('p')).toBe('selected');
+    expect(memory.estimatedBytes()).toBe(20);
   });
 });
 
