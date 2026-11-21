@@ -63,6 +63,7 @@ test('keeps an invalid source draft, previews binding-preserving changes, and re
   expect(accepted.source).toBe(revised);
   expect(accepted.identity.elements).toEqual(expect.arrayContaining(original.identity.elements));
   expect(accepted.design).toEqual(original.design);
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
   await open();
   await input.fill('flowchart LR\nA[Gateway]\n');
   await editor.getByRole('button', { name: 'Preview source' }).click();

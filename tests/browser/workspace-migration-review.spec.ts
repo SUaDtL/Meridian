@@ -110,6 +110,7 @@ test('round-trips and previews a portable v3 project before a later legacy migra
     const preview = destination.getByRole('dialog', { name: 'Migration example', exact: true });
     await expect.poll(() => preview.getByRole('img', { name: 'Diagram preview for Migration example' })
       .evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+    await preview.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
     await preview.getByText('Mermaid source', { exact: true }).click();
     expect(await preview.locator('pre').textContent()).toBe(source);
     expect(await download(destination, 'Download HTML presentation')).toContain('Migration example');

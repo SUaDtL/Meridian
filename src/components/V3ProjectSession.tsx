@@ -41,6 +41,15 @@ const ExportDialog = lazy(() => import("./ExportDialog"));
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
 
+const workspacePanels = ["Build", "Canvas", "Design", "Story"] as const;
+type WorkspacePanel = typeof workspacePanels[number];
+
+function measureCanvas(image: HTMLImageElement | null): ViewingProfile | undefined {
+  const bounds = image?.getBoundingClientRect();
+  return bounds && bounds.width >= 100 && bounds.height >= 100
+    ? { width: Math.floor(bounds.width), height: Math.floor(bounds.height), padding: 0 } : undefined;
+}
+
 export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   id: string; onBack: () => void; onOpenCopy: (id: string) => void;
 }) {
@@ -68,6 +77,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [designReset, setDesignReset] = useState<{ selection: ReadonlySet<string>; hidden: number; field?: RolePaintField }>();
   const [deleteConnections, setDeleteConnections] = useState<{ ids: string[]; hidden: number }>();
   const [groupMembers, setGroupMembers] = useState<{ ids: string[]; hidden: number }>();
+  const [mobilePanel, setMobilePanel] = useState<WorkspacePanel>("Canvas");
+  const canvasPanelButton = useRef<HTMLButtonElement>(null);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [restoredOutline, setRestoredOutline] = useState<OutlineView>();
   const [outlineReturn, setOutlineReturn] = useState<{ source: string; view: OutlineView }>();
@@ -86,6 +97,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [storyDraft, setStoryDraft] = useState(initialGroupStoryDraft);
   const [canvasProfile, setCanvasProfile] = useState<ViewingProfile>();
   const previewImage = useRef<HTMLImageElement>(null);
+  const measuredCanvas = useRef<{ profile: ViewingProfile; url: string; viewport: string }>(undefined);
   const fitDiagram = useRef<HTMLButtonElement>(null);
   const suggestScenesButton = useRef<HTMLButtonElement>(null);
   const outlineButton = useRef<HTMLButtonElement>(null);
@@ -194,6 +206,17 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const title = project?.title || "Untitled diagram";
   const currentFrame = frame?.document === project ? frame : undefined;
   const focusedFrame = framedTargets?.frame === currentFrame ? framedTargets : undefined;
+  const previewUrl = focusedFrame?.url ?? currentFrame?.url;
+  useEffect(() => {
+    const image = previewImage.current;
+    if (!image || !previewUrl) return;
+    const observer = new ResizeObserver(() => {
+      const profile = measureCanvas(image);
+      if (profile) measuredCanvas.current = { profile, url: previewUrl, viewport: `${window.innerWidth}x${window.innerHeight}` };
+    });
+    observer.observe(image);
+    return () => observer.disconnect();
+  }, [previewUrl]);
   const source = project?.source;
   const flatFlowchart = useMemo(() => {
     if (!source) return false;
@@ -349,15 +372,16 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
-    const bounds = previewImage.current?.getBoundingClientRect();
-    const fit = bounds && bounds.width >= 100 && bounds.height >= 100
-      ? { width: Math.floor(bounds.width), height: Math.floor(bounds.height), padding: 0 } : undefined;
+    const previous = measuredCanvas.current;
+    const fit = measureCanvas(previewImage.current) ?? (previous && previous.url === previewUrl
+      && previous.viewport === `${window.innerWidth}x${window.innerHeight}` ? previous.profile : undefined);
     setCanvasProfile(fit);
     setReadabilityViewing(current => current ?? initialReadabilityProfile(fit));
     setReadabilityOpen(true);
   }
   function showSource() {
     if (!sourceDetails.current) return;
+    setMobilePanel("Build");
     sourceDetails.current.open = true;
     requestAnimationFrame(() => sourceDetails.current?.querySelector("summary")?.focus());
   }
@@ -371,6 +395,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     setOutlineOpen(false);
     setHighlight({ ...location, source });
     setOutlineReturn({ source, view });
+    setMobilePanel("Build");
     sourceDetails.current.open = true;
     requestAnimationFrame(() => sourceMark.current?.focus());
   }
@@ -381,6 +406,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
       setFramedTargets({ frame: currentFrame, url, count: ids.length });
       if (closeOutline) {
+        setMobilePanel("Canvas");
         setOutlineOpen(false);
         requestAnimationFrame(() => fitDiagram.current?.focus());
       }
@@ -501,62 +527,80 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         {!project && !error && <p role="status">Checking the saved project…</p>}
         {project && (
           <>
-            <div className="migration-preview">
-              {currentFrame && <img ref={previewImage} src={focusedFrame?.url ?? currentFrame.url} alt={`Diagram preview for ${title}`} />}
-              {focusedFrame && <div className="recovery-actions">
-                <p>Framed around {focusedFrame.count} {focusedFrame.count === 1 ? "element" : "elements"}.</p>
-                <button type="button" className="button quiet" ref={fitDiagram} onClick={() => {
-                  setFramedTargets(undefined);
-                  outlineButton.current?.focus();
-                }}>Fit full diagram</button>
-              </div>}
-              {!currentFrame && !renderError && <p role="status">Rendering the current diagram…</p>}
-              {renderError && <p role="alert">{renderError}</p>}
-              <details ref={sourceDetails}><summary>Mermaid source</summary>
-                {outlineAvailable && outlineReturn && outlineReturn.source === source && <div className="recovery-actions">
-                  <button className="button secondary" onClick={() => {
-                    openOutline(outlineReturn.view);
-                    setOutlineReturn(undefined);
-                  }}>Return to outline</button>
+            <nav className="v3-panel-nav" aria-label="Workspace panels">
+              {workspacePanels.map(panel => <button key={panel} type="button" className="button secondary"
+                ref={panel === "Canvas" ? canvasPanelButton : undefined} aria-pressed={mobilePanel === panel}
+                onClick={() => setMobilePanel(panel)}>{panel}</button>)}
+            </nav>
+            <div className="v3-panel-workspace" data-active-panel={mobilePanel}>
+              <section data-v3-panel="Canvas" aria-label="Diagram canvas" className="migration-preview">
+                {currentFrame && <img ref={previewImage} src={previewUrl} alt={`Diagram preview for ${title}`} />}
+                {focusedFrame && <div className="recovery-actions">
+                  <p>Framed around {focusedFrame.count} {focusedFrame.count === 1 ? "element" : "elements"}.</p>
+                  <button type="button" className="button quiet" ref={fitDiagram} onClick={() => {
+                    setFramedTargets(undefined);
+                    const focus = outlineButton.current?.getClientRects().length ? outlineButton.current : canvasPanelButton.current;
+                    focus?.focus();
+                  }}>Fit full diagram</button>
                 </div>}
-                <pre>{highlighted ? <>{project.source.slice(0, highlighted.from)}
-                  <mark ref={sourceMark} tabIndex={-1} aria-label={`Source line ${highlighted.line}`}>{project.source.slice(highlighted.from, highlighted.to)}</mark>
-                  {project.source.slice(highlighted.to)}</> : project.source}</pre>
-              </details>
+                {!currentFrame && !renderError && <p role="status">Rendering the current diagram…</p>}
+                {renderError && <p role="alert">{renderError}</p>}
+              </section>
+              <section data-v3-panel="Build" aria-label="Build tools">
+                <div className="migration-preview">
+                  <details ref={sourceDetails}><summary>Mermaid source</summary>
+                    {outlineAvailable && outlineReturn && outlineReturn.source === source && <div className="recovery-actions">
+                      <button className="button secondary" onClick={() => {
+                        openOutline(outlineReturn.view);
+                        setOutlineReturn(undefined);
+                      }}>Return to outline</button>
+                    </div>}
+                    <pre>{highlighted ? <>{project.source.slice(0, highlighted.from)}
+                      <mark ref={sourceMark} tabIndex={-1} aria-label={`Source line ${highlighted.line}`}>{project.source.slice(highlighted.from, highlighted.to)}</mark>
+                      {project.source.slice(highlighted.to)}</> : project.source}</pre>
+                  </details>
+                </div>
+                {targetTable && !flatFlowchart && (
+                  <p className="muted-note">{removableGroup ? "Use the group actions below to edit this diagram."
+                    : componentSourceSupported ? "Use Outline or Commands to edit labels in this grouped flowchart."
+                    : "Open Mermaid source to edit this diagram."}</p>
+                )}
+                <div className="recovery-actions">
+                  {outlineAvailable && <button ref={outlineButton} className="button secondary" disabled={busy} onClick={() => openOutline()}>Outline</button>}
+                  {project.identity.orphans.length > 0 && <button className="button secondary" disabled={busy}
+                    onClick={() => setOrphanReviewOpen(true)}>Review unresolved annotations</button>}
+                  <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
+                  {targetTable && <button className="button secondary" disabled={busy} onClick={() => setEditSource(true)}>Edit Mermaid source</button>}
+                  {!!project.componentInstances.length && <button className="button secondary" disabled={busy} onClick={() => setDetachOpen(true)}>Detach component</button>}
+                  {targetTable && flatFlowchart && (
+                    <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
+                  )}
+                  {removableGroup && <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("removeGroup")}>Ungroup</button>}
+                  {defaultGroupDeletion && !defaultGroupDeletion.unavailable && <button className="button secondary" disabled={busy}
+                    onClick={() => setEditFlowchart("removeGroupContents")}>Delete group and contents</button>}
+                  {defaultMoveAvailable && <button className="button secondary" disabled={busy}
+                    onClick={() => setEditFlowchart("moveToGroup")}>Move node into group</button>}
+                </div>
+              </section>
+              <section data-v3-panel="Design" aria-label="Design tools" className="recovery-actions">
+                {!!targetTable?.targets.length && <button className="button secondary" disabled={busy} onClick={openReadability}>Check readability</button>}
+                {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("design")}>Explore designs</button>}
+                {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
+              </section>
+              <section data-v3-panel="Story" aria-label="Story tools" className="recovery-actions">
+                {outlineAvailable && <button ref={suggestScenesButton} className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
+                {outlineAvailable && <button className="button secondary" disabled={busy}
+                  onClick={() => setSavedScenesOpen(project.storyboard.scenes.length ? "edit" : "create")}>
+                  {project.storyboard.scenes.length ? "Edit saved scenes" : "Create overview scene"}
+                </button>}
+              </section>
             </div>
             <p role="status">{save?.phase === "saved" ? "Saved in this browser."
               : needsRecovery ? "Changes are only in this session."
               : "Saving changes…"}</p>
             {needsRecovery && <p role="alert">{save?.message}</p>}
-            {targetTable && !flatFlowchart && (
-              <p className="muted-note">{removableGroup ? "Use the group actions below to edit this diagram."
-                : componentSourceSupported ? "Use Outline or Commands to edit labels in this grouped flowchart."
-                : "Open Mermaid source to edit this diagram."}</p>
-            )}
             <div className="recovery-actions">
               <button className="button secondary" disabled={busy} aria-keyshortcuts="Control+K Meta+K" onClick={() => setCommandsOpen(true)}>Commands</button>
-              {outlineAvailable && <button ref={outlineButton} className="button secondary" disabled={busy} onClick={() => openOutline()}>Outline</button>}
-              {project.identity.orphans.length > 0 && <button className="button secondary" disabled={busy}
-                onClick={() => setOrphanReviewOpen(true)}>Review unresolved annotations</button>}
-              {!!targetTable?.targets.length && <button className="button secondary" disabled={busy} onClick={openReadability}>Check readability</button>}
-              {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("design")}>Explore designs</button>}
-              {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
-              {outlineAvailable && <button ref={suggestScenesButton} className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
-              {outlineAvailable && <button className="button secondary" disabled={busy}
-                onClick={() => setSavedScenesOpen(project.storyboard.scenes.length ? "edit" : "create")}>
-                {project.storyboard.scenes.length ? "Edit saved scenes" : "Create overview scene"}
-              </button>}
-              <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
-              {targetTable && <button className="button secondary" disabled={busy} onClick={() => setEditSource(true)}>Edit Mermaid source</button>}
-              {!!project.componentInstances.length && <button className="button secondary" disabled={busy} onClick={() => setDetachOpen(true)}>Detach component</button>}
-              {targetTable && flatFlowchart && (
-                <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("addNode")}>Edit flowchart</button>
-              )}
-              {removableGroup && <button className="button secondary" disabled={busy} onClick={() => setEditFlowchart("removeGroup")}>Ungroup</button>}
-              {defaultGroupDeletion && !defaultGroupDeletion.unavailable && <button className="button secondary" disabled={busy}
-                onClick={() => setEditFlowchart("removeGroupContents")}>Delete group and contents</button>}
-              {defaultMoveAvailable && <button className="button secondary" disabled={busy}
-                onClick={() => setEditFlowchart("moveToGroup")}>Move node into group</button>}
               <button className="button quiet" disabled={busy || !editor.current?.canUndo()} onClick={() => changeHistory("undo")}>Undo</button>
               <button className="button quiet" disabled={busy || !editor.current?.canRedo()} onClick={() => changeHistory("redo")}>Redo</button>
               <button className="button secondary" disabled={busy} onClick={downloadProject}>

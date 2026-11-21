@@ -100,6 +100,7 @@ test('resumes reviewed OpenAPI operations and keeps precise provenance without t
     pointer: '/paths/~1pets~1{id}/get/tags/0', relationship: 'Declared OpenAPI tag membership',
   }));
   expect(contents).not.toMatch(/raw-file-secret|raw-description-secret|example\.invalid|\/health/);
+  await live.getByRole('button', { name: 'Build', exact: true }).click();
   await live.getByRole('button', { name: 'Outline', exact: true }).click();
   const outline = page.getByRole('dialog', { name: 'Diagram outline' });
   await outline.getByRole('button', { name: 'Relationships' }).click();
