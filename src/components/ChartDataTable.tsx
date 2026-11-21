@@ -5,7 +5,7 @@ import type { ChartDataset, ChartScale } from "../lib/authoring/chart-data";
 import type { ChartValue } from "../lib/authoring/chart-numbers";
 import { chartCategory, type ChartProjection } from "./ChartFigure";
 
-type ReadableTable = { name: string; headings: string[]; rows: { id: string; values: string[] }[] };
+type ReadableTable = { name: string; headings: string[]; rowHeader?: true; rows: { id: string; values: string[] }[] };
 const pageSize = 50;
 const exactDisplay = (value: ChartValue | null) => {
   if (!value) return "Missing";
@@ -14,12 +14,16 @@ const exactDisplay = (value: ChartValue | null) => {
 };
 
 export function displayedChartTable(projection: ChartProjection): ReadableTable {
-  const { x, y, series, observations, unitScale } = projection;
-  const heading = (name: string, scale: ChartScale | null) =>
-    scale ? `${name} (× 10^${scale.power10}${scale.unitLabel ? ` · ${scale.unitLabel}` : ""})` : name;
+  const { x, y, series, observations, unitScale, aggregation } = projection;
+  const heading = (name: string, unit: string | undefined, scale: ChartScale | null) =>
+    scale ? `${name} (× 10^${scale.power10}${scale.unitLabel ? ` · ${scale.unitLabel}` : ""})` : unit ? `${name} (${unit})` : name;
+  const yHeading = aggregation === "countRows" ? "Row count"
+    : aggregation === "countValues" ? `Present values of ${y?.name || "Y"}`
+    : heading(y?.name ?? "Value", y?.unit, unitScale.y);
   return {
     name: "Displayed values",
-    headings: [heading(x.name, unitScale.x), heading(y?.name ?? "Row count", unitScale.y), ...(series ? [series.name] : []), "Rows", "Present values", "Status"],
+    rowHeader: true,
+    headings: [heading(x.name, x.unit, unitScale.x), yHeading, ...(series ? [series.name] : []), "Rows", "Present values", "Status"],
     rows: observations.map(point => ({
       id: point.rowIds[0],
       values: [
@@ -91,7 +95,8 @@ function Table({ data }: { data: ReadableTable }) {
             const next = Math.max(0, Math.min(active.length - 1, offsets[event.key]));
             table.current?.tBodies[0]?.rows[next]?.focus();
           }}>
-          {values.map((value, column) => !hidden.has(column) && <td key={column}>{value}</td>)}
+          {values.map((value, column) => !hidden.has(column) && (data.rowHeader && column === 0
+            ? <th key={column} scope="row">{value}</th> : <td key={column}>{value}</td>))}
         </tr>)}</tbody>
       </table>
     </div>
@@ -133,11 +138,12 @@ export async function chartHtml(title: string, svg: string, description: string,
   for (let start = 0; start < rows.length; start += pageSize) {
     const entries = rows.slice(start, start + pageSize);
     const label = `Rows ${start + 1}–${start + entries.length} of ${rows.length}`;
-    const body = entries.map(({ values }) => `<tr>${values.map(value => `<td>${escapeText(value)}</td>`).join("")}</tr>`).join("");
+    const body = entries.map(({ values }) => `<tr>${values.map((value, column) => column === 0
+      ? `<th scope="row">${escapeText(value)}</th>` : `<td>${escapeText(value)}</td>`).join("")}</tr>`).join("");
     pages.push(`<details data-table-page="${start}"${start === 0 ? " open" : ""}><summary>${label}</summary><div class="table"><table><caption>Displayed values, ${label}</caption><thead><tr>${heading}</tr></thead><tbody>${body}</tbody></table></div></details>`);
   }
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${hash}'; connect-src 'none'; object-src 'none'; base-uri 'none'">
-<title>${escapeText(title)} · Meridian</title><style>[hidden]{display:none!important}fieldset label{display:block}tr:focus-visible{outline:2px solid #1d4ed8;outline-offset:-2px}body{font:16px/1.55 system-ui,sans-serif;margin:0;padding:1rem;background:#f7f8fb;color:#172131}main{max-width:58rem;margin:auto}svg{width:100%;height:auto;display:block}details{margin:.65rem 0;padding:.65rem;background:#fff;border:1px solid #ccd2df;border-radius:.45rem}summary{cursor:pointer;font-weight:600}.table{overflow:auto}table{width:100%;border-collapse:collapse;min-width:24rem}th,td{text-align:left;border-bottom:1px solid #d9dee9;padding:.5rem}caption{text-align:left;padding:.5rem 0}</style></head>
+<title>${escapeText(title)} · Meridian</title><style>[hidden]{display:none!important}fieldset label{display:block}tr:focus-visible{outline:2px solid #1d4ed8;outline-offset:-2px}body{font:16px/1.55 system-ui,sans-serif;margin:0;padding:1rem;background:#f7f8fb;color:#172131}main{max-width:58rem;margin:auto}svg{width:100%;height:auto;display:block}details{margin:.65rem 0;padding:.65rem;background:#fff;border:1px solid #ccd2df;border-radius:.45rem}summary{cursor:pointer;font-weight:600}.table{overflow:auto}table{width:100%;border-collapse:collapse;min-width:24rem}th,td{text-align:left;border-bottom:1px solid #d9dee9;padding:.5rem}tbody th{font-weight:inherit}caption{text-align:left;padding:.5rem 0}</style></head>
 <body><main><h1>${escapeText(title)}</h1>${svg}<p>${escapeText(description)}</p><h2>Displayed values</h2>${controls}${pages.join("") || "<p>No displayed values.</p>"}</main><script>${script}</script></body></html>`;
 }
