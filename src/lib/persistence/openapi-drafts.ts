@@ -64,7 +64,7 @@ export function isOpenApiOperationCheckpoint(checkpoint: OpenApiCheckpoint): che
 export function restoreOpenApiScope({ payload }: OpenApiSchemaCheckpoint): ScopeState {
   const files = new Set(payload.virtualPaths.map(validateVirtualPath));
   if (!files.size || files.size !== payload.virtualPaths.length) throw new Error('Saved schema facts need distinct virtual paths.');
-  const view: OpenApiSchemaFacts = { schemas: [], references: [], unresolved: [], files: [...files], omitted: 0 };
+  const view: OpenApiSchemaFacts = { schemas: [], references: [], unresolved: [], files: [...files], omitted: 0, unsupportedDialects: [] };
   const idToSchema = new Map<string, OpenApiSchemaFacts['schemas'][number]>();
   const schemaKeys = new Set<string>();
   const wanted = new Set(payload.selectedFactIds);

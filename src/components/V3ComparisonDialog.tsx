@@ -34,7 +34,7 @@ function connectionRoutes(result: RenderResult) {
   return result.elements?.filter(item => item.kind === "edge").map(({ key, kind, measuredRoute, routeOverSegmentLimit }) => ({ id: key, kind, measuredRoute, routeOverSegmentLimit })) ?? [];
 }
 
-export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDesign, selection, selectedRoleCounts, currentUrl, currentSize, editor, onApply, onClose }: {
+export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDesign, selection, selectedRoleCounts, currentUrl, currentSize, editor, initialLayout, onRefreshLayout, onApply, onClose }: {
   mode: ComparisonMode;
   allowDirection: boolean;
   allowScopedDesign: boolean;
@@ -43,7 +43,9 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   currentUrl: string;
   currentSize: FrameGeometry;
   editor: Editor;
-  onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyDesign"]>;
+  initialLayout?: LayoutIntent;
+  onRefreshLayout?: (intent: LayoutIntent) => Promise<void>;
+  onApply: (proposal: ReadyProposal) => Promise<ReturnType<Editor["applyDesign"]>>;
   onClose: () => void;
 }) {
   const layout = mode === "layout";
@@ -53,9 +55,9 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   const [applyRoleShapes, setApplyRoleShapes] = useState(() => editor.snapshot().design.applyRoleShapes);
   const [applyScopedShapes, setApplyScopedShapes] = useState(false);
   const [role, setRole] = useState<SemanticRole | "">(selectedRoleCounts[0]?.[0] ?? "");
-  const [choice, setChoice] = useState<Choice>(layout ? "balanced" : "clear");
+  const [choice, setChoice] = useState<Choice>(layout ? initialLayout?.id ?? "balanced" : "clear");
   const selectedChoice = useRef(choice);
-  const [direction, setDirection] = useState<LayoutIntent["direction"]>("keep");
+  const [direction, setDirection] = useState<LayoutIntent["direction"]>(allowDirection ? initialLayout?.direction ?? "keep" : "keep");
   const decisionIds = new Set(editor.snapshot().roles.filter(item => item.role === "decision").map(item => item.elementId));
   const scopedDecision = scopeKind === "role" ? role === "decision" : selection?.ids.some(id => decisionIds.has(id));
   const offerRoleShapes = allowScopedDesign && choice === "presentation" && (scopeKind === "diagram" ? !!decisionIds.size : scopedDecision);
@@ -65,6 +67,9 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   const preview = candidates.get(choice)?.preview;
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [refreshRequired, setRefreshRequired] = useState(false);
+  const working = busy || committing;
   const [error, setError] = useState("");
   const [cancelled, setCancelled] = useState(false);
   const [view, setView] = useState<"current" | "proposed">("current");
@@ -143,7 +148,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   }
 
   async function prepare() {
-    if (active.current || (!layout && scopeKind === "role" && !role)) return;
+    if (active.current || committing || refreshRequired || (!layout && scopeKind === "role" && !role)) return;
     const scopedStyle = { preserveOverrides, enlargeLabels: offerTypography && enlargeLabels,
       applyRoleShapes: !!offerRoleShapes && applyScopedShapes };
     const scope: DesignScope = scopeKind === "selection" ? { kind: scopeKind, ids: selection?.ids ?? [], ...scopedStyle }
@@ -201,17 +206,36 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
     }
   }
 
-  function apply() {
-    if (!preview || !painted || busy) return;
-    const status = onApply(preview.proposal);
-    if (status === "applied" || status === "unchanged") onClose();
-    else {
-      if (status === "stale") resetPreview();
-      else saveCandidate(choice);
-      setPainted(false);
-      setView("current");
-      setError(status === "stale" ? "The project changed. Refresh the preview." : "This option could not be applied with Undo.");
-    }
+  async function apply() {
+    if (!preview || !painted || working) return;
+    setCommitting(true);
+    setError("");
+    try {
+      const status = await onApply(preview.proposal);
+      if (status === "applied" || status === "unchanged") { onClose(); return; }
+      if (status === "stale") {
+        resetPreview();
+        setRefreshRequired(layout);
+        setError(layout ? "The saved project changed. Refresh the diagram to review this layout again."
+          : "The project changed. Refresh the preview.");
+      } else {
+        saveCandidate(choice);
+        setPainted(false);
+        setView("current");
+        setError("This option could not be applied with Undo.");
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "This option could not be applied with Undo.");
+    } finally { setCommitting(false); }
+  }
+
+  async function refresh() {
+    if (!onRefreshLayout || working) return;
+    setCommitting(true);
+    setError("");
+    try { await onRefreshLayout({ id: choice as LayoutAlternativeId, direction }); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "The saved diagram could not be refreshed."); }
+    finally { setCommitting(false); }
   }
 
   const options = layout ? layoutAlternativeIds.map(readLayoutAlternative) : designRecipeIds.map(readDesignRecipe);
@@ -246,9 +270,9 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   if (offerTypography && enlargeLabels) scopedFields.push("eligible label sizes");
   if (offerRoleShapes && applyScopedShapes) scopedFields.push("eligible Decision shapes");
   return (
-    <Modal title={layout ? "Compare layouts" : "Explore designs"} wide onClose={onClose}>
+    <Modal title={layout ? "Compare layouts" : "Explore designs"} wide onClose={onClose} busy={committing}>
       {!layout && <div className="heading-form">
-        <label>Design scope<select value={scopeKind} disabled={busy} onChange={event => {
+        <label>Design scope<select value={scopeKind} disabled={working} onChange={event => {
           setScopeKind(event.target.value as DesignScope["kind"]);
           setApplyScopedShapes(false);
           resetPreview();
@@ -259,7 +283,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
         </select></label>
         {offerRoleShapes && <>
           <label className="check-label">
-            <input type="checkbox" checked={scopeKind === "diagram" ? applyRoleShapes : applyScopedShapes} disabled={busy} onChange={event => {
+            <input type="checkbox" checked={scopeKind === "diagram" ? applyRoleShapes : applyScopedShapes} disabled={working} onChange={event => {
               if (scopeKind === "diagram") setApplyRoleShapes(event.target.checked);
               else setApplyScopedShapes(event.target.checked);
               resetPreview();
@@ -269,7 +293,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
           {(scopeKind === "diagram" ? applyRoleShapes : applyScopedShapes) && <p>Project and presentation downloads include the reviewed shapes. Mermaid source keeps its original notation. Explicit shape overrides take precedence.</p>}
         </>}
         {scopeKind === "selection" && selection && <p>{selection.ids.length} selected · {selection.hidden} hidden in the outline</p>}
-        {scopeKind === "role" && <label>Role<select value={role} disabled={busy} onChange={event => {
+        {scopeKind === "role" && <label>Role<select value={role} disabled={working} onChange={event => {
           setRole(event.target.value as SemanticRole);
           setApplyScopedShapes(false);
           resetPreview();
@@ -277,13 +301,13 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
           {selectedRoleCounts.map(([option, count]) => <option key={option} value={option}>{option[0].toUpperCase() + option.slice(1)} ({count})</option>)}
         </select></label>}
         {scopeKind !== "diagram" && <label className="check-label">
-          <input type="checkbox" checked={preserveOverrides} disabled={busy} onChange={event => {
+          <input type="checkbox" checked={preserveOverrides} disabled={working} onChange={event => {
             setPreserveOverrides(event.target.checked);
             resetPreview();
           }} /> Preserve my element overrides
         </label>}
         {offerTypography && <>
-          <label className="check-label"><input type="checkbox" checked={enlargeLabels} disabled={busy} onChange={event => {
+          <label className="check-label"><input type="checkbox" checked={enlargeLabels} disabled={working} onChange={event => {
             setEnlargeLabels(event.target.checked);
             resetPreview();
           }} /> Enlarge eligible node labels</label>
@@ -296,7 +320,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
           : "The preview lists the node paint overrides this recipe will clear."}</p>
       <div className="recipe-options" role="group" aria-label={layout ? "Layout alternatives" : "Design recipes"}>
         {options.map(option => {
-          return <button className="button secondary" key={option.id} aria-pressed={choice === option.id} disabled={busy}
+          return <button className="button secondary" key={option.id} aria-pressed={choice === option.id} disabled={working}
             onClick={() => chooseOption(option.id)}>
             <strong>{option.title}</strong><span>{!layout && scopeKind !== "diagram" && "nodeStyle" in option
               ? `Fill ${option.nodeStyle.fill} · Text ${option.nodeStyle.color} · Border ${option.nodeStyle.stroke}` : option.description}</span>
@@ -306,7 +330,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
         })}
       </div>
       {layout && <div className="heading-form">
-        <label>Source direction<select value={direction} disabled={busy || !allowDirection}
+        <label>Source direction<select value={direction} disabled={working || !allowDirection}
           onChange={event => { setDirection(event.target.value as LayoutIntent["direction"]); resetPreview(); }}>
           <option value="keep">Keep current direction</option><option value="LR">Left to right</option><option value="RL">Right to left</option>
           <option value="TB">Top to bottom</option><option value="BT">Bottom to top</option>
@@ -370,8 +394,9 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
       {(error || candidates.get(choice)?.error) && <p role="alert">{error || candidates.get(choice)?.error}</p>}
       <div className="dialog-actions">
         {busy && <button className="button quiet" onClick={cancelPreview}>Cancel preview</button>}
-        <button ref={previewButton} className="button secondary" disabled={busy} onClick={() => void prepare()}>Preview {title}</button>
-        <button className="button primary" disabled={!preview || !painted || busy} onClick={apply}>Apply {title}</button>
+        {refreshRequired && <button className="button secondary" disabled={working} onClick={() => void refresh()}>Refresh saved diagram</button>}
+        <button ref={previewButton} className="button secondary" disabled={working || refreshRequired} onClick={() => void prepare()}>Preview {title}</button>
+        <button className="button primary" disabled={!preview || !painted || working} onClick={() => void apply()}>Apply {title}</button>
       </div>
     </Modal>
   );

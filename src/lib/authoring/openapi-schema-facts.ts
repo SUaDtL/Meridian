@@ -16,6 +16,7 @@ export type OpenApiSchemaFacts = {
   files: string[];
   unresolved: UnresolvedReference[];
   omitted: number;
+  unsupportedDialects: Location[];
 };
 
 const maxVisits = 10_000;
@@ -54,7 +55,7 @@ function referenceKey(value: unknown, base: string, modern: boolean, resources: 
 
 /** Extract direct reference evidence without expanding a target or inspecting annotations. */
 export function readOpenApiSchemaFacts(sources: readonly OpenApiSchemaSource[]): OpenApiSchemaFacts {
-  const result: OpenApiSchemaFacts = { schemas: [], references: [], files: sources.map(source => source.virtualPath), unresolved: [], omitted: 0 };
+  const result: OpenApiSchemaFacts = { schemas: [], references: [], files: sources.map(source => source.virtualPath), unresolved: [], omitted: 0, unsupportedDialects: [] };
   const resources = new Map<string, Resource>();
   const definitions = new Map<string, boolean | null>();
   const pending: { fact: OpenApiSchema; value: unknown; modern: boolean; base: string }[] = [];
@@ -64,6 +65,7 @@ export function readOpenApiSchemaFacts(sources: readonly OpenApiSchemaSource[]):
     const modern = version.startsWith('3.1.');
     const supportsDialect = !modern || modernDialects.has(dialect);
     const location = `${virtualRoot}/${virtualPath}`;
+    if (!supportsDialect) result.unsupportedDialects.push({ virtualPath, pointer: "/jsonSchemaDialect" });
     for (const [name, value] of Object.entries(schemas)) {
       if (++count > maxVisits) throw new Error('The supplied files exceed 10,000 schema components.');
       if (!componentKey.test(name) || !(record(value) || (modern && typeof value === 'boolean'))) {
@@ -75,8 +77,9 @@ export function readOpenApiSchemaFacts(sources: readonly OpenApiSchemaSource[]):
       const fact = { key, name, virtualPath, pointer };
       result.schemas.push(fact);
       definitions.set(key, null);
-      if (!supportsDialect || (modern && record(value) && Object.hasOwn(value, '$schema')
-        && !modernDialects.has(value.$schema))) {
+      const unsupportedOverride = modern && record(value) && Object.hasOwn(value, '$schema') && !modernDialects.has(value.$schema);
+      if (unsupportedOverride) result.unsupportedDialects.push({ virtualPath, pointer: `${pointer}/$schema` });
+      if (!supportsDialect || unsupportedOverride) {
         result.omitted++;
         continue;
       }
@@ -126,6 +129,9 @@ export function readOpenApiSchemaFacts(sources: readonly OpenApiSchemaSource[]):
       return;
     }
     if (modern && pointer !== fact.pointer && (Object.hasOwn(value, '$id') || Object.hasOwn(value, '$schema') || Object.hasOwn(value, '$anchor'))) {
+      if (Object.hasOwn(value, '$schema') && !modernDialects.has(value.$schema)) {
+        result.unsupportedDialects.push({ virtualPath: fact.virtualPath, pointer: `${pointer}/$schema` });
+      }
       result.omitted++;
       return;
     }

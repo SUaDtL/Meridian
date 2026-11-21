@@ -108,7 +108,7 @@ it('extracts direct schema references, preserves cycles, and omits unsupported r
     unresolved: [
       { from: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Account/properties/missing/$ref', reason: 'Target component unavailable in supplied files' },
       { from: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Account/properties/dynamic/$dynamicRef', reason: 'Unsupported dynamic or recursive reference' },
-    ], omitted: 1,
+    ], omitted: 1, unsupportedDialects: [],
   });
   expect(JSON.stringify(schemaView)).not.toMatch(/example.invalid|private|examples/);
 });
@@ -150,7 +150,9 @@ it('respects OpenAPI 3.0 reference siblings and reports unsupported 3.1 dialects
   }
   expect(read('3.0.3')?.references).toHaveLength(1);
   expect(read('3.1.0')?.references).toHaveLength(2);
-  expect(read('3.1.0', 'https://example.invalid/custom')).toMatchObject({ references: [], omitted: 2 });
+  expect(read('3.1.0', 'https://example.invalid/custom')).toMatchObject({
+    references: [], omitted: 2, unsupportedDialects: [{ virtualPath: 'api.json', pointer: '/jsonSchemaDialect' }],
+  });
 });
 
 it('resolves registered OpenAPI 3.1 component resources and anchors without retaining logical URLs', () => {

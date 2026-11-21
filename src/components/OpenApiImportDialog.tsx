@@ -282,6 +282,13 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
       <p>OpenAPI {facts.version} · {countLabel(schemaFacts.files.length, "supplied file")} · {countLabel(schemaFacts.schemas.length, "schema")}</p>
       <p>{countLabel(schemaFacts.references.length, "resolved reference")} · {countLabel(schemaFacts.unresolved.length, "unresolved reference")}
         {!restoredScope && <>{" · "}{countLabel(schemaFacts.omitted, "unsupported schema location")}</>}</p>
+      {schemaFacts.unsupportedDialects.length > 0 && <details>
+        <summary>{countLabel(schemaFacts.unsupportedDialects.length, "unsupported dialect declaration")}</summary>
+        <p>Meridian skipped reference analysis where the OpenAPI schema dialect is unsupported.</p>
+        <ul>{schemaFacts.unsupportedDialects.slice(0, 30).map(({ virtualPath, pointer }) =>
+          <li key={`${virtualPath}#${pointer}`}>{virtualPath} · {pointer}</li>)}</ul>
+        {schemaFacts.unsupportedDialects.length > 30 && <p>The first 30 locations are shown.</p>}
+      </details>}
       {restoredScope && <p>This draft contains the extracted facts and choices. Input-level coverage is available when reading the files.</p>}
       <p>Resolved connections show declared references to named components in the supplied files.</p>
       <label>Diagram title<input value={title} maxLength={120} disabled={!!busy} onChange={event => setTitle(event.target.value)} /></label>
