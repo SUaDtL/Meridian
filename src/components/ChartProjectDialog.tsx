@@ -70,6 +70,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
   const [file, setFile] = useState<File>();
   const [raw, setRaw] = useState<ChartInput>();
   const [columns, setColumns] = useState<ColumnConfirmation[]>([]);
+  const [excludedColumns, setExcludedColumns] = useState<ReadonlySet<number>>(new Set());
   const [dataset, setDataset] = useState<ChartDataset>();
   const [conversions, setConversions] = useState<ConfirmedChartInput["conversions"]>();
   const [spec, setSpec] = useState<ChartSpec>();
@@ -157,16 +158,19 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       setFile(undefined);
       setRaw(data);
       setColumns(data.headings.map(name => ({ name, type: "string", unit: "", emptyIsNull: false })));
+      setExcludedColumns(new Set());
       setStage("columns");
     } });
   }
 
   function confirmColumns() {
     if (!raw) return;
+    const choices = columns.map((column, index) => excludedColumns.has(index) ? null : column);
     void perform({ label: "Checking the typed data", async run(signal, extended) {
-      const typed = await runAuthoringWorker<ConfirmedChartInput>(() => new Worker(), { action: "confirm", input: raw, columns },
+      const typed = await runAuthoringWorker<ConfirmedChartInput>(() => new Worker(), { action: "confirm", input: raw, columns: choices },
         signal, "Checking the typed data", extended);
       signal.throwIfAborted();
+      setColumns(choices.filter(column => column !== null));
       setDataset(typed.dataset);
       setConversions(typed.conversions);
       setSpec(mapping(typed.dataset, "bar"));
@@ -442,42 +446,56 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       <label className="chart-import">Import a Meridian chart project<input type="file" accept=".json,application/json" disabled={!!busy} onChange={importSaved} /></label>
     </>}
     {stage === "columns" && raw && <form className="heading-form" onSubmit={event => { event.preventDefault(); confirmColumns(); }}>
-      <p>{raw.rows.length.toLocaleString()} rows · {columns.length} columns</p>
+      <p>{raw.rows.length.toLocaleString()} rows · {columns.length - excludedColumns.size} of {columns.length} columns kept</p>
       <div className="chart-columns">
         {columns.map((column, index) => <fieldset key={index} disabled={!!busy}>
           <legend>{raw.headings[index] || `Column ${index + 1}`}</legend>
-          <p className="muted-note">First row: {String(raw.rows[0]?.cells[index] ?? "Missing")}</p>
-          <label>Name<input value={column.name} maxLength={200} onChange={event => changeColumn(index, { name: event.target.value })} /></label>
-          <label>Type<select value={column.type} onChange={event => changeColumn(index, { type: event.target.value as FieldType })}>
-            {fieldTypes.map(type => <option key={type} value={type}>{({ string: "Text", number: "Number", date: "Date", datetime: "Timestamp", boolean: "Boolean" })[type]}</option>)}
-          </select></label>
-          <label>Unit<input value={column.unit} maxLength={80} onChange={event => changeColumn(index, { unit: event.target.value })} /></label>
-          {column.type === "number" && raw.format !== "json" && <>
-            <label>Decimal separator<select value={column.numeric?.decimal ?? defaultLocale.decimal} onChange={event => {
-              const decimal = event.target.value as NumberLocale["decimal"];
-              const previous = column.numeric?.grouping ?? defaultLocale.grouping;
-              changeColumn(index, { numeric: { decimal, grouping: previous === decimal ? "none" : previous } });
-            }}><option value="period">Period</option><option value="comma">Comma</option></select></label>
-            <label>Thousands separator<select value={column.numeric?.grouping ?? defaultLocale.grouping} onChange={event => {
-              changeColumn(index, { numeric: { decimal: column.numeric?.decimal ?? defaultLocale.decimal, grouping: event.target.value as NumberLocale["grouping"] } });
-            }}>
-              <option value="none">None</option>
-              <option value="period" disabled={(column.numeric?.decimal ?? defaultLocale.decimal) === "period"}>Period</option>
-              <option value="comma" disabled={column.numeric?.decimal === "comma"}>Comma</option>
-              <option value="space">Space</option>
+          <label className="chart-option">
+            <input type="checkbox" checked={!excludedColumns.has(index)} onChange={event => {
+              const include = event.target.checked;
+              setExcludedColumns(previous => {
+                const next = new Set(previous);
+                if (include) next.delete(index);
+                else next.add(index);
+                return next;
+              });
+              resetNotice();
+            }} />Keep this column
+          </label>
+          {!excludedColumns.has(index) && <>
+            <p className="muted-note">First row: {String(raw.rows[0]?.cells[index] ?? "Missing")}</p>
+            <label>Name<input value={column.name} maxLength={200} onChange={event => changeColumn(index, { name: event.target.value })} /></label>
+            <label>Type<select value={column.type} onChange={event => changeColumn(index, { type: event.target.value as FieldType })}>
+              {fieldTypes.map(type => <option key={type} value={type}>{({ string: "Text", number: "Number", date: "Date", datetime: "Timestamp", boolean: "Boolean" })[type]}</option>)}
+            </select></label>
+            <label>Unit<input value={column.unit} maxLength={80} onChange={event => changeColumn(index, { unit: event.target.value })} /></label>
+            {column.type === "number" && raw.format !== "json" && <>
+              <label>Decimal separator<select value={column.numeric?.decimal ?? defaultLocale.decimal} onChange={event => {
+                const decimal = event.target.value as NumberLocale["decimal"];
+                const previous = column.numeric?.grouping ?? defaultLocale.grouping;
+                changeColumn(index, { numeric: { decimal, grouping: previous === decimal ? "none" : previous } });
+              }}><option value="period">Period</option><option value="comma">Comma</option></select></label>
+              <label>Thousands separator<select value={column.numeric?.grouping ?? defaultLocale.grouping} onChange={event => {
+                changeColumn(index, { numeric: { decimal: column.numeric?.decimal ?? defaultLocale.decimal, grouping: event.target.value as NumberLocale["grouping"] } });
+              }}>
+                <option value="none">None</option>
+                <option value="period" disabled={(column.numeric?.decimal ?? defaultLocale.decimal) === "period"}>Period</option>
+                <option value="comma" disabled={column.numeric?.decimal === "comma"}>Comma</option>
+                <option value="space">Space</option>
+              </select></label>
+            </>}
+            <label className="chart-option"><input type="checkbox" checked={column.emptyIsNull} onChange={event => changeColumn(index, { emptyIsNull: event.target.checked })} />Treat empty fields as missing</label>
+            <label>Invalid values<select value={column.invalidToNull ? "null" : "block"}
+              onChange={event => changeColumn(index, { invalidToNull: event.target.value === "null" })}>
+              <option value="block">Require valid values</option><option value="null">Convert invalid nonempty values to missing</option>
             </select></label>
           </>}
-          <label className="chart-option"><input type="checkbox" checked={column.emptyIsNull} onChange={event => changeColumn(index, { emptyIsNull: event.target.checked })} />Treat empty fields as missing</label>
-          <label>Invalid values<select value={column.invalidToNull ? "null" : "block"}
-            onChange={event => changeColumn(index, { invalidToNull: event.target.value === "null" })}>
-            <option value="block">Require valid values</option><option value="null">Convert invalid nonempty values to missing</option>
-          </select></label>
         </fieldset>)}
       </div>
       <p className="muted-note">Meridian keeps the confirmed typed data. It discards the input file bytes.</p>
       <div className="dialog-actions">
         <button className="button quiet" type="button" disabled={!!busy} onClick={() => { setStage("choose"); setRaw(undefined); resetNotice(); }}>Choose another file</button>
-        <button className="button primary" disabled={!!busy}>Confirm columns</button>
+        <button className="button primary" disabled={!!busy || excludedColumns.size === columns.length}>Confirm columns</button>
       </div>
     </form>}
     {stage === "mapping" && dataset && spec && <form className="heading-form" onSubmit={event => { event.preventDefault(); review(); }}>

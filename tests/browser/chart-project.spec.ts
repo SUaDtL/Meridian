@@ -277,3 +277,38 @@ test('finds a later chart value, changes visible columns, and navigates rows in 
     await context.close();
   }
 });
+
+test('recovers an oversized typed dataset by explicitly excluding a column before creation', async ({ page }) => {
+  const payload = 'Excluded field '.padEnd(1950, 'x');
+  const rows = Array.from({ length: 760 }, () => `All,${payload},1`);
+  const csv = Buffer.from(['Category,Notes,Value', ...rows].join('\n'));
+  expect(csv.byteLength).toBeLessThan(2_000_000);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Chart values' }).click();
+  const chart = page.getByRole('dialog', { name: 'Chart values' });
+  await chart.getByLabel('Chart data file').setInputFiles({ name: 'expanded.csv', mimeType: 'text/csv', buffer: csv });
+  await chart.getByRole('button', { name: 'Read data' }).click();
+  await chart.getByRole('group', { name: 'Value', exact: true }).getByLabel('Type').selectOption('number');
+  const confirm = chart.getByRole('button', { name: 'Confirm columns' });
+  await confirm.click();
+  await expect(chart.getByRole('alert')).toContainText('confirmed dataset exceeds 1,500,000 bytes');
+  await expect(chart.getByRole('button', { name: 'Create chart project' })).toHaveCount(0);
+  const kept = chart.getByRole('group', { name: 'Notes', exact: true }).getByRole('checkbox', { name: 'Keep this column' });
+  await kept.press('Space');
+  await expect(kept).not.toBeChecked();
+  await expect(chart.getByText('760 rows · 2 of 3 columns kept')).toBeVisible();
+  await confirm.click();
+  await chart.getByLabel('Title', { exact: true }).fill('Reduced data');
+  await chart.getByLabel('Aggregation').selectOption('sum');
+  await chart.getByRole('button', { name: 'Review chart' }).click();
+  await expect(chart.getByRole('table', { name: 'Displayed values' }).getByRole('row', { name: 'All 760 760 760 Included' })).toBeVisible();
+  await chart.getByRole('button', { name: 'Create chart project' }).click();
+  await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
+  const saved = await download(page, chart.getByRole('button', { name: 'Download chart project' }));
+  expect(saved).not.toMatch(/Excluded field|"Notes"/);
+  const { dataset, revision } = JSON.parse(saved);
+  expect(revision).toBe(0);
+  expect(dataset.fields.map((field: { name: string }) => field.name)).toEqual(['Category', 'Value']);
+  expect(dataset.rows.map((row: { cells: string[] }) => row.cells)).toEqual(rows.map(() => ['All', '1']));
+});

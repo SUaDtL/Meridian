@@ -2,7 +2,7 @@ import { confirmChartColumns, readChartInput, type ChartInput, type ChartInputFo
 
 type ChartWorkerAction =
   | { action: 'read'; bytes: ArrayBuffer; format: ChartInputFormat }
-  | { action: 'confirm'; input: ChartInput; columns: ColumnConfirmation[] };
+  | { action: 'confirm'; input: ChartInput; columns: (ColumnConfirmation | null)[] };
 
 self.onmessage = ({ data }: MessageEvent<ChartWorkerAction & { id: string; version: 1 }>) => {
   if (data?.version !== 1 || typeof data.id !== 'string') return;
