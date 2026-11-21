@@ -1,4 +1,6 @@
 import { solidTextContrast, type SolidTextPaint } from './solid-text-color';
+import { analyzeCrossings, type CrossingEvidence, type CrossingFinding } from './crossing-findings';
+import type { RoutePoint } from './route-geometry';
 
 export type ViewingProfile = { width: number; height?: number; padding: number };
 export type FrameGeometry = { width: number; height: number; diagramScale: number };
@@ -10,6 +12,7 @@ export type ReadabilityTarget = {
   typography: boolean;
   measuredLabelSize?: number;
   labelOverflowInDiagram?: number;
+  measuredRoute?: RoutePoint[];
   solidTextPaint?: SolidTextPaint;
   from: string | null;
   to: string | null;
@@ -20,11 +23,13 @@ export type ReadabilityFinding =
   | { rule: 'QC-03'; target: string; pixels: number }
   | { rule: 'QC-04'; target: string; pixels: number }
   | { rule: 'QC-05'; targets: string[] }
-  | { rule: 'QC-06'; regions: string[][] };
+  | { rule: 'QC-06'; regions: string[][] }
+  | CrossingFinding;
 
 export type ReadabilityReport = {
   findings: ReadabilityFinding[];
   coverage: { rule: ReadabilityFinding['rule']; measured: number; unknown: number; inapplicable: number }[];
+  crossings: CrossingEvidence;
 };
 
 export const minimumAdvisoryLabelSize = 14;
@@ -146,5 +151,7 @@ export function analyzeReadability(targets: readonly ReadabilityTarget[], profil
     separation.measured = 1;
     if (regions.length > 1) findings.push({ rule: 'QC-06', regions });
   }
-  return { findings, coverage: [size, names, separation, contrast, containment] };
+  const crossings = analyzeCrossings(targets);
+  findings.push(...crossings.findings);
+  return { findings, coverage: [size, names, separation, contrast, containment, crossings.coverage], crossings: crossings.evidence };
 }

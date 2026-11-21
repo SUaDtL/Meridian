@@ -3,6 +3,7 @@ import type { DesignPresetId, DesignState, ElementCapability, ElementStyle, Rend
 import { DEFAULT_SETTINGS, getTheme } from './themes';
 import { boxesOverlap, measureSolidNodeText, svgTextFragments, type MeasuredSolidText } from './authoring/measure-solid-text';
 import { measureLabelOverflow } from './authoring/measure-label-containment';
+import { flattenRoute, routeSegmentLimit } from './authoring/route-geometry';
 
 const NS = 'http://www.w3.org/2000/svg';
 const FORBIDDEN = new Set(['__proto__', 'prototype', 'constructor']);
@@ -421,6 +422,7 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
   const labels = new Map<string, SVGElement>();
   const contrast = new Map<string, MeasuredSolidText>();
   const canMeasurePaint = !elements.some(item => item.kind === 'group' || (item.kind === 'edge' && item.capabilities.includes('typography')));
+  const routeBudget = { remaining: routeSegmentLimit };
   for (const label of svg.querySelectorAll<SVGElement>('g.edgeLabel[data-element-owner]')) labels.set(label.getAttribute('data-element-owner')!, label);
   const positive = (value: string | undefined) => {
     const number = Number.parseFloat(value ?? '');
@@ -429,10 +431,16 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
   for (const item of elements) {
     const target = targets.get(item.key);
     if (!target) continue;
+    let routePath: string | null = null;
     if (view) {
       const shapes = shapesFor(target, item.kind);
       const [shape] = shapes;
       const shapeStyle = shape ? view.getComputedStyle(shape) : undefined;
+      if (routeBudget.remaining && item.kind === 'edge' && target.localName === 'path' && shapeStyle?.stroke !== 'none'
+        && shapeStyle?.visibility === 'visible' && shapeStyle.display !== 'none' && shapeStyle.clipPath === 'none'
+        && Number(shapeStyle.strokeOpacity) > 0 && Number(shapeStyle.opacity) > 0) {
+        routePath = target.getAttribute('d');
+      }
       const label = item.kind === 'edge' ? labels.get(item.key) : target;
       const text = label?.querySelector<SVGElement>('text tspan') ?? label?.querySelector<SVGElement>('text');
       const textStyle = text ? view.getComputedStyle(text) : undefined;
@@ -465,6 +473,7 @@ export function measureDesignElements(svg: SVGSVGElement, elements: RenderElemen
       const box = target.getBBox(), matrix = target.getScreenCTM();
       if (!matrix) continue;
       const transform = inverse.multiply(matrix);
+      if (routePath && transform.is2D !== false) item.measuredRoute = flattenRoute(routePath, transform, routeBudget);
       const corners = [[box.x, box.y], [box.x + box.width, box.y], [box.x, box.y + box.height], [box.x + box.width, box.y + box.height]].map(([x, y]) => new DOMPoint(x, y).matrixTransform(transform));
       const x = Math.min(...corners.map(point => point.x)), y = Math.min(...corners.map(point => point.y));
       item.bounds = { x, y, width: Math.max(...corners.map(point => point.x)) - x, height: Math.max(...corners.map(point => point.y)) - y };
