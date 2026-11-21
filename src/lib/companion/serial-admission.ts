@@ -1,10 +1,13 @@
 import { DatabaseSync } from 'node:sqlite';
+import { assistRequestTimestamp } from '../authoring/assist-request-id.ts';
 import { checkRequestClock, checkTicketClock, requestRetention } from './admission-clock.ts';
 import { priceCeiling, type PricePolicy } from './price-policy.ts';
 import type { TicketClaims } from './signed-ticket.ts';
 
 const dayMs = 24 * 60 * 60 * 1000;
 const minuteMs = 60_000;
+const resultLifetimeMs = 15 * minuteMs;
+const maxSealedResultBytes = 128 * 1024 + 12 + 16;
 const moneyLimit = 999_999_999_999_999n;
 const globalBucket = '*';
 const digestPattern = /^[0-9a-f]{64}$/;
@@ -23,6 +26,11 @@ export type VerifiedGenerationTicket = {
 };
 
 type GenerationState = 'running' | 'uncertain' | 'succeeded' | 'failed';
+type RetainedResult = { bytes: Uint8Array; completedAtMs: number };
+type GenerationStatus =
+  | { code: 'NOT_FOUND' }
+  | { code: 'ISSUED'; ticketExpiresAtMs: number }
+  | { code: 'STATUS'; state: GenerationState; amount: bigint; sealedResult?: Uint8Array };
 type Result =
   | { code: 'RESERVED'; amount: bigint }
   | { code: 'EXISTING'; state: GenerationState; amount: bigint }
@@ -79,6 +87,12 @@ const schema = `
   ) STRICT;
   CREATE INDEX IF NOT EXISTS generation_subject_time ON generations (subject, started_ms);
   CREATE INDEX IF NOT EXISTS generation_state ON generations (state);
+  CREATE TABLE IF NOT EXISTS proposal_results (
+    ticket_id TEXT PRIMARY KEY REFERENCES generations (ticket_id) ON DELETE CASCADE,
+    expires_ms INTEGER NOT NULL,
+    ciphertext BLOB NOT NULL
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS proposal_retention ON proposal_results (expires_ms);
   CREATE TABLE IF NOT EXISTS daily_commitments (
     day INTEGER NOT NULL,
     bucket TEXT NOT NULL,
@@ -114,7 +128,7 @@ export class CompanionAdmissionLedger {
     this.dailyGlobalCap = limits.dailyGlobalMicrousd;
     this.db = new DatabaseSync(filename);
     try {
-      this.db.exec('PRAGMA busy_timeout = 2500; PRAGMA secure_delete = ON;');
+      this.db.exec('PRAGMA busy_timeout = 2500; PRAGMA secure_delete = ON; PRAGMA foreign_keys = ON;');
       this.db.exec(schema);
     } catch (error) {
       this.db.close();
@@ -169,6 +183,7 @@ export class CompanionAdmissionLedger {
   pruneExpired(nowMs: number) {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new RangeError('Invalid server clock');
     this.transaction(() => {
+      this.db.prepare('DELETE FROM proposal_results WHERE expires_ms <= ?').run(nowMs);
       this.db.prepare(`
         INSERT INTO replay_tombstones (subject, request_id, expires_ms)
         SELECT subject, request_id, replay_expires_ms FROM ticket_issuance
@@ -259,11 +274,34 @@ export class CompanionAdmissionLedger {
     return Number(update.run(nowMs - 30_000).changes);
   }
 
-  settleKnown(ticket: VerifiedGenerationTicket, state: 'succeeded' | 'failed', actualMicrousd: bigint): boolean {
+  status(subject: string, requestId: string, nowMs: number): GenerationStatus {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new RangeError('Invalid server clock');
+    if (!fitsPattern(subject, digestPattern, 64) || assistRequestTimestamp(requestId) === undefined) {
+      return { code: 'NOT_FOUND' };
+    }
+    const row = this.db.prepare(`
+      SELECT i.expires_seconds, g.state, CAST(g.amount AS TEXT) AS amount, r.ciphertext
+      FROM ticket_issuance i
+      LEFT JOIN generations g ON g.ticket_id = i.ticket_id
+      LEFT JOIN proposal_results r ON r.ticket_id = i.ticket_id AND r.expires_ms > ?
+      WHERE i.subject = ? AND i.request_id = ? AND i.status_expires_ms > ?
+    `).get(nowMs, subject, requestId, nowMs);
+    if (!row) return { code: 'NOT_FOUND' };
+    if (row.state === null) return { code: 'ISSUED', ticketExpiresAtMs: Number(row.expires_seconds) * 1000 };
+    const result = row.ciphertext instanceof Uint8Array ? { sealedResult: row.ciphertext } : {};
+    return { code: 'STATUS', state: row.state as GenerationState, amount: BigInt(String(row.amount)), ...result };
+  }
+
+  settleKnown(ticket: VerifiedGenerationTicket, state: 'succeeded' | 'failed', actualMicrousd: bigint, result?: RetainedResult): boolean {
     if (typeof actualMicrousd !== 'bigint' || actualMicrousd < 0n) throw new RangeError('Invalid known provider cost.');
+    if (result && (state !== 'succeeded' || !(result.bytes instanceof Uint8Array) ||
+        result.bytes.length <= 28 || result.bytes.length > maxSealedResultBytes ||
+        !Number.isSafeInteger(result.completedAtMs) || !Number.isSafeInteger(result.completedAtMs + resultLifetimeMs))) {
+      throw new RangeError('Invalid retained proposal result.');
+    }
     return this.transaction(() => {
       const row = this.db.prepare(`
-        SELECT day, CAST(amount AS TEXT) AS amount FROM generations
+        SELECT day, started_ms, CAST(amount AS TEXT) AS amount FROM generations
         WHERE subject = ? AND request_id = ? AND ticket_id = ? AND request_hash = ?
           AND state IN ('running', 'uncertain')
       `).get(ticket.subjectBinding, ticket.requestId, ticket.jti, ticket.requestHash);
@@ -277,6 +315,11 @@ export class CompanionAdmissionLedger {
       for (const bucket of [ticket.subjectBinding, globalBucket]) {
         const changed = update.run(release, Number(row.day), bucket);
         if (changed.changes !== 1) throw new Error('Generation commitment is missing.');
+      }
+      if (result) {
+        if (result.completedAtMs < Number(row.started_ms)) throw new RangeError('Invalid result completion time.');
+        this.db.prepare('INSERT INTO proposal_results (ticket_id, expires_ms, ciphertext) VALUES (?, ?, ?)')
+          .run(ticket.jti, result.completedAtMs + resultLifetimeMs, result.bytes);
       }
       return true;
     });
