@@ -17,7 +17,7 @@ export async function prepareManualSource(base: MermaidProjectV3, source: string
   signal?.throwIfAborted();
   if (!source.trim() || source.length > authoringLimits.sourceCodeUnits) throw new Error('Enter Mermaid source of up to 100,000 characters.');
   if (base.source === source) throw new Error('Change the Mermaid source before previewing it.');
-  const candidate = await renderDiagram(source, base.settings, {}, undefined, { signal }).catch(reason => {
+  const candidate = await renderDiagram(source, base.settings, {}, undefined, { signal, priority: 'preview' }).catch(reason => {
     throw explainMermaidSourceError(reason, source);
   });
   const model = flowchartModelFor(candidate);

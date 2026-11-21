@@ -179,7 +179,7 @@ export async function proveFlowchartFragment(
 ) {
   const plan = planFlowchartFragment(document.source, fragment);
   const source = applySourcePatches(document.source, plan.patches);
-  const render = (text: string) => renderDiagram(text, document.settings, {}, undefined, { signal });
+  const render = (text: string) => renderDiagram(text, document.settings, {}, undefined, { signal, priority: 'preview' });
   const current = await render(document.source);
   const before = readModel(flowchartModelFor(current), !!plan.existingGroups.size);
   verifySourceTopology(before, plan.topology, plan.existingGroups);
@@ -231,7 +231,7 @@ export async function proveFlowchartEdit(
   const groupedSource = canReadGroups ? groupedFlowchartTopology(document.source) : undefined;
   const sourceTopology = groupedSource?.topology ?? flowchartSubsetTopology(document.source);
   const groupedEdit = !!groupedSource?.groups.size;
-  const render = (text: string) => renderDiagram(text, document.settings, document.nodeAccents ?? {}, document.design, { signal });
+  const render = (text: string) => renderDiagram(text, document.settings, document.nodeAccents ?? {}, document.design, { signal, priority: 'preview' });
   const initial = await render(document.source);
   const before = readModel(flowchartModelFor(initial), groupedEdit);
   verifySourceTopology(before, sourceTopology, groupedSource?.groups);

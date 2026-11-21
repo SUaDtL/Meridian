@@ -6,7 +6,7 @@ import type { DesignState } from '../types/design';
 import { createDesign, decorateDesign, designRenderSource, measureDesignElements, type FlowModel } from './design';
 import { SourceDiagnosticError } from './authoring/source-diagnostics';
 import { RenderCache } from './render-cache';
-import { checkRenderSignal, latestRenderQueue, renderAborted } from './render-queue';
+import { checkRenderSignal, latestRenderQueue, renderAborted, type RenderPriority } from './render-queue';
 
 const NS = 'http://www.w3.org/2000/svg';
 const MAX_SOURCE = 100_000;
@@ -480,7 +480,7 @@ async function performRender({ settings, nodeAccents, design: inputDesign, prepa
 
 const renderQueue = latestRenderQueue(performRender);
 
-export async function renderDiagram(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState = createDesign(), options: { signal?: AbortSignal; projection?: RenderDesignProjection } = {}): Promise<RenderResult> {
+export async function renderDiagram(source: string, settings: StudioSettings, nodeAccents: Record<string, string>, design: DesignState = createDesign(), options: { signal?: AbortSignal; projection?: RenderDesignProjection; priority?: RenderPriority } = {}): Promise<RenderResult> {
   if (options.signal?.aborted) throw renderAborted();
   // Validate synchronously before scheduling, lazy-loading Mermaid, or reading
   // a cache. A rejected source must never touch the rendering DOM.
@@ -489,8 +489,8 @@ export async function renderDiagram(source: string, settings: StudioSettings, no
   const key = options.projection ? JSON.stringify([fingerprint, options.projection.key]) : fingerprint;
   const cached = resultCache.get(key);
   if (cached) {
-    renderQueue.cancel();
+    renderQueue.cancel(options.priority);
     return cached;
   }
-  return renderQueue.submit(key, { source, settings, nodeAccents, design, prepared, key, projection: options.projection }, options.signal);
+  return renderQueue.submit(key, { source, settings, nodeAccents, design, prepared, key, projection: options.projection }, options.signal, options.priority);
 }

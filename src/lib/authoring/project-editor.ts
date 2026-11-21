@@ -145,14 +145,14 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   async function prepareOrphanRemap(orphanId: string, targetId: string, expected: MermaidProjectV3, signal?: AbortSignal) {
     const base = current.document;
     if (closed || base !== expected) throw new Error('This project changed. Review the current annotations again.');
-    const rendered = await renderMermaidProject(base, signal);
+    const rendered = await renderMermaidProject(base, signal, 'preview');
     signal?.throwIfAborted();
     const table = rendered.targetTable;
     const target = table?.targets.find(item => item.id === targetId);
     const element = rendered.result.elements?.find(item => item.key === targetId);
     if (!table || !target || !element) throw new Error('Choose a measured element in the current diagram.');
     const { next, orphan } = buildAnnotationRemap(base, orphanId, target, element.capabilities);
-    const preview = await renderMermaidProject(next, signal);
+    const preview = await renderMermaidProject(next, signal, 'preview');
     signal?.throwIfAborted();
     if (closed || current.document !== base) throw new Error('This project changed. Review the current annotations again.');
     if (!preview.targetTable || verifiedTopology(preview.targetTable) !== verifiedTopology(table)) {
@@ -183,7 +183,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const ports = structuredClone(assignments);
     const { prepareComponentInsertion } = await import('./component-insertion');
     const candidate = await prepareComponentInsertion(base, snapshot, input, ports, signal);
-    const rendered = await renderMermaidProject(candidate.document, signal);
+    const rendered = await renderMermaidProject(candidate.document, signal, 'preview');
     signal?.throwIfAborted();
     if (closed || current.document !== base || !rendered.targetTable) {
       throw new Error('The project changed or the inserted component could not be verified.');
@@ -239,7 +239,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const { document, impact } = await prepareFlowchartCandidate(base, operation, signal);
     if (closed || current.document !== base) throw new Error('The project changed. Export a fresh request.');
     if (document === base) throw new Error('The suggestion makes no change to the current label.');
-    const preview = await renderMermaidProject(document, signal);
+    const preview = await renderMermaidProject(document, signal, 'preview');
     signal?.throwIfAborted();
     if (!preview.targetTable || closed || current.document !== base) throw new Error('The suggestion could not be verified against the current diagram.');
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
@@ -275,11 +275,11 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     signal?.throwIfAborted();
     const base = current.document;
     const scope = structuredClone(intent);
-    const accepted = scope.kind === 'diagram' && !scope.applyRoleShapes ? undefined : await renderMermaidProject(base, signal);
+    const accepted = scope.kind === 'diagram' && !scope.applyRoleShapes ? undefined : await renderMermaidProject(base, signal, 'preview');
     if (closed || current.document !== base) throw new Error('The project changed. Refresh the design preview.');
     const candidate = scope.kind === 'diagram' ? buildDesignRecipeCandidate(base, id, scope.applyRoleShapes === true, accepted)
       : buildScopedDesignRecipe(base, id, scope, accepted!);
-    const rendered = candidate.document === base && accepted ? accepted : await renderMermaidProject(candidate.document, signal);
+    const rendered = candidate.document === base && accepted ? accepted : await renderMermaidProject(candidate.document, signal, 'preview');
     if (accepted && 'selectedIds' in candidate) {
       const moved = verifyScopedDesign(accepted, rendered, candidate.proof, candidate.selectedIds);
       if (candidate.scope.typography) candidate.scope.typography.moved = moved;
@@ -312,13 +312,13 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const base = current.document;
     const selection = new Set(selected);
     const intent = { ...reset };
-    const accepted = await renderMermaidProject(base, signal);
+    const accepted = await renderMermaidProject(base, signal, 'preview');
     if (!accepted.targetTable || !sameBaseToken(expected, accepted.targetTable.baseToken) || closed || current.document !== base) {
       throw new Error('The diagram changed. Review the current selection.');
     }
     const candidate = buildDesignReset(base, accepted, selection, intent);
     const next = freezeSnapshot(candidate.document);
-    const rendered = await renderMermaidProject(next, signal);
+    const rendered = await renderMermaidProject(next, signal, 'preview');
     signal?.throwIfAborted();
     if (!rendered.targetTable || verifiedTopology(accepted.targetTable) !== verifiedTopology(rendered.targetTable)) {
       throw new Error('The reset could not be verified against the diagram topology and labels.');
@@ -339,14 +339,14 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     if (closed || !selected.size || selected.size > 1_500) throw new Error('Select up to 1,500 diagram elements.');
     const base = current.document;
     const selection = new Set(selected);
-    const accepted = await renderMermaidProject(base, signal);
+    const accepted = await renderMermaidProject(base, signal, 'preview');
     if (!accepted.targetTable || !sameBaseToken(expected, accepted.targetTable.baseToken) || closed || current.document !== base) {
       throw new Error('The diagram changed. Review the current selection.');
     }
     const scope = bulkTextSelection(accepted, selection);
     const ids = scope.eligible.map(item => item.id);
     const next = freezeSnapshot(buildBulkTextCandidate(base, ids, color));
-    const preview = await renderMermaidProject(next, signal);
+    const preview = await renderMermaidProject(next, signal, 'preview');
     signal?.throwIfAborted();
     verifyBulkTextCandidate(accepted, preview, ids, color);
     if (closed || current.document !== base) throw new Error('The diagram changed. Review the current selection.');
@@ -365,13 +365,13 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     if (closed) throw new Error('The project is closed.');
     const base = current.document;
     const viewing = { ...profile };
-    const accepted = await renderMermaidProject(base, signal);
+    const accepted = await renderMermaidProject(base, signal, 'preview');
     if (!accepted.targetTable || !sameBaseToken(expected, accepted.targetTable.baseToken) || closed || current.document !== base) {
       throw new Error('The diagram changed. Check readability again.');
     }
     const before = measureTargetContrast(accepted, base, elementId, viewing, kind);
     const { document, color } = buildContrastCandidate(base, elementId, before);
-    const rendered = await renderMermaidProject(document, signal);
+    const rendered = await renderMermaidProject(document, signal, 'preview');
     signal?.throwIfAborted();
     if (!rendered.targetTable || verifiedTopology(rendered.targetTable) !== verifiedTopology(accepted.targetTable)) {
       throw new Error('The proposed color did not preserve the verified diagram targets.');
@@ -404,10 +404,10 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const base = current.document;
     const { id, direction } = intent;
     const candidate = buildLayoutCandidate(base, { id, direction });
-    const accepted = await renderMermaidProject(base, signal);
+    const accepted = await renderMermaidProject(base, signal, 'preview');
     if (!accepted.targetTable) throw new Error('A verified flowchart is needed to compare layouts.');
     if (closed || current.document !== base) throw new Error('The project changed. Refresh the layout preview.');
-    const rendered = candidate.document === base ? accepted : await renderMermaidProject(candidate.document, signal);
+    const rendered = candidate.document === base ? accepted : await renderMermaidProject(candidate.document, signal, 'preview');
     signal?.throwIfAborted();
     if (!rendered.targetTable || verifiedTopology(accepted.targetTable) !== verifiedTopology(rendered.targetTable)) {
       throw new Error('The proposed layout did not preserve the verified diagram relationships.');
@@ -445,7 +445,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     signal?.throwIfAborted();
     const base = current.document;
     const choices = structuredClone(intent);
-    const rendered = await renderMermaidProject(base, signal);
+    const rendered = await renderMermaidProject(base, signal, 'preview');
     signal?.throwIfAborted();
     if (!rendered.targetTable) throw new Error('Render a verified flowchart before suggesting scenes.');
     if (closed || current.document !== base) throw new Error('The project changed. Prepare the story preview again.');
@@ -504,7 +504,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     };
     if (sceneId !== null && canonicalJson(scene) === canonicalJson(edited)) throw new Error('Change a scene property before previewing.');
     const selection = sceneId === null && selected ? [...selected] : undefined;
-    const rendered = await renderMermaidProject(base, signal);
+    const rendered = await renderMermaidProject(base, signal, 'preview');
     signal?.throwIfAborted();
     if (closed || base !== current.document || !rendered.targetTable) throw new Error('The scene could not be verified against the current diagram.');
     const scope = selection && resolveManualStoryScope(rendered.targetTable, selection);

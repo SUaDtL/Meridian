@@ -127,6 +127,69 @@ describe('latest-only render scheduling', () => {
     expect(maximum).toBe(1);
   });
 
+  it('keeps a held foreground render current while optional requests replace one another', async () => {
+    const held = deferred();
+    const started: string[] = [];
+    const queue = latestRenderQueue(async (input: string, signal) => {
+      started.push(input);
+      if (input === 'foreground') await held.promise;
+      expect(signal.aborted).toBe(false);
+      return input;
+    });
+    const current = queue.submit('foreground', 'foreground');
+    await Promise.resolve();
+    const obsolete = queue.submit('earlier', 'earlier', undefined, 'preview').catch(error => error.name);
+    const latest = queue.submit('later', 'later', undefined, 'preview');
+    expect(await obsolete).toBe('AbortError');
+    expect(started).toEqual(['foreground']);
+    held.release();
+    expect(await current).toBe('foreground');
+    expect(await latest).toBe('later');
+    expect(started).toEqual(['foreground', 'later']);
+  });
+
+  it('supersedes pending and running previews without allowing a later preview to overtake foreground', async () => {
+    const held = deferred();
+    const started: string[] = [];
+    const queue = latestRenderQueue(async (input: string, signal) => {
+      started.push(input);
+      if (input === 'active preview') {
+        await held.promise;
+        expect(signal.aborted).toBe(true);
+      }
+      return input;
+    });
+    const active = queue.submit('active', 'active preview', undefined, 'preview').catch(error => error.name);
+    await Promise.resolve();
+    const waiting = queue.submit('waiting', 'waiting preview', undefined, 'preview').catch(error => error.name);
+    const current = queue.submit('current', 'foreground');
+    const late = queue.submit('late', 'late preview', undefined, 'preview').catch(error => error.name);
+    queue.cancel('preview');
+    expect(await Promise.all([active, waiting, late])).toEqual(['AbortError', 'AbortError', 'AbortError']);
+    expect(started).toEqual(['active preview']);
+    held.release();
+    expect(await current).toBe('foreground');
+    expect(started).toEqual(['active preview', 'foreground']);
+  });
+
+  it('promotes a matching preview to foreground and protects it from preview cancellation', async () => {
+    const held = deferred();
+    const started: string[] = [];
+    const queue = latestRenderQueue(async (input: string, signal) => {
+      started.push(input);
+      await held.promise;
+      expect(signal.aborted).toBe(false);
+      return input;
+    });
+    const preview = queue.submit('same', 'resolved by shared work', undefined, 'preview');
+    await Promise.resolve();
+    const foreground = queue.submit('same', 'never started again');
+    queue.cancel('preview');
+    held.release();
+    expect(await Promise.all([preview, foreground])).toEqual(['resolved by shared work', 'resolved by shared work']);
+    expect(started).toEqual(['resolved by shared work']);
+  });
+
   it('shares an in-flight request without one consumer aborting the others', async () => {
     const task = deferred();
     let runs = 0;

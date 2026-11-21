@@ -174,7 +174,7 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
       const checked = await editor.prepareSource(source, base, controller.signal);
       const candidate = editor.readStructurePreview(checked.proposal);
       if (!candidate) throw new SourceDiagnosticError("stale", "The project changed. Reopen the editor to review the current revision.");
-      const rendered = await renderMermaidProject(candidate, controller.signal);
+      const rendered = await renderMermaidProject(candidate, controller.signal, "preview");
       controller.signal.throwIfAborted();
       if (!rendered.targetTable) throw new Error("The preview could not resolve the project’s diagram targets.");
       const svg = buildExportFrame(rendered.result, candidate).svg;
