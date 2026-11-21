@@ -3,7 +3,7 @@ import BulkTextColorDialog from "./BulkTextColorDialog";
 import HeadingEditor from "./HeadingEditor";
 import CommandPalette from "./CommandPalette";
 import Modal from "./Modal";
-import V3ProjectOutline from "./V3ProjectOutline";
+import V3ProjectOutline, { type OutlineView } from "./V3ProjectOutline";
 import ReadabilityDialog, { initialReadabilityProfile, type ReadabilityProfileChoice } from "./ReadabilityDialog";
 import V3ComparisonDialog from "./V3ComparisonDialog";
 import V3GroupStoryDialog, { initialGroupStoryDraft } from "./V3GroupStoryDialog";
@@ -64,6 +64,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [deleteConnections, setDeleteConnections] = useState<{ ids: string[]; hidden: number }>();
   const [groupMembers, setGroupMembers] = useState<{ ids: string[]; hidden: number }>();
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [restoredOutline, setRestoredOutline] = useState<OutlineView>();
+  const [outlineReturn, setOutlineReturn] = useState<{ source: string; view: OutlineView }>();
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [editTarget, setEditTarget] = useState<string>();
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
@@ -345,10 +347,16 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     sourceDetails.current.open = true;
     requestAnimationFrame(() => sourceDetails.current?.querySelector("summary")?.focus());
   }
-  function jumpToSource(location: OutlineSourceLocation) {
+  function openOutline(view?: OutlineView) {
+    setRestoredOutline(view);
+    setOutlineOpen(true);
+  }
+
+  function jumpToSource(location: OutlineSourceLocation, view: OutlineView) {
     if (!source || !sourceDetails.current) return;
     setOutlineOpen(false);
     setHighlight({ ...location, source });
+    setOutlineReturn({ source, view });
     sourceDetails.current.open = true;
     requestAnimationFrame(() => sourceMark.current?.focus());
   }
@@ -410,7 +418,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: busy ? "Wait for the current action to finish." : project?.componentInstances.length ? undefined : "This project has no component instances.",
       run: () => setDetachOpen(true) },
     { id: "find-element", title: "Find element", category: "Diagram", synonyms: ["outline", "relationships"],
-      unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to show its elements.", run: () => setOutlineOpen(true) },
+      unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to show its elements.", run: () => openOutline() },
     { id: "check-readability", title: "Check readability", category: "Design", synonyms: ["quality", "label size"],
       unavailable: targetTable?.targets.length ? undefined : "A verified flowchart is needed for readability checks.", run: openReadability },
     { id: "explore-designs", title: "Explore designs", category: "Design", synonyms: ["design recipes", "compare styles"],
@@ -438,15 +446,15 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose current node declarations." : undefined), run: () => setEditFlowchart("addGroup") },
     { id: "ungroup", title: "Ungroup", category: "Diagram", synonyms: ["remove container", "keep group members"],
       unavailable: busy ? "Wait for the current action to finish." : ungroupableGroups.size ? undefined : "Choose a supported group in a rendered flowchart.",
-      run: () => removableGroup ? setEditFlowchart("removeGroup") : setOutlineOpen(true) },
+      run: () => removableGroup ? setEditFlowchart("removeGroup") : openOutline() },
     { id: "delete-group-contents", title: "Delete group and contents", category: "Diagram",
       unavailable: busy ? "Wait for the current action to finish." : groupDeletions.size ? undefined
         : "Choose a supported group in a rendered flowchart.",
-      run: () => defaultGroupDeletion && !defaultGroupDeletion.unavailable ? setEditFlowchart("removeGroupContents") : setOutlineOpen(true) },
+      run: () => defaultGroupDeletion && !defaultGroupDeletion.unavailable ? setEditFlowchart("removeGroupContents") : openOutline() },
     { id: "move-into-group", title: "Move node into group", category: "Diagram",
       unavailable: busy ? "Wait for the current action to finish." : groupMoveOptions.size ? undefined
         : "Choose a group with an eligible standalone node to move into it.",
-      run: () => defaultMoveAvailable ? setEditFlowchart("moveToGroup") : setOutlineOpen(true) },
+      run: () => defaultMoveAvailable ? setEditFlowchart("moveToGroup") : openOutline() },
     { id: "rename-connection", title: "Edit connection label", category: "Diagram", synonyms: ["rename edge", "label relationship"],
       unavailable: labelEditingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined),
       run: () => setEditFlowchart("setEdgeLabel") },
@@ -478,6 +486,12 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               {!currentFrame && !renderError && <p role="status">Rendering the current diagram…</p>}
               {renderError && <p role="alert">{renderError}</p>}
               <details ref={sourceDetails}><summary>Mermaid source</summary>
+                {outlineAvailable && outlineReturn && outlineReturn.source === source && <div className="recovery-actions">
+                  <button className="button secondary" onClick={() => {
+                    openOutline(outlineReturn.view);
+                    setOutlineReturn(undefined);
+                  }}>Return to outline</button>
+                </div>}
                 <pre>{highlighted ? <>{project.source.slice(0, highlighted.from)}
                   <mark ref={sourceMark} tabIndex={-1} aria-label={`Source line ${highlighted.line}`}>{project.source.slice(highlighted.from, highlighted.to)}</mark>
                   {project.source.slice(highlighted.to)}</> : project.source}</pre>
@@ -494,7 +508,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
             )}
             <div className="recovery-actions">
               <button className="button secondary" disabled={busy} aria-keyshortcuts="Control+K Meta+K" onClick={() => setCommandsOpen(true)}>Commands</button>
-              {outlineAvailable && <button ref={outlineButton} className="button secondary" disabled={busy} onClick={() => setOutlineOpen(true)}>Outline</button>}
+              {outlineAvailable && <button ref={outlineButton} className="button secondary" disabled={busy} onClick={() => openOutline()}>Outline</button>}
               {!!targetTable?.targets.length && <button className="button secondary" disabled={busy} onClick={openReadability}>Check readability</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("design")}>Explore designs</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
@@ -556,7 +570,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         </div>
       </Modal>
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
-      {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
+      {outline && <V3ProjectOutline items={outline} selected={outlineSelection} restoredView={restoredOutline} onSelection={setOutlineSelection}
         canRename={!labelEditingUnavailable} onClose={() => setOutlineOpen(false)}
         onRename={renameFromOutline} onSource={jumpToSource} onFrame={frameOutlineTargets} onBulkText={setBulkTextHidden}
         canUngroup={id => !busy && ungroupableGroups.has(id)} onUngroup={id => {
