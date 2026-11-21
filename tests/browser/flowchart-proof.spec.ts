@@ -158,6 +158,77 @@ test('a migrated v3 project applies, undoes and reopens a guarded edit across ta
   expect(reopened).toEqual({ ...original, revision: 2, updatedAt: reopened.updatedAt });
 });
 
+test('a pending IndexedDB save checkpoints the latest Undo and preserves a stale tab’s local edit', async ({ page, context }) => {
+  const { createDocument } = await import('../../src/lib/storage');
+  const source = '\uFEFFflowchart LR\r\nA[One]\r\n';
+  const project = { ...createDocument(), title: 'Starting heading', source };
+  await expect(page.evaluate(input => window.seedProjectEditor(input), project)).resolves.toBe('migrated');
+  const original = await page.evaluate(id => window.openProjectEditorFixture(id), project.id);
+  const peer = await context.newPage();
+  try {
+    await peer.goto(fixtureUrl);
+    await peer.waitForFunction(() => 'openProjectEditorFixture' in window);
+    await peer.evaluate(id => window.openProjectEditorFixture(id), project.id);
+
+    const checkpoint = await page.evaluate(async id => {
+      const editor = window.projectEditor;
+      const put = IDBObjectStore.prototype.put;
+      const writes: number[] = [];
+      let holding = true;
+      let firstPut!: () => void;
+      const pending = new Promise<void>(resolve => { firstPut = resolve; });
+      IDBObjectStore.prototype.put = function (value, key) {
+        const request = put.call(this, value, key);
+        if (this.name !== 'documents' || value.id !== id) return request;
+        writes.push(value.document.revision);
+        if (writes.length === 1) {
+          const holdTransaction = () => {
+            if (holding) this.get(id).onsuccess = holdTransaction;
+          };
+          holdTransaction();
+          firstPut();
+        }
+        return request;
+      };
+      let flushing: Promise<void> | undefined;
+      try {
+        await editor.edit('First checkpoint');
+        flushing = editor.flush();
+        await Promise.race([pending, flushing]);
+        if (!writes.length) throw new Error('The first save did not reach IndexedDB.');
+        await editor.edit('Retained heading');
+        await editor.edit('Undone heading');
+        const undone = editor.undo();
+        const beforeRelease = editor.saveState();
+        holding = false;
+        await flushing;
+        return { writes, undone, beforeRelease, saved: editor.saveState(), document: editor.snapshot() };
+      } finally {
+        holding = false;
+        await flushing;
+        IDBObjectStore.prototype.put = put;
+      }
+    }, project.id);
+    expect(checkpoint).toMatchObject({
+      writes: [1, 4], undone: true,
+      beforeRelease: { phase: 'saving', savedRevision: 0, workingRevision: 4 },
+      saved: { phase: 'saved', savedRevision: 4, workingRevision: 4 },
+    });
+    expect(checkpoint.document).toEqual({ ...original, title: 'Retained heading', revision: 4, updatedAt: checkpoint.document.updatedAt });
+
+    const competing = await peer.evaluate(async () => {
+      const editor = window.projectEditor;
+      await editor.edit('Competing edit');
+      await editor.flush();
+      return { state: editor.saveState(), document: editor.snapshot() };
+    });
+    expect(competing).toMatchObject({ state: { phase: 'conflict', savedRevision: 0, workingRevision: 1 }, document: { title: 'Competing edit', source } });
+    await peer.reload();
+    await peer.waitForFunction(() => 'openProjectEditorFixture' in window);
+    await expect(peer.evaluate(id => window.openProjectEditorFixture(id), project.id)).resolves.toEqual(checkpoint.document);
+  } finally { await peer.close(); }
+});
+
 test('guarded v3 Add, Rename and Connect preserve source bytes and UUIDs through Undo and reopen', async ({ page }) => {
   const { createDocument } = await import('../../src/lib/storage');
   const source = '\uFEFFflowchart LR\r\n  %% Preserve this comment\r\n  A["Start"]\r\n';
