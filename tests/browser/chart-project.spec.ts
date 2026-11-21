@@ -28,6 +28,7 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
   const conversion = chart.getByRole('region', { name: 'Data conversion' });
   await expect(conversion).toContainText('Requests · 1 invalid · 0 empty');
   await chart.getByLabel('Title', { exact: true }).fill('Requests by team');
+  await chart.getByLabel('Subtitle', { exact: true }).fill('Résumé 📊');
   await chart.getByLabel('Aggregation').selectOption('sum');
   await chart.getByRole('button', { name: 'Review chart' }).click();
   await expect(conversion).toContainText('Requests · 1 invalid · 0 empty');
@@ -43,6 +44,9 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
   await chart.getByRole('button', { name: 'Review chart' }).click();
   await expect(chart.getByRole('img', { name: 'Requests by team' })).toBeVisible();
   const table = chart.getByRole('table', { name: 'Displayed values' });
+  const storage = chart.getByRole('region', { name: 'Chart storage' });
+  const datasetSize = await storage.getByText(/^Typed dataset /).textContent();
+  const projectSize = await storage.getByText(/^Complete project /).textContent();
   await expect(table.getByRole('row', { name: 'North 0.3 2 2 Included' })).toBeVisible();
   await expect(table.getByRole('row', { name: 'South Missing 1 0 Missing Y' })).toBeVisible();
   await page.screenshot({ path: info.outputPath('chart-review-desktop.png') });
@@ -51,7 +55,11 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
   await page.screenshot({ path: info.outputPath('chart-review-mobile.png') });
   await chart.getByRole('button', { name: 'Create chart project' }).click();
   await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
-  const initial = JSON.parse(await download(page, chart.getByRole('button', { name: 'Download chart project' })));
+  const initialText = await download(page, chart.getByRole('button', { name: 'Download chart project' }));
+  const initial = JSON.parse(initialText);
+  expect(datasetSize).toMatch(`Typed dataset ${Buffer.byteLength(JSON.stringify(initial.dataset))} of`);
+  expect(projectSize).toMatch(`Complete project ${Buffer.byteLength(initialText).toLocaleString('en-US')} of`);
+  expect(Buffer.byteLength(initialText)).toBeGreaterThan(initialText.length);
   expect(initial).toMatchObject({
     schema: 'meridian-chart/v1', documentKind: 'chart',
     dataset: { rows: [{ cells: ['North', '0.1'] }, { cells: ['North', '0.2'] }, { cells: ['South', null] }] },

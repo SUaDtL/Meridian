@@ -48,6 +48,10 @@ const calendarDate = /^(\d{4})-(\d\d)-(\d\d)$/;
 const offsetTime = /^(\d{4}-\d\d-\d\d)T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.(\d+))?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
 const unpairedSurrogate = /[\uD800-\uDFFF]/u;
 
+export function chartJsonBytes(value: ChartDataset | ChartProject) {
+  return encoder.encode(JSON.stringify(value)).byteLength;
+}
+
 function canonicalDate(value: string) {
   const parts = calendarDate.exec(value);
   if (!parts || parts[0] !== value) throw new Error('Use a valid date in YYYY-MM-DD form.');
@@ -101,7 +105,7 @@ export function validateChartDataset(dataset: ChartDataset) {
       }
     }
   }
-  if (encoder.encode(JSON.stringify(dataset)).byteLength > chartDataLimits.datasetBytes) {
+  if (chartJsonBytes(dataset) > chartDataLimits.datasetBytes) {
     throw new Error('The confirmed dataset exceeds 1,500,000 bytes. Keep fewer rows or columns.');
   }
   return dataset;
