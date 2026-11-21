@@ -14,7 +14,7 @@ type Operation = NativeFlowchartEdit["op"];
 type NodeChoice = { id: string; label: string };
 type EdgeChoice = NodeChoice & { sourceId: string | null; targetId: string | null; explicit: boolean; text: string; direction: ConnectionDirection | null };
 type Preview = { proposal: ReadyProposal; url: string; impact?: ElementRemovalImpact };
-type EditDestination = { operation: Operation } | { target: string };
+type EditDestination = { operation: Operation } | { target: string } | { switchProject: true };
 const nextRoles: readonly SemanticRole[] = ["process", "decision", "neutral", "service", "database", "queue", "external", "person"];
 const emptyBranches = (): DecisionBranch[] => [
   { label: "", destination: { kind: "existing", id: "" } },
@@ -23,7 +23,7 @@ const emptyBranches = (): DecisionBranch[] => [
 
 export default function V3StructureEditor({ editor, nodes, edges, group, movableNodes, flatFlowchart, canEditLabels, canUngroup,
   initialOperation = "addNode", initialTarget = "",
-  deleteConnections, groupMembers, groupRemoval, onApply, onBlockedSource, onClose }: {
+  deleteConnections, groupMembers, groupRemoval, onApply, onBlockedSource, onSwitchProject, onClose }: {
   editor: Editor;
   nodes: (NodeChoice & { text: string })[];
   edges: EdgeChoice[];
@@ -39,6 +39,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   groupRemoval?: { members: { id: string; label: string; kind: string }[]; connectionIds: string[]; unavailable?: string };
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
   onBlockedSource: (id: string) => void;
+  onSwitchProject: () => void;
   onClose: () => void;
 }) {
   const [operation, setOperation] = useState<Operation>(initialOperation);
@@ -101,6 +102,10 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   }
 
   function switchTo(next: EditDestination) {
+    if ("switchProject" in next) {
+      onSwitchProject();
+      return;
+    }
     setDestination(undefined);
     resetPreview();
     if ("target" in next) {
@@ -132,7 +137,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
 
   function continueTo(next: EditDestination) {
     switchTo(next);
-    requestAnimationFrame(() => ("target" in next ? targetField : operationField).current?.focus());
+    if (!("switchProject" in next)) requestAnimationFrame(() => ("target" in next ? targetField : operationField).current?.focus());
   }
 
   function editBranch(index: number, branch: DecisionBranch) {
@@ -241,7 +246,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
           </select>
         </label>
         {destination && <section className="heading-form" aria-label="Unsaved label edit">
-          <p>Save or discard the edited label before {"operation" in destination ? "changing operations" : "choosing another element"}.</p>
+          <p>Save or discard the edited label before {"switchProject" in destination ? "switching projects"
+            : "operation" in destination ? "changing operations" : "choosing another element"}.</p>
           <div className="dialog-actions">
             <button type="button" className="button quiet" ref={keepDraft} disabled={busy} onClick={() => {
               setDestination(undefined);
@@ -430,6 +436,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         </section>}
         <div className="dialog-actions">
           <button className="button quiet" type="button" onClick={onClose}>Cancel</button>
+          {!destination && labelChoices && originalLabel !== undefined && <button className="button quiet" type="button" disabled={busy}
+            onClick={() => requestSwitch({ switchProject: true })}>Switch project</button>}
           {!destination && <button className="button secondary" type="submit" disabled={busy || !canPreview}>Preview change</button>}
           <button className="button primary" type="button" ref={applyButton} disabled={!preview || !painted || busy}
             onClick={apply}>{destination ? "Save label and continue" : "Apply change"}</button>

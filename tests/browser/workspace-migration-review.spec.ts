@@ -271,6 +271,62 @@ test('resolves a label draft before switching to a different operation or target
   expect(JSON.parse(await download(page, 'Download v3 project')).source).toBe(authored);
 });
 
+test('saves or discards a renamed label before switching projects', async ({ page }) => {
+  const first = { ...createDocument(), title: 'First diagram', source };
+  const second = { ...createDocument(), title: 'Second diagram', source: 'flowchart LR\nB[Independent]' };
+  await page.addInitScript(({ key, first, second }) => {
+    if (localStorage.getItem(key) === null) {
+      localStorage.setItem(key, JSON.stringify({ version: 2, activeId: first.id, documents: [first, second] }));
+    }
+  }, { key: STORAGE_KEY, first, second });
+  await page.goto('/');
+  const list = await openReview(page);
+  await list.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  const open = (name: string) => list.getByRole('button', { name: `Open v3 project ${name}` }).click();
+  await open(first.title);
+  const original = JSON.parse(await download(page, 'Download v3 project'));
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  const label = edit.getByRole('textbox', { name: 'Node label' });
+  const pending = edit.getByRole('region', { name: 'Unsaved label edit' });
+  const switchProject = edit.getByRole('button', { name: 'Switch project' });
+  async function rename() {
+    await page.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+    await edit.getByRole('combobox', { name: 'Operation' }).selectOption('setNodeLabel');
+    await edit.getByRole('combobox', { name: 'Node to rename' }).selectOption({ label: 'Original (A)' });
+  }
+  await rename();
+  await label.fill('Discarded at switch');
+  await switchProject.press('Enter');
+  await expect(pending).toContainText('switching projects');
+  const keep = pending.getByRole('button', { name: 'Keep editing' });
+  await expect(keep).toBeFocused();
+  await keep.press('Enter');
+  await expect(label).toBeFocused();
+  await expect(label).toHaveValue('Discarded at switch');
+  await switchProject.press('Enter');
+  await pending.getByRole('button', { name: 'Discard label and continue' }).press('Enter');
+  await open(second.title);
+  const independent = await download(page, 'Download v3 project');
+  await page.getByRole('button', { name: 'Back to v3 projects' }).click();
+  await open(first.title);
+  expect(JSON.parse(await download(page, 'Download v3 project'))).toEqual(original);
+  await rename();
+  await label.fill('Saved at switch');
+  await switchProject.press('Enter');
+  await pending.getByRole('button', { name: 'Review label before saving' }).press('Enter');
+  const save = edit.getByRole('button', { name: 'Save label and continue' });
+  await expect(save).toBeFocused();
+  await save.press('Enter');
+  await open(second.title);
+  expect(await download(page, 'Download v3 project')).toBe(independent);
+  await page.getByRole('button', { name: 'Back to v3 projects' }).click();
+  await open(first.title);
+  const saved = JSON.parse(await download(page, 'Download v3 project'));
+  expect(saved.source).toBe(source.replace('A[Original]', 'A["Saved at switch"]'));
+  expect(saved.identity).toEqual(original.identity);
+  expect(saved.revision).toBe(original.revision + 1);
+});
+
 test('previews and commits Add, Rename and Connect through the live v3 workspace', async ({ page }) => {
   await seedWorkspace(page);
   const list = await openReview(page);
