@@ -163,6 +163,50 @@ test('compares verified solid text and leaves the gradient node unmeasured', asy
   expect((await downloadProject(page, live)).design).toEqual(before.design);
 });
 
+test('reviews and undoes a measured stroke color on an exposed solid canvas', async ({ page }) => {
+  const source = 'flowchart LR\n  A["Input"]\n  B["Output"]\n  A connection@--- B\n';
+  const project = { ...createDocument(), title: 'Connector contrast example', source };
+  project.settings = { ...project.settings, theme: 'porcelain', layout: 'dagre', curve: 'linear', motion: 'none',
+    background: 'none', ambient: false, shadow: false, glow: false };
+  project.design.elements['edge:id:connection'] = { stroke: '#f3f3ef', strokeWidth: 2 };
+  const live = await openProject(page, project);
+  await expect(live.getByRole('img', { name: 'Diagram preview for Connector contrast example' })).toBeVisible();
+  const before = await downloadProject(page, live);
+  const edge = before.identity.elements.find((item: { binding: { sourceId: string } }) => item.binding.sourceId === 'connection').id;
+  await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  const report = check.getByRole('region', { name: 'Readability results' });
+  await expect(report.getByText('Connector contrast · 1 measured · 0 unknown · 2 not applicable')).toBeVisible();
+  await expect(report.getByText(/Input – Output measures 1 to 1 at the center/)).toBeVisible();
+  await report.getByRole('button', { name: 'Preview stroke contrast fix for Input – Output' }).click();
+  const proposal = check.getByRole('region', { name: 'Proposed contrast fix' });
+  await expect(proposal.getByText(/Contrast changes from 1\.00:1 to 18\.8/)).toBeVisible();
+  await proposal.getByRole('button', { name: 'Apply stroke color' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const after = await downloadProject(page, live);
+  expect(after).toEqual({ ...before, revision: before.revision + 1, updatedAt: after.updatedAt,
+    design: { ...before.design, elements: { ...before.design.elements, [edge]: { stroke: '#000000', strokeWidth: 2 } } },
+  });
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  expect((await downloadProject(page, live)).design).toEqual(before.design);
+});
+
+test('keeps the connector contrast unknown when there is an arrowhead', async ({ page }) => {
+  const source = 'flowchart LR\n  A[Input]\n  B[Output]\n  A direction@--> B\n';
+  const project = { ...createDocument(), title: 'Unverified arrowhead contrast', source };
+  project.settings = { ...project.settings, theme: 'porcelain', layout: 'dagre', curve: 'linear', motion: 'none',
+    background: 'none', ambient: false, shadow: false, glow: false };
+  const live = await openProject(page, project);
+  await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  const report = check.getByRole('region', { name: 'Readability results' });
+  await expect(report.getByText('Connector contrast · 0 measured · 1 unknown · 2 not applicable')).toBeVisible();
+  await expect(report.getByRole('button', { name: /Preview stroke contrast fix/ })).toHaveCount(0);
+});
+
 test('measures rectangular label spill in a fixed viewing area at either pixel density', async ({ page, browser }, info) => {
   const source = 'flowchart LR\n  A["This label exceeds its backing"]\n  B["Square"]\n  C(("Circle"))\n  A --> B\n  style A width:36px\n';
   const project = { ...createDocument(), title: 'Label containment example', source };

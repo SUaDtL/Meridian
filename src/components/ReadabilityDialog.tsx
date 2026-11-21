@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import ReadabilityWorker from "../lib/authoring/readability.worker?worker&inline";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
 import { canonicalDigest, type BaseToken } from "../lib/authoring/base-token";
+import type { ContrastKind } from "../lib/authoring/contrast-fix";
 import { styleFieldLabels } from "../lib/authoring/design-reset";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { ReadyProposal } from "../lib/authoring/proposals";
@@ -11,7 +12,7 @@ import { routeTolerance } from "../lib/authoring/route-geometry";
 import Modal from "./Modal";
 
 const presentation: ViewingProfile = { width: 1280, height: 720, padding: 32 };
-const checkNames = { "QC-01": "Solid text contrast", "QC-03": "Viewed label size", "QC-04": "Label containment",
+const checkNames = { "QC-01": "Solid text contrast", "QC-02": "Connector contrast", "QC-03": "Viewed label size", "QC-04": "Label containment",
   "QC-05": "Duplicate names", "QC-06": "Separate regions", "QC-07": "Crossing candidates", "QC-08": "Explicit role styling" } as const;
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type ContrastPreview = NonNullable<ReturnType<Editor["readContrastPreview"]>>;
@@ -105,7 +106,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     }
   }
 
-  async function previewFix(elementId: string) {
+  async function previewFix(elementId: string, kind: ContrastKind) {
     if (active.current) return;
     const work = new AbortController();
     active.current = work;
@@ -115,7 +116,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     setFix(undefined);
     setImageReady(false);
     try {
-      const proposal = await editor.prepareContrast(elementId, profile, token, work.signal);
+      const proposal = await editor.prepareContrast(elementId, profile, token, kind, work.signal);
       work.signal.throwIfAborted();
       const preview = editor.readContrastPreview(proposal);
       if (!preview) throw new Error("The diagram changed. Check readability again.");
@@ -159,7 +160,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     if (finding.rule === "QC-06") {
       return [finding.rule, 1, finding.regions.map(region => [...region].sort()).sort()];
     }
-    if (finding.rule === "QC-08") return [1, finding];
+    if (finding.rule === "QC-08" || finding.rule === "QC-02") return [1, finding];
     return [1, finding, profile];
   }
 
@@ -183,6 +184,10 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     if (finding.rule === "QC-01") {
       const name = byId.get(finding.target)?.label || "Unnamed label";
       return <>{name} has a contrast ratio of {Number(finding.ratio.toPrecision(6))} to 1. Aim for at least {finding.threshold} to 1 at this size.</>;
+    }
+    if (finding.rule === "QC-02") {
+      const name = byId.get(finding.target)?.label || "Unnamed connection";
+      return <>{name} measures {finding.ratio} to 1 at the center of its stroke. Aim for at least {finding.threshold} to 1.</>;
     }
     if (finding.rule === "QC-03") {
       const name = byId.get(finding.target)?.label || "Unnamed label";
@@ -209,6 +214,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     return <>The diagram contains {finding.regions.length} regions with no connection between them.</>;
   }
 
+  const connectorFix = fix?.preview.kind === "connector";
   return (
     <><Modal title="Check readability" wide onClose={onClose}>
       <div className="heading-form">
@@ -235,13 +241,16 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
         </button>}</div>
       </div>
       {phase && <p role="status">{phase === "check" ? "Checking the current diagram…"
-        : phase === "findings" ? "Preparing findings…" : "Rendering the proposed text color…"}</p>}
+        : phase === "findings" ? "Preparing findings…" : "Rendering the proposed color…"}</p>}
       {cancelled && <p role="status">Readability work cancelled.</p>}
       {error && <p role="alert">{error}</p>}
       {result && <section aria-label="Readability results" aria-busy={busy}>
         <h3>Coverage</h3>
         <ul>{result.report.coverage.map(item => <li key={item.rule}>{checkNames[item.rule]} · {item.measured} measured · {item.unknown} unknown · {item.inapplicable} not applicable</li>)}</ul>
-        <p>Contrast measurements cover text with a verified solid backdrop. Gradients and unverified overlaps appear as unknown.</p>
+        <p>Text contrast requires a verified solid backdrop. Gradients and unverified overlaps appear as unknown.</p>
+        {!!targets.some(item => item.kind === "edge") && <p>
+          Connector contrast samples straight strokes without arrowheads on a verified solid canvas. Thin strokes may still be hard to see.
+        </p>}
         <p>Label containment compares text bounds with square-corner node shapes. It flags spill greater than half a CSS pixel in the selected viewing area.</p>
         {!!targets.some(item => item.rolePaint) && <p>Explicit role styling compares measured paint with the saved recipe on nodes with an assigned role.</p>}
         {!!targets.some(item => item.kind === "edge") && <p>
@@ -260,7 +269,9 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
           {finding.rule !== "QC-06" && <button type="button" className="button quiet" disabled={busy}
             onClick={() => showTargets("target" in finding ? [finding.target] : finding.targets, checkNames[finding.rule])}>Show in diagram</button>}
           {finding.rule === "QC-01" && !dismissed.has(key) && <button type="button" className="button secondary" disabled={busy}
-            onClick={() => void previewFix(finding.target)}>Preview text contrast fix for {byId.get(finding.target)?.label || "unnamed label"}</button>}
+            onClick={() => void previewFix(finding.target, "text")}>Preview text contrast fix for {byId.get(finding.target)?.label || "unnamed label"}</button>}
+          {finding.rule === "QC-02" && !dismissed.has(key) && <button type="button" className="button secondary" disabled={busy}
+            onClick={() => void previewFix(finding.target, "connector")}>Preview stroke contrast fix for {byId.get(finding.target)?.label || "unnamed connection"}</button>}
           {finding.rule === "QC-05" && <details><summary>Review elements with this name</summary>
             <ul>{finding.targets.map((id, index) => {
               const item = byId.get(id);
@@ -287,13 +298,13 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
         </li>)}</ul>
       </section>}
       {fix && <section aria-label="Proposed contrast fix" className="migration-preview">
-        <h3>Text contrast for {fix.preview.label || "unnamed label"}</h3>
-        <p>Use {fix.preview.color} text. Contrast changes from {fix.preview.beforeRatio.toFixed(2)}:1 to {fix.preview.afterRatio.toFixed(2)}:1. The target is {fix.preview.threshold}:1.</p>
-        <img src={fix.url} alt="Proposed text contrast" onLoad={() => setImageReady(true)}
+        <h3>{connectorFix ? "Stroke" : "Text"} contrast for {fix.preview.label || (connectorFix ? "unnamed connection" : "unnamed label")}</h3>
+        <p>Use {fix.preview.color} {connectorFix ? "for the stroke" : "text"}. Contrast changes from {fix.preview.beforeRatio.toFixed(2)}:1 to {fix.preview.afterRatio.toFixed(2)}:1. The target is {fix.preview.threshold}:1.</p>
+        <img src={fix.url} alt={connectorFix ? "Proposed stroke contrast" : "Proposed text contrast"} onLoad={() => setImageReady(true)}
           onError={() => setError("The proposed diagram could not be displayed.")} />
         <div className="dialog-actions">
           <button type="button" className="button quiet" onClick={() => setFix(undefined)}>Cancel contrast fix</button>
-          <button type="button" className="button primary" disabled={!imageReady} onClick={applyFix}>Apply text color</button>
+          <button type="button" className="button primary" disabled={!imageReady} onClick={applyFix}>{connectorFix ? "Apply stroke color" : "Apply text color"}</button>
         </div>
       </section>}
     </Modal>

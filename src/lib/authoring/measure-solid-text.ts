@@ -17,13 +17,13 @@ function dropShadowOnly(filter: string, svg: SVGSVGElement) {
     && Array.from(target.children).every(child => child.localName === 'feDropShadow' && !child.hasAttribute('in'));
 }
 
-export function hasPlainCompositing(element: Element, svg: SVGSVGElement, view: Window) {
+export function hasPlainCompositing(element: Element, svg: SVGSVGElement, view: Window, allowShadow = true) {
   for (let current: Element | null = element; current; current = current.parentElement) {
     const style = view.getComputedStyle(current);
     if (Number(style.opacity) !== 1 || style.visibility !== 'visible' || style.display === 'none'
       || style.mixBlendMode !== 'normal' || style.clipPath !== 'none'
       || (style.maskImage && style.maskImage !== 'none') || (style.backdropFilter && style.backdropFilter !== 'none')
-      || !dropShadowOnly(style.filter, svg)) return false;
+      || (allowShadow ? !dropShadowOnly(style.filter, svg) : style.filter !== 'none')) return false;
     if (current === svg) return true;
   }
   return false;

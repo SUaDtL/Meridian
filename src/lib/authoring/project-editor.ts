@@ -9,7 +9,7 @@ import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken, type B
 import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } from './bulk-text';
 import type { ComponentDefinition } from './component-definition';
 import type { PortAssignment } from './component-insertion';
-import { buildContrastCandidate, measureTargetContrast } from './contrast-fix';
+import { buildContrastCandidate, measureTargetContrast, type ContrastKind } from './contrast-fix';
 import { buildDesignRecipeCandidate, buildScopedDesignRecipe, readDesignRecipe, verifyScopedDesign, type DesignRecipeId, type DesignScope } from './design-recipes';
 import { buildDesignReset, measuredResetValues, type DesignReset } from './design-reset';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
@@ -85,7 +85,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     savingCopy: boolean;
   }>();
   const contrast = new WeakMap<ReadyProposal, {
-    base: MermaidProjectV3; next: MermaidProjectV3; color: string; label: string; beforeRatio: number; afterRatio: number; threshold: number; svg: string;
+    base: MermaidProjectV3; next: MermaidProjectV3; kind: ContrastKind; color: string; label: string; beforeRatio: number; afterRatio: number; threshold: number; svg: string;
   }>();
   const bulkText = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
   const designResets = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
@@ -314,7 +314,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return change.base === current.document ? commit(change.next) : 'stale';
   }
 
-  async function prepareContrast(elementId: string, profile: ViewingProfile, expected: BaseToken, signal?: AbortSignal) {
+  async function prepareContrast(elementId: string, profile: ViewingProfile, expected: BaseToken, kind: ContrastKind, signal?: AbortSignal) {
     if (closed) throw new Error('The project is closed.');
     const base = current.document;
     const viewing = { ...profile };
@@ -322,20 +322,20 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     if (!accepted.targetTable || !sameBaseToken(expected, accepted.targetTable.baseToken) || closed || current.document !== base) {
       throw new Error('The diagram changed. Check readability again.');
     }
-    const before = measureTargetContrast(accepted, base, elementId, viewing);
+    const before = measureTargetContrast(accepted, base, elementId, viewing, kind);
     const { document, color } = buildContrastCandidate(base, elementId, before);
     const rendered = await renderMermaidProject(document, signal);
     signal?.throwIfAborted();
     if (!rendered.targetTable || verifiedTopology(rendered.targetTable) !== verifiedTopology(accepted.targetTable)) {
       throw new Error('The proposed color did not preserve the verified diagram targets.');
     }
-    const after = measureTargetContrast(rendered, document, elementId, viewing);
+    const after = measureTargetContrast(rendered, document, elementId, viewing, kind);
     if (after.ratio < after.threshold || after.ratio <= before.ratio) {
-      throw new Error('The rendered label did not meet the contrast target. Choose its appearance manually.');
+      throw new Error('The proposed color did not meet the contrast target. Adjust its appearance manually.');
     }
     if (closed || current.document !== base) throw new Error('The diagram changed. Check readability again.');
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
-    contrast.set(proposal, { base, next: freezeSnapshot(document), color, label: before.label,
+    contrast.set(proposal, { base, next: freezeSnapshot(document), kind, color, label: before.label,
       beforeRatio: before.ratio, afterRatio: after.ratio, threshold: after.threshold, svg: after.svg });
     return proposal;
   }

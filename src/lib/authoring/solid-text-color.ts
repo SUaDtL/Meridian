@@ -1,5 +1,6 @@
 export type Rgb = readonly [number, number, number];
 export type SrgbPaint = { channels: Rgb; opacity: number };
+export type SolidConnectorPaint = { stroke: SrgbPaint; backing: Rgb };
 export type SolidTextPaint = { text: SrgbPaint; backing: Rgb; bold: boolean };
 
 /** Preserve fractional computed sRGB channels. Other color spaces require separate evidence. */
@@ -28,11 +29,15 @@ function luminance([red, green, blue]: Rgb) {
   return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
 }
 
-export function solidTextContrast({ text, backing, bold }: SolidTextPaint, pixels: number) {
-  const blend = (index: 0 | 1 | 2) => text.channels[index] * text.opacity + backing[index] * (1 - text.opacity);
+export function solidContrast(paint: SrgbPaint, backing: Rgb) {
+  const blend = (index: 0 | 1 | 2) => paint.channels[index] * paint.opacity + backing[index] * (1 - paint.opacity);
   const lightness = luminance([blend(0), blend(1), blend(2)]);
   const backdrop = luminance(backing);
-  const ratio = (Math.max(lightness, backdrop) + 0.05) / (Math.min(lightness, backdrop) + 0.05);
+  return (Math.max(lightness, backdrop) + 0.05) / (Math.min(lightness, backdrop) + 0.05);
+}
+
+export function solidTextContrast({ text, backing, bold }: SolidTextPaint, pixels: number) {
+  const ratio = solidContrast(text, backing);
   const threshold = pixels >= 24 || (bold && pixels >= 56 / 3) ? 3 : 4.5;
   return { ratio, threshold };
 }

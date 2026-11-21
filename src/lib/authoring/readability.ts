@@ -1,4 +1,4 @@
-import { solidTextContrast, type SolidTextPaint } from './solid-text-color';
+import { solidContrast, solidTextContrast, type SolidConnectorPaint, type SolidTextPaint } from './solid-text-color';
 import { analyzeCrossings, type CrossingEvidence, type CrossingFinding } from './crossing-findings';
 import type { RoutePoint } from './route-geometry';
 import type { SemanticRole } from './mermaid-project';
@@ -19,6 +19,7 @@ export type ReadabilityTarget = {
   labelOverflowInDiagram?: number;
   measuredRoute?: RoutePoint[];
   solidTextPaint?: SolidTextPaint;
+  solidConnectorPaint?: SolidConnectorPaint;
   rolePaint?: RolePaint;
   from: string | null;
   to: string | null;
@@ -26,6 +27,7 @@ export type ReadabilityTarget = {
 
 export type ReadabilityFinding =
   | { rule: 'QC-01'; target: string; ratio: number; threshold: number }
+  | { rule: 'QC-02'; target: string; ratio: number; threshold: number }
   | { rule: 'QC-03'; target: string; pixels: number }
   | { rule: 'QC-04'; target: string; pixels: number }
   | { rule: 'QC-05'; targets: string[] }
@@ -41,6 +43,7 @@ export type ReadabilityReport = {
 
 export const minimumAdvisoryLabelSize = 14;
 export const labelOverflowTolerance = 0.5;
+export const minimumConnectorContrast = 3;
 
 export function viewingScale(profile: ViewingProfile, frame: FrameGeometry): number {
   const validDimension = (value: number) => Number.isInteger(value) && value >= 100 && value <= 8192;
@@ -106,10 +109,19 @@ export function analyzeReadability(targets: readonly ReadabilityTarget[], profil
   const names = coverageFor('QC-05');
   const separation = coverageFor('QC-06');
   const contrast = coverageFor('QC-01');
+  const connector = coverageFor('QC-02');
   const containment = coverageFor('QC-04');
   const rolePaint = coverageFor('QC-08');
   const duplicateNames = new Map<string, string[]>();
   for (const item of targets) {
+    if (item.kind !== 'edge') connector.inapplicable++;
+    else if (!item.solidConnectorPaint) connector.unknown++;
+    else {
+      connector.measured++;
+      const { stroke, backing } = item.solidConnectorPaint;
+      const ratio = solidContrast(stroke, backing);
+      if (ratio < minimumConnectorContrast) findings.push({ rule: 'QC-02', target: item.id, ratio, threshold: minimumConnectorContrast });
+    }
     if (!item.rolePaint?.tokens.length) rolePaint.inapplicable++;
     else {
       const { role, tokens } = item.rolePaint;
@@ -173,5 +185,5 @@ export function analyzeReadability(targets: readonly ReadabilityTarget[], profil
   }
   const crossings = analyzeCrossings(targets);
   findings.push(...crossings.findings);
-  return { findings, coverage: [size, names, separation, contrast, containment, crossings.coverage, rolePaint], crossings: crossings.evidence };
+  return { findings, coverage: [size, names, separation, contrast, connector, containment, crossings.coverage, rolePaint], crossings: crossings.evidence };
 }
