@@ -343,10 +343,9 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       : buildScopedDesignRecipe(base, id, scope, accepted!);
     const rendered = candidate.document === base && accepted ? accepted : await renderMermaidProject(candidate.document, signal, 'preview');
     if (accepted && 'selectedIds' in candidate) {
-      const moved = verifyScopedDesign(accepted, rendered, candidate.proof, candidate.selectedIds);
-      if (candidate.scope.typography) candidate.scope.typography.moved = moved;
+      candidate.scope.moved = verifyScopedDesign(accepted, rendered, candidate.proof, candidate.selectedIds);
     }
-    if (accepted && 'shapeIds' in candidate && candidate.shapeIds.length) verifyPresentationRoleShapes(accepted, rendered, candidate.shapeIds);
+    if (accepted && candidate.shapeIds.length) verifyPresentationRoleShapes(accepted, rendered, candidate.shapeIds);
     signal?.throwIfAborted();
     if (!rendered.targetTable) throw new Error('This design can only be previewed on a verified flowchart.');
     if (closed || current.document !== base) throw new Error('The project changed. Refresh the design preview.');
