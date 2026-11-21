@@ -1,10 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
-import type { OutlineSourceLocation, ProjectOutlineItem } from "../lib/authoring/project-outline";
+import { interactiveSelectionLimit, type OutlineSourceLocation, type ProjectOutlineItem } from "../lib/authoring/project-outline";
 import { bulkConnectionLimit } from "../lib/authoring/project-flowchart";
 import Modal from "./Modal";
 
 const pageSize = 80;
-const selectionLimit = 200;
 export type OutlineView = {
   query: string;
   relationships: boolean;
@@ -116,7 +115,7 @@ export default function V3ProjectOutline({ items, selected, restoredView, onSele
 
   function updateSelection(next: ReadonlySet<string>) {
     setFrameError(undefined);
-    if (next.size > selectionLimit) {
+    if (next.size > interactiveSelectionLimit) {
       setRefusedCount(next.size);
       return;
     }
@@ -186,7 +185,7 @@ export default function V3ProjectOutline({ items, selected, restoredView, onSele
         </div>
         <p role="status">{selected.size} selected · {hidden} hidden</p>
         {frameError && <p role="alert">{frameError}</p>}
-        {refusedCount !== undefined && <p role="alert">That action would select {refusedCount} elements. The limit is {selectionLimit}. {selected.size} are selected.</p>}
+        {refusedCount !== undefined && <p role="alert">That action would select {refusedCount} elements. The limit is {interactiveSelectionLimit}. {selected.size} are selected.</p>}
         <div className="recovery-actions" role="group" aria-label="Outline selection">
           <button type="button" className="button secondary" aria-pressed={checkboxSelection}
             onClick={() => setCheckboxSelection(current => !current)}>Select multiple</button>

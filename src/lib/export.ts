@@ -64,7 +64,13 @@ function wrapHeading(value: string, characters: number, width: number, font: str
 }
 
 export interface ExportFrameOptions { transparent?: boolean; animated?: boolean; includeFrame?: boolean }
-export interface ExportFrame { svg: string; width: number; height: number; diagramScale: number }
+export interface ExportFrame {
+  svg: string;
+  width: number;
+  height: number;
+  diagramScale: number;
+  diagramOrigin: { x: number; y: number };
+}
 type FrameDocument = Pick<StudioDocument, 'title' | 'subtitle' | 'settings'>;
 
 /** Build framing and dimensions together so the stage never reparses the result. */
@@ -153,8 +159,12 @@ export function buildExportFrame(result: RenderResult, doc: FrameDocument, opts:
     const brand = element(xml, 'text', { x: width - pad, y: height - pad + 4, 'text-anchor': 'end', fill: theme.muted, 'font-size': 11, 'font-family': 'Arial, Helvetica, sans-serif', 'letter-spacing': 1.8 });
     brand.textContent = 'MERIDIAN / ARBITERFORGE'; outer.append(brand);
   }
-  return { svg: new XMLSerializer().serializeToString(outer), width, height,
-    diagramScale: Math.min(contentWidth / result.width, contentHeight / result.height) };
+  const diagramScale = Math.min(contentWidth / result.width, contentHeight / result.height);
+  const [minX, minY] = (source.getAttribute('viewBox') ?? '0 0').trim().split(/[ ,]+/).map(Number);
+  return { svg: new XMLSerializer().serializeToString(outer), width, height, diagramScale, diagramOrigin: {
+    x: pad + (contentWidth - result.width * diagramScale) / 2 - minX * diagramScale,
+    y: pad + headingHeight + (contentHeight - result.height * diagramScale) / 2 - minY * diagramScale,
+  } };
 }
 
 export function buildExportSvg(result: RenderResult, doc: StudioDocument, opts: ExportFrameOptions = {}): string {
