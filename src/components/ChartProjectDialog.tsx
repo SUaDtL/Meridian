@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import Modal from "./Modal";
 import ChartFigure, { describeChart } from "./ChartFigure";
 import ChartDataTable, { chartHtml } from "./ChartDataTable";
@@ -6,7 +6,7 @@ import ChartFilterEditor from "./ChartFilterEditor";
 import ChartAxisScale from "./ChartAxisScale";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
 import Worker from "../lib/authoring/chart-input.worker?worker&inline";
-import { chartDataLimits, convertChartCell, type ChartDataset, type ChartField, type ChartProject, type ChartSpec, type FieldType } from "../lib/authoring/chart-data";
+import { chartDataLimits, chartJsonBytes, convertChartCell, type ChartDataset, type ChartField, type ChartProject, type ChartSpec, type FieldType } from "../lib/authoring/chart-data";
 import { openChartProjectEditor } from "../lib/authoring/chart-editor";
 import type { ChartInput, ChartInputFormat, ColumnConfirmation, ConfirmedChartInput } from "../lib/authoring/chart-input";
 import { canonicalChartNumber, type NumberLocale } from "../lib/authoring/chart-numbers";
@@ -16,7 +16,7 @@ import { listChartCheckpoints, saveChartCheckpoint, type ChartCheckpoint } from 
 import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
 import type { ProjectSaveState } from "../lib/persistence/project-save-queue";
 import { listWorkspaceProjectIds, openWorkspaceDatabase, readWorkspaceProject, writeWorkspaceProject } from "../lib/persistence/workspace-db";
-import { downloadText, safeFilename } from "../lib/storage";
+import { downloadText, MAX_PROJECT_FILE_BYTES, safeFilename } from "../lib/storage";
 import "./chart.css";
 
 type Accepted = ReturnType<typeof validateChartProject>;
@@ -26,6 +26,7 @@ type Pending = { label: string; run: (signal: AbortSignal, extended: boolean) =>
 type Mark = ChartSpec["mark"];
 const fieldTypes: FieldType[] = ["string", "number", "date", "datetime", "boolean"];
 const defaultLocale: NumberLocale = { decimal: "period", grouping: "none" };
+const byteCount = new Intl.NumberFormat();
 const defaultFrame: ChartProject["frame"] = { theme: "porcelain", frame: "auto", padding: 32, showTitle: true, showBrand: true };
 const category = (field: ChartField) => field.type === "string" || field.type === "date" || field.type === "boolean";
 const xFields = (dataset: ChartDataset, mark: Mark) => dataset.fields.filter(field =>
@@ -76,6 +77,8 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
   const [title, setTitle] = useState("");
   const [subtitle, setSubtitle] = useState("");
   const [candidate, setCandidate] = useState<Accepted>();
+  const reviewDataset = stage === "review" ? candidate?.project.dataset : undefined;
+  const datasetBytes = useMemo(() => reviewDataset && chartJsonBytes(reviewDataset), [reviewDataset]);
   const [editProposal, setEditProposal] = useState<ReadyProposal>();
   const [saveState, setSaveState] = useState<ProjectSaveState>();
   const [acceptTruncatedAxis, setAcceptTruncatedAxis] = useState(false);
@@ -568,6 +571,12 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     </form>}
     {(stage === "review" || stage === "workspace") && candidate && <>
       <ConversionSummary dataset={candidate.project.dataset} counts={conversions} />
+      {datasetBytes !== undefined && <section aria-label="Chart storage">
+        <h3>Chart storage</h3>
+        <p>Typed dataset {byteCount.format(datasetBytes)} of {byteCount.format(chartDataLimits.datasetBytes)} bytes.</p>
+        <p>Complete project {byteCount.format(candidate.projectBytes)} of {byteCount.format(MAX_PROJECT_FILE_BYTES)} bytes.</p>
+        <p>The project keeps the typed dataset, including rows excluded by the current chart mapping.</p>
+      </section>}
       <ChartFigure project={candidate.project} values={candidate.projection} svgRef={svg} />
       <p>{describeChart(candidate.project, candidate.projection).description}</p>
       <ChartDataTable dataset={candidate.project.dataset} values={candidate.projection} />
