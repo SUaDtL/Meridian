@@ -5,7 +5,7 @@ import { getTheme } from './themes';
 import type { DesignState } from '../types/design';
 import { createDesign, decorateDesign, designRenderSource, measureDesignElements, type FlowModel } from './design';
 import { SourceDiagnosticError } from './authoring/source-diagnostics';
-import { RenderCache } from './render-cache';
+import { RenderCache, renderMemoryBudget, renderMemoryLimit } from './render-cache';
 import { checkRenderSignal, latestRenderQueue, renderAborted, type RenderPriority } from './render-queue';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -52,7 +52,6 @@ interface RenderInput {
   nodeAccents: Record<string, string>;
   design: DesignState;
   prepared: ReturnType<typeof prepareSource>;
-  key: string;
   projection?: RenderDesignProjection;
 }
 
@@ -61,15 +60,14 @@ export interface RenderDesignProjection {
   resolve(model: FlowModel | undefined): Promise<DesignState>;
 }
 
-// SVG strings dominate memory. Count their UTF-16 storage and the source-bearing
-// keys, and cap both bytes and entries so switching projects cannot grow forever.
-const layoutCache = new RenderCache<LayoutSnapshot>(6, 8 * 1024 * 1024);
-const resultCache = new RenderCache<RenderResult>(8, 12 * 1024 * 1024);
-const resultModels = new WeakMap<RenderResult, FlowModel>();
+const layoutCache = new RenderCache<LayoutSnapshot>(6, renderMemoryLimit, renderMemoryBudget);
+const resultCache = new RenderCache<RenderResult>(8, renderMemoryLimit, renderMemoryBudget);
+const resultFootprints = new WeakMap<RenderResult, { model?: FlowModel; modelBytes: number; elementBytes: number }>();
+let foregroundKey: string | undefined;
 
 /** The model is already detached from Mermaid's shared parser. Use it read-only. */
 export function flowchartModelFor(result: RenderResult): FlowModel | undefined {
-  return resultModels.get(result);
+  return resultFootprints.get(result)?.model;
 }
 
 /** A rendering copy only. The original Mermaid text is never rewritten. */
@@ -158,7 +156,7 @@ function safeSvg(raw: string): SVGSVGElement {
   return svg;
 }
 
-async function performRender({ settings, nodeAccents, design: inputDesign, prepared, key, projection }: RenderInput, signal: AbortSignal): Promise<RenderResult> {
+async function performRender({ settings, nodeAccents, design: inputDesign, prepared, projection }: RenderInput, signal: AbortSignal): Promise<RenderResult> {
   checkRenderSignal(signal);
   const { text } = prepared;
   const warnings = [...prepared.warnings];
@@ -321,7 +319,8 @@ async function performRender({ settings, nodeAccents, design: inputDesign, prepa
       svg = safeSvg(output.svg);
       if (/<foreignObject\b/i.test(output.svg)) layoutWarnings.push('This diagram contains HTML-only content that is omitted for portable SVG export. Text labels and built-in shapes work best.');
       const clean = new XMLSerializer().serializeToString(svg);
-      layoutCache.set(layoutKey, { id, svg: clean, diagramType: output.diagramType, model, modelBytes, warnings: layoutWarnings }, clean.length * 2 + text.length * 2 + modelBytes);
+      layoutCache.set(layoutKey, { id, svg: clean, diagramType: output.diagramType, model, modelBytes, warnings: layoutWarnings },
+        { parts: model ? [clean, { object: model, bytes: modelBytes }] : [clean] });
       warnings.push(...layoutWarnings);
     }
     const doc = svg.ownerDocument;
@@ -470,12 +469,17 @@ async function performRender({ settings, nodeAccents, design: inputDesign, prepa
     measureDesignElements(svg, elements, settings);
     const otherEdges = svg.querySelectorAll('[data-et="message"], .relationshipLine, .messageLine0, .messageLine1').length;
     const result = { svg: new XMLSerializer().serializeToString(svg), diagramType: rendered.diagramType, nodes, elements, edgeCount: uniqueEdges.length || otherEdges, width, height, warnings };
-    if (model) resultModels.set(result, model);
-    resultCache.set(key, result, result.svg.length * 2 + JSON.stringify(elements).length * 2 + modelBytes);
+    resultFootprints.set(result, { model, modelBytes, elementBytes: JSON.stringify(elements).length * 2 });
     return result;
   } finally {
     host.remove();
   }
+}
+
+function prioritizeForeground(key: string) {
+  if (foregroundKey && foregroundKey !== key) resultCache.prioritize(foregroundKey, 'optional');
+  foregroundKey = key;
+  resultCache.prioritize(key, 'foreground');
 }
 
 const renderQueue = latestRenderQueue(performRender);
@@ -488,9 +492,19 @@ export async function renderDiagram(source: string, settings: StudioSettings, no
   const fingerprint = renderFingerprint(source, settings, nodeAccents, design);
   const key = options.projection ? JSON.stringify([fingerprint, options.projection.key]) : fingerprint;
   const cached = resultCache.get(key);
+  const foreground = options.priority !== 'preview';
   if (cached) {
     renderQueue.cancel(options.priority);
+    if (foreground) prioritizeForeground(key);
     return cached;
   }
-  return renderQueue.submit(key, { source, settings, nodeAccents, design, prepared, key, projection: options.projection }, options.signal, options.priority);
+  const result = await renderQueue.submit(key, { source, settings, nodeAccents, design, prepared, projection: options.projection }, options.signal, options.priority);
+  if (foreground) prioritizeForeground(key);
+  const footprint = resultFootprints.get(result);
+  if (footprint && resultCache.get(key) !== result) {
+    const { model, modelBytes, elementBytes } = footprint;
+    const parts = model ? [result.svg, { object: model, bytes: modelBytes }] : [result.svg];
+    resultCache.set(key, result, { parts, privateBytes: elementBytes }, foreground ? 'foreground' : 'optional');
+  }
+  return result;
 }
