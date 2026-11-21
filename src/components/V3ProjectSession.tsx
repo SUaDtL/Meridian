@@ -111,7 +111,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [restoredOutline, setRestoredOutline] = useState<OutlineView>();
   const [outlineReturn, setOutlineReturn] = useState<{ source: string; view: OutlineView }>();
   const [orphanReviewOpen, setOrphanReviewOpen] = useState(false);
-  const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
+  const [selectedOutlineIds, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [canvasMessage, setCanvasMessage] = useState("");
   const [editTarget, setEditTarget] = useState<string>();
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
@@ -270,6 +270,14 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const outlineAvailable = !!targetTable?.targets.length;
   const outline = useMemo(() => outlineOpen && project && targetTable ? projectOutline(project, targetTable) : undefined,
     [outlineOpen, project, targetTable]);
+  const identities = project?.identity.elements;
+  const outlineSelection = useMemo(() => {
+    if (!selectedOutlineIds.size) return selectedOutlineIds;
+    // Keep selected IDs across a deletion so a restored binding can reappear on Undo.
+    const current = new Set(identities?.filter(record => record.status === "resolved" && selectedOutlineIds.has(record.id))
+      .map(record => record.id));
+    return current.size === selectedOutlineIds.size ? selectedOutlineIds : current;
+  }, [identities, selectedOutlineIds]);
   const resetFields = outline && project ? designResetFields(project, outlineSelection) : undefined;
   const canResetDesign = !busy && (resetFields?.hasRecipes || !!resetFields?.fields.length);
   const highlighted = highlight?.source === source ? highlight : undefined;
@@ -300,7 +308,6 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         rolePaint: role && tokens.length ? { role, tokens } : undefined };
     });
   }, [readabilityOpen, currentFrame, targetTable]);
-  const identities = project?.identity.elements;
   const nodes = useMemo(() => {
     const ids = new Map(identities?.map(record => [record.id, record.binding.sourceId]));
     return targetTable?.targets.filter(item => item.elementKind === "node")
