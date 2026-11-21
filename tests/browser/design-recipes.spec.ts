@@ -362,3 +362,71 @@ test('reviews a verified Decision diamond while preserving authored source and e
   const restored = await downloadProject(page, live);
   expect(restored).toEqual({ ...before, revision: after.revision + 1, updatedAt: restored.updatedAt });
 });
+
+test('reviews larger selected labels and discloses measured movement outside the selection', async ({ page }, info) => {
+  const source = '\uFEFFflowchart LR\r\n  A[Long intake label for a wider node]\r\n  B[Downstream]\r\n'
+    + '  C[Manual font]\r\n  D[User font]\r\n  A first@--> B\r\n  B second@--> C\r\n  C third@--> D\r\n';
+  const project = { ...createDocument(), title: 'Reviewed typography', source };
+  project.settings = { ...project.settings, layout: 'dagre', motion: 'none' };
+  project.design.elements['node:C'] = { fontSize: 17 };
+  project.design.elements['node:D'] = { fontSize: 19 };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+    version: 2, activeId: project.id, documents: [project],
+  })), { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Reviewed typography' }).click();
+  const live = page.getByRole('dialog', { name: 'Reviewed typography' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Reviewed typography' })).toBeVisible();
+  const original = await downloadProject(page, live);
+
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^Long intake label/ }).click();
+  await outline.getByRole('treeitem', { name: /^Manual font/ }).click({ modifiers: ['Shift'] });
+  await outline.getByRole('treeitem', { name: /^User font/ }).click({ modifiers: ['Shift'] });
+  await expect(outline.getByRole('status')).toHaveText('3 selected · 0 hidden');
+  await outline.getByRole('button', { name: 'Explore designs for selection' }).click();
+  const design = page.getByRole('dialog', { name: 'Explore designs' });
+  await design.getByRole('group', { name: 'Design recipes' }).getByRole('button', { name: /Presentation/ }).click();
+  const typography = design.getByRole('checkbox', { name: 'Enlarge eligible node labels' });
+  await expect(typography).not.toBeChecked();
+  await typography.check();
+  await design.getByRole('button', { name: 'Preview Presentation' }).click();
+  const error = design.getByRole('alert');
+  await expect(error.or(design.getByRole('img', { name: 'Proposed Presentation design' }))).toBeVisible();
+  expect(await error.allTextContents()).toEqual([]);
+  const apply = design.getByRole('button', { name: 'Apply Presentation', exact: true });
+  await expect(apply).toBeEnabled();
+  const change = design.getByRole('list', { name: 'Design changes' });
+  await expect(change.getByText(/Long intake label for a wider node.*Label size · [\d.]+ px → 22 px/)).toBeVisible();
+  await expect(change.getByText(/Manual font.*Label size|User font.*Label size|Downstream/)).toHaveCount(0);
+  const scope = design.getByRole('region', { name: 'Reviewed design scope' });
+  await expect(scope.getByText('Automatic layout moved 1 node outside this scope. Their styling is unchanged.')).toBeVisible();
+  await scope.getByText('Review moved nodes', { exact: true }).click();
+  await expect(scope.getByText('Downstream (B)', { exact: true })).toBeVisible();
+  await scope.getByText('Review preserved font sizes', { exact: true }).click();
+  await expect(scope.getByText('Manual font (C)', { exact: true })).toBeVisible();
+  await expect(scope.getByText('User font (D)', { exact: true })).toBeVisible();
+  await page.screenshot({ path: info.outputPath('reviewed-typography-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('reviewed-typography-mobile.png') });
+  await apply.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const edited = await downloadProject(page, live);
+  const ids = new Map(original.identity.elements.map((item: { id: string; binding: { sourceId: string } }) =>
+    [item.binding.sourceId, item.id] as const));
+  expect(edited.design.recipeElements[ids.get('A')!].style.fontSize).toBe(22);
+  expect(edited.design.recipeElements[ids.get('B')!]).toBeUndefined();
+  expect(edited.design.recipeElements[ids.get('C')!].style.fontSize).toBeUndefined();
+  expect(edited.design.recipeElements[ids.get('D')!].style.fontSize).toBeUndefined();
+  expect(edited.design.elements).toEqual(original.design.elements);
+  expect(edited.settings).toEqual(original.settings);
+  expect(edited.source).toBe(source);
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const undone = await downloadProject(page, live);
+  expect(undone).toEqual({ ...original, revision: edited.revision + 1, updatedAt: undone.updatedAt });
+});
