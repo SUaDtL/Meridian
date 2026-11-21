@@ -41,6 +41,8 @@ jobs:
         run: npm run verify:artifact
       - name: Build and validate the portable offline application
         run: npm run build:standalone && npm run verify:standalone
+      - name: Build the isolated companion interface
+        run: npm run build:companion && npm run build:companion-fixture
       - name: Install pinned browser
         run: npx playwright install --with-deps chromium
       - name: Test the production artifact
