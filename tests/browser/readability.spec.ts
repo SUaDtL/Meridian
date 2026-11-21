@@ -83,6 +83,34 @@ test('cancels checking, terminates its worker, and lets the same diagram be chec
   await expect(check.getByText('Readability work cancelled.')).toHaveCount(0);
 });
 
+const crossingSource = 'flowchart LR\n A[First]\n B[Second]\n C[Third]\n D[Fourth]\n A a@--> C\n A b@--> D\n B c@--> C\n B d@--> D\n';
+
+test('reports measured route candidates and opens the normal layout review', async ({ page }) => {
+  const project = { ...createDocument(), title: 'Crossing review', source: crossingSource };
+  project.settings.layout = 'dagre';
+  const live = await openProject(page, project);
+  await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  const report = check.getByRole('region', { name: 'Readability results' });
+  await expect(report.getByText('Crossing candidates · 4 measured · 0 unknown · 4 not applicable')).toBeVisible();
+  await expect(report.getByText(/cross approximately once within the measured routes/).first()).toBeVisible();
+  await report.getByRole('button', { name: 'Compare layouts' }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Compare layouts' })).toBeVisible();
+});
+
+test('reports an ELK bridge arc as unknown route geometry', async ({ page }) => {
+  const project = { ...createDocument(), title: 'Bridge review', source: crossingSource };
+  project.settings.layout = 'elk';
+  project.settings.curve = 'linear';
+  const live = await openProject(page, project);
+  await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  await check.getByRole('button', { name: 'Check diagram' }).click();
+  await expect(check.getByRole('region', { name: 'Readability results' })
+    .getByText('Crossing candidates · 3 measured · 1 unknown · 4 not applicable')).toBeVisible();
+});
+
 test('compares verified solid text and leaves the gradient node unmeasured', async ({ page }) => {
   const source = 'flowchart LR\n  A["Low contrast"]\n  B["Gradient surface"]\n';
   const project = { ...createDocument(), title: 'Contrast example', source };

@@ -1,4 +1,5 @@
 import type { SolidTextPaint } from '../lib/authoring/solid-text-color';
+import type { RoutePoint } from '../lib/authoring/route-geometry';
 
 export type ElementKind = 'node' | 'edge' | 'group';
 export type DesignPresetId = 'custom' | 'executive' | 'infrastructure' | 'cyberpunk' | 'minimal' | 'technical-blueprint';
@@ -57,4 +58,5 @@ export interface RenderElement {
   from?: string;
   to?: string;
   bounds?: { x: number; y: number; width: number; height: number };
+  measuredRoute?: RoutePoint[];
 }

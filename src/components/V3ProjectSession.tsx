@@ -201,7 +201,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       const element = elements.get(target.id);
       return { id: target.id, kind: target.elementKind, label: target.label, sourceId: sourceIds.get(target.id), from: target.sourceId, to: target.targetId,
         typography: !!element?.capabilities.includes("typography"), measuredLabelSize: element?.appearance?.labelSizeInDiagram,
-        solidTextPaint: element?.appearance?.solidTextPaint, labelOverflowInDiagram: element?.appearance?.labelOverflowInDiagram };
+        solidTextPaint: element?.appearance?.solidTextPaint, labelOverflowInDiagram: element?.appearance?.labelOverflowInDiagram,
+        measuredRoute: element?.measuredRoute };
     });
   }, [readabilityOpen, currentFrame, targetTable]);
   const identities = project?.identity.elements;
@@ -448,6 +449,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       {readabilityTargets && currentFrame && targetTable && editor.current && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
         token={targetTable.baseToken} editor={editor.current} canvas={canvasProfile}
         dismissed={dismissedReadability} onDismissed={setDismissedReadability}
+        onCompareLayouts={() => { setReadabilityOpen(false); setComparison("layout"); }}
         onRename={!editingUnavailable ? id => { setReadabilityOpen(false); renameFromOutline(id); } : undefined} onClose={() => setReadabilityOpen(false)} onApply={proposal => {
           const current = editor.current!;
           const status = current.applyContrast(proposal);
