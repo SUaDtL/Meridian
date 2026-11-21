@@ -1,11 +1,11 @@
 import type { StoryScene } from '../../types/storyboard';
 import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/project-save-queue';
 import { readPendingAssist } from '../persistence/pending-assist';
-import { readWorkspaceProject, StorageConflict, writeWorkspaceProject, type SavedAnchor } from '../persistence/workspace-db';
+import { readWorkspaceProject, StorageConflict, writeWorkspaceProject, type WorkspaceWriteGuard, type SavedAnchor } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
 import { createScene } from '../storyboard';
 import { authorizeAssistEdit, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
-import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
+import { canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { buildBulkTextCandidate, bulkTextSelection, verifyBulkTextCandidate } from './bulk-text';
 import type { ComponentDefinition } from './component-definition';
 import type { PortAssignment } from './component-insertion';
@@ -65,7 +65,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   const past: (typeof current)[] = [];
   const future: (typeof current)[] = [];
   const insertions = new WeakMap<ReadyProposal, {
-    base: MermaidProjectV3; next: MermaidProjectV3; definition: { id: string; version: string; hash: string };
+    base: MermaidProjectV3; next: MermaidProjectV3; definition: { id: string; version: string; signature: string };
   }>();
   const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId?: string; impact?: ElementRemovalImpact }>();
   const guidedInsertions = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
@@ -196,23 +196,22 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     }
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     const next = freezeSnapshot(candidate.document);
-    insertions.set(proposal, { base, next, definition: { id: snapshot.id, version: snapshot.version, hash: candidate.definitionHash } });
+    insertions.set(proposal, { base, next, definition: { id: snapshot.id, version: snapshot.version, signature: canonicalJson(snapshot) } });
     return { ...candidate, document: next, rendered: rendered.result, proposal };
   }
 
   async function applyInsertion(proposal: ReadyProposal, signal?: AbortSignal) {
     const change = insertions.get(proposal);
     if (closed || !change || change.base !== current.document) return 'stale';
-    const [{ readComponentLibrary }, { curatedComponents }] = await Promise.all([
-      import('../persistence/component-library'), import('./curated-components'),
-    ]);
-    const definitions = [...curatedComponents, ...await readComponentLibrary(db)];
-    const currentDefinition = definitions.find(item => item.id === change.definition.id && item.version === change.definition.version);
-    if (!currentDefinition || await canonicalDigest('meridian-component/v1', [currentDefinition]) !== change.definition.hash) {
+    const { curatedComponents } = await import('./curated-components');
+    const bundled = curatedComponents.find(item => item.id === change.definition.id && item.version === change.definition.version);
+    if (bundled && canonicalJson(bundled) !== change.definition.signature) {
       throw new Error('The saved definition changed. Select the current definition and preview again.');
     }
-    signal?.throwIfAborted();
-    return !closed && change.base === current.document ? commit(change.next) : 'stale';
+    const guard = bundled ? undefined : { kind: 'component' as const, ...change.definition };
+    const status = await commitInsertion(change, signal, guard);
+    if (status === 'applied') insertions.delete(proposal);
+    return status;
   }
 
   function prepareGuidedSystems(values: SystemsDraft, attachment?: GuidedAttachment, signal?: AbortSignal) {
@@ -261,7 +260,13 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   }
 
   async function applyGuidedInsertion(proposal: ReadyProposal, signal?: AbortSignal) {
-    const change = guidedInsertions.get(proposal);
+    const status = await commitInsertion(guidedInsertions.get(proposal), signal);
+    if (status === 'applied') guidedInsertions.delete(proposal);
+    return status;
+  }
+
+  async function commitInsertion(change: { base: MermaidProjectV3; next: MermaidProjectV3 } | undefined,
+    signal?: AbortSignal, guard?: WorkspaceWriteGuard) {
     if (closed || savingPreparedChange || !change || change.base !== current.document) return 'stale';
     const next = historyEntry(change.next);
     if (current.bytes + next.bytes > historyByteLimit) throw new Error('The insertion exceeds the Undo history budget.');
@@ -272,9 +277,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       const saved = queue.state();
       if (closed || change.base !== current.document) return 'stale';
       if (saved.phase !== 'saved' || !saved.anchor) throw new Error('Save the current project before inserting your diagram.');
-      const anchor = await writeWorkspaceProject(db, change.next, saved.anchor);
+      const anchor = await writeWorkspaceProject(db, change.next, saved.anchor, guard);
       advanceHistory(next, anchor);
-      guidedInsertions.delete(proposal);
       return 'applied';
     } catch (reason) {
       if (reason instanceof StorageConflict) return 'stale';
@@ -337,7 +341,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       if (closed || change.base !== current.document || saved.phase !== 'saved' || !saved.anchor) {
         throw new Error('Save the current project before applying this suggestion.');
       }
-      const anchor = await writeWorkspaceProject(db, change.next, saved.anchor, change.request);
+      const anchor = await writeWorkspaceProject(db, change.next, saved.anchor, { kind: 'assist', request: change.request });
       advanceHistory(next, anchor);
       suggestions.delete(proposal);
     } finally {

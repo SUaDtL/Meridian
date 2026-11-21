@@ -92,7 +92,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [guidedProcessAttachment, setGuidedProcessAttachment] = useState(emptyGuidedAttachment);
   const [guidedTable, setGuidedTable] = useState(emptyGuidedTable);
   const [guidedTableAttachment, setGuidedTableAttachment] = useState(emptyGuidedAttachment);
-  const guidedNeedsRefresh = useRef(false);
+  const insertionNeedsRefresh = useRef(false);
   const [detachOpen, setDetachOpen] = useState(false);
   // The mounted source editor owns its draft. Retain a copy for reopening
   // without updating the workspace behind the dialog on every keystroke.
@@ -527,10 +527,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   function downloadPresentation() {
     void run(() => savePresentation());
   }
-  async function reviewGuidedInsertion<T>(prepare: (target: Editor) => Promise<T>, signal: AbortSignal) {
+  async function reviewInsertion<T>(prepare: (target: Editor) => Promise<T>, signal?: AbortSignal) {
     const current = editor.current;
     if (!current) throw new Error("Open the saved project before previewing your insertion.");
-    if (!guidedNeedsRefresh.current) return prepare(current);
+    if (!insertionNeedsRefresh.current) return prepare(current);
     if (current.saveState().phase !== "saved" || !connection.current) {
       throw new Error("Save your current changes before refreshing the insertion target.");
     }
@@ -538,34 +538,38 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     try {
       return await prepare(refreshed);
     } finally {
-      if (signal.aborted || editor.current !== current) refreshed.close();
+      if (signal?.aborted || editor.current !== current) refreshed.close();
       else {
         adoptEditor(refreshed);
-        guidedNeedsRefresh.current = false;
+        insertionNeedsRefresh.current = false;
       }
     }
   }
 
   function reviewGuidedSystems(values: SystemsDraft, attachment: GuidedAttachment | undefined, signal: AbortSignal) {
-    return reviewGuidedInsertion(target => target.prepareGuidedSystems(values, attachment, signal), signal);
+    return reviewInsertion(target => target.prepareGuidedSystems(values, attachment, signal), signal);
   }
 
   function reviewGuidedProcess(steps: readonly ProcessStep[], connections: ProcessConnections | undefined,
     attachment: GuidedAttachment | undefined, signal: AbortSignal) {
-    return reviewGuidedInsertion(target => target.prepareGuidedProcess(steps, connections, attachment, signal), signal);
+    return reviewInsertion(target => target.prepareGuidedProcess(steps, connections, attachment, signal), signal);
   }
 
   function reviewGuidedTable(graph: RelationshipGraph, attachment: GuidedAttachment | undefined, signal: AbortSignal) {
-    return reviewGuidedInsertion(target => target.prepareGuidedTable(graph, attachment, signal), signal);
+    return reviewInsertion(target => target.prepareGuidedTable(graph, attachment, signal), signal);
   }
 
-  async function insertGuidedDiagram(proposal: ReadyProposal, signal?: AbortSignal) {
+  async function applyReviewedInsertion(apply: (target: Editor) => ReturnType<Editor["applyInsertion"]>) {
     const current = editor.current;
     if (!current) return "stale";
-    const outcome = await current.applyGuidedInsertion(proposal, signal);
+    const outcome = await apply(current);
     if (outcome === "applied") setProject(current.snapshot());
-    else guidedNeedsRefresh.current = true;
+    else insertionNeedsRefresh.current = true;
     return outcome;
+  }
+
+  function insertGuidedDiagram(proposal: ReadyProposal, signal?: AbortSignal) {
+    return applyReviewedInsertion(target => target.applyGuidedInsertion(proposal, signal));
   }
 
   const commands: WorkspaceCommand[] = [
@@ -831,7 +835,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               setGuidedKind(undefined);
               setGuidedSystems(emptySystemsSession);
               setGuidedSystemsAttachment(emptyGuidedAttachment);
-              guidedNeedsRefresh.current = false;
+              insertionNeedsRefresh.current = false;
               if (draftRetained) setError("Systems inserted. The saved draft could not be cleared.");
             } }} />
       </Suspense>}
@@ -842,7 +846,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               setGuidedKind(undefined);
               setGuidedProcess(emptyGuidedProcess);
               setGuidedProcessAttachment(emptyGuidedAttachment);
-              guidedNeedsRefresh.current = false;
+              insertionNeedsRefresh.current = false;
               if (draftRetained) setError("Process inserted. The saved draft could not be cleared.");
             } }} />
       </Suspense>}
@@ -853,7 +857,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               setGuidedKind(undefined);
               setGuidedTable(emptyGuidedTable);
               setGuidedTableAttachment(emptyGuidedAttachment);
-              guidedNeedsRefresh.current = false;
+              insertionNeedsRefresh.current = false;
               if (draftRetained) setError("Mapped systems inserted. The saved draft could not be cleared.");
             } }} />
       </Suspense>}
@@ -996,10 +1000,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         }} />}
       {insertOpen && editor.current && <Suspense>
         <ComponentProjectDialog onBack={() => setInsertOpen(false)} onClose={() => setInsertOpen(false)}
-          insertion={{ editor: editor.current, nodes, onApplied: () => {
-            setInsertOpen(false);
-            setProject(editor.current!.snapshot());
-          } }} />
+          insertion={{ snapshot: editor.current.snapshot, nodes,
+            prepare: (definition, values, ports, signal) => reviewInsertion(
+              target => target.prepareInsertion(definition, values, ports, signal), signal),
+            apply: (proposal, signal) => applyReviewedInsertion(target => target.applyInsertion(proposal, signal)),
+            onApplied: () => setInsertOpen(false) }} />
       </Suspense>}
       {assistOpen && project && currentFrame && targetTable && edgeLabels && flatFlowchart && connection.current && editor.current && <Suspense>
         <AssistExchangeDialog db={connection.current} editor={editor.current} project={project} table={targetTable}

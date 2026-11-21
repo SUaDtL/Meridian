@@ -1,6 +1,6 @@
 import { pendingAssistKey, type PendingAssistRequest } from '../authoring/assist-exchange';
 import { inactiveAssist, pendingAssistStore, validPendingAssist } from './pending-assist';
-import { projectBaseToken } from '../authoring/base-token';
+import { canonicalJson, projectBaseToken } from '../authoring/base-token';
 import type { ChartProject } from '../authoring/chart-data';
 import { validateChartProject } from '../authoring/chart-project';
 import { elementUuidPattern } from '../authoring/identities';
@@ -24,6 +24,7 @@ export interface StoredProject<Project extends WorkspaceProject = MermaidProject
 const databaseName = 'meridian-workspace';
 const databaseVersion = 2;
 const documentsStore = 'documents';
+const componentDefinitionsStore = 'library';
 const kindIndex = 'document-kind';
 const digestPattern = /^[a-f0-9]{64}$/;
 
@@ -51,7 +52,7 @@ export function openWorkspaceDatabase(factory = indexedDB): Promise<IDBDatabase>
       if (event.oldVersion === 0) {
         db.createObjectStore(documentsStore, { keyPath: 'id' });
         db.createObjectStore('datasets', { keyPath: 'digest' });
-        db.createObjectStore('library', { keyPath: ['id', 'version'] });
+        db.createObjectStore(componentDefinitionsStore, { keyPath: ['id', 'version'] });
         for (const name of ['drafts', pendingAssistStore]) db.createObjectStore(name, { keyPath: 'id' });
         for (const name of ['migrations', 'metadata', 'previews']) db.createObjectStore(name, { keyPath: 'key' });
       }
@@ -142,21 +143,29 @@ export async function readWorkspaceProject(db: IDBDatabase, id: string, kind: Wo
   return { id, document, anchor: stored.anchor };
 }
 
+export type WorkspaceWriteGuard =
+  | { kind: 'assist'; request: PendingAssistRequest }
+  | { kind: 'component'; id: string; version: string; signature: string };
+
 /** Compare the existing anchor and commit the exact capture in a single transaction. */
 export async function writeWorkspaceProject(
   db: IDBDatabase,
   document: WorkspaceProject,
   expected: SavedAnchor | null,
-  consumeAssist?: PendingAssistRequest,
+  guard?: WorkspaceWriteGuard,
 ): Promise<SavedAnchor> {
   if (expected !== null && !validAnchor(expected)) throw new Error('Invalid saved workspace anchor.');
   const expectedAnchor = expected && { ...expected };
   const record = await captureProjectWrite(document);
+  const consumeAssist = guard?.kind === 'assist' ? guard.request : undefined;
+  const component = guard?.kind === 'component' ? guard : undefined;
+  if (component && !expectedAnchor) throw new Error('Save the target project before inserting the component.');
   if (consumeAssist && (consumeAssist.baseToken.projectId !== record.id || !expectedAnchor
     || consumeAssist.baseToken.stateDigest !== expectedAnchor.stateDigest
     || consumeAssist.baseToken.revision + 1 !== document.revision)) throw inactiveAssist();
   return new Promise((resolve, reject) => {
-    const stores = consumeAssist ? [documentsStore, pendingAssistStore] : documentsStore;
+    const stores = [documentsStore];
+    if (guard) stores.push(guard.kind === 'assist' ? pendingAssistStore : componentDefinitionsStore);
     const tx = db.transaction(stores, 'readwrite');
     const documents = tx.objectStore(documentsStore);
     let failure: Error | undefined;
@@ -189,6 +198,20 @@ export async function writeWorkspaceProject(
           }
           documents.put(record);
           pending.delete(consumeAssist.id);
+        };
+      } else if (component) {
+        const library = tx.objectStore(componentDefinitionsStore);
+        const definition = library.get([component.id, component.version]);
+        definition.onsuccess = () => {
+          try {
+            if (!definition.result || canonicalJson(definition.result) !== component.signature) {
+              throw new Error('The saved definition changed. Select the current definition and preview again.');
+            }
+            documents.put(record);
+          } catch (reason) {
+            failure = reason instanceof Error ? reason : new Error('The component definition could not be verified.');
+            tx.abort();
+          }
         };
       } else if (existing !== undefined) documents.put(record);
       else {
