@@ -6,17 +6,19 @@ const identity = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
 
 test('measures absolute line and cubic routes after the common diagram transform', () => {
   const matrix = { a: 2, b: 0, c: 0, d: 2, e: 10, f: -2 };
-  const route = flattenRoute('M0,0 0,4 C0,20 16,20 16,4 L16,0', matrix, { remaining: 100 });
+  const route = flattenRoute('M0,0 0,4 C0,20 16,20 16,4 L16,0', matrix, { remaining: 100, skipped: 0 });
   expect(route?.[0]).toEqual([10, -2]);
   expect(route?.[1]).toEqual([10, 6]);
   expect(route).toContainEqual([26, 30]);
   expect(route?.at(-1)).toEqual([42, -2]);
-  const quadratic = flattenRoute('M0,0 Q6,6 12,0', identity, { remaining: 100 });
+  const quadratic = flattenRoute('M0,0 Q6,6 12,0', identity, { remaining: 100, skipped: 0 });
   expect(quadratic).toContainEqual([6, 3]);
-  expect(flattenRoute('M0,0 A10 10 0 0 0 20 20', identity, { remaining: 10 })).toBeUndefined();
-  const budget = { remaining: 1 };
+  expect(flattenRoute('M0,0 A10 10 0 0 0 20 20', identity, { remaining: 10, skipped: 0 })).toBeUndefined();
+  const budget = { remaining: 1, skipped: 0 };
   expect(flattenRoute('M0,0 L5,5 10,10', identity, budget)).toBeUndefined();
-  expect(budget.remaining).toBe(0);
+  expect(budget).toEqual({ remaining: 0, skipped: 1 });
+  expect(flattenRoute('M0,0 L5,5', identity, budget)).toBeUndefined();
+  expect(budget).toEqual({ remaining: 0, skipped: 2 });
 });
 
 const edge = (id: string, ...measuredRoute: RoutePoint[]) => ({ id, kind: 'edge', measuredRoute });
@@ -32,6 +34,21 @@ test('counts proper crossings and leaves route joins and unsupported paths out o
 
 test('bounds the complete sweep and reports exactly how many pairs were skipped', () => {
   const result = analyzeCrossings(Array.from({ length: 500 }, (_, index) => edge(String(index), [0, index], [100, index])));
-  expect(result.evidence).toEqual({ checked: 100_000, skipped: 24_750, count: 0, findingsOmitted: false });
+  expect(result.evidence).toEqual({ checked: 100_000, skipped: 24_750, routesOverSegmentLimit: 0, count: 0, findingsOmitted: false });
   expect(result.findings).toEqual([]);
+});
+
+
+test('accounts for routes outside the segment budget without counting unsupported geometry as exhausted', () => {
+  const budget = { remaining: 2, skipped: 0 };
+  expect(flattenRoute('M0,0 A10 10 0 0 0 20 20', identity, budget)).toBeUndefined();
+  expect(budget).toEqual({ remaining: 2, skipped: 0 });
+  const { evidence, coverage } = analyzeCrossings([
+    edge('measured', [0, 0], [1, 0]),
+    { id: 'renderer-budget', kind: 'edge', routeOverSegmentLimit: true },
+    edge('analysis-budget', ...Array.from({ length: 10_001 }, (_, index): RoutePoint => [index, 0])),
+    { id: 'unsupported', kind: 'edge' },
+  ]);
+  expect(evidence.routesOverSegmentLimit).toBe(2);
+  expect(coverage).toEqual({ rule: 'QC-07', measured: 1, unknown: 3, inapplicable: 0 });
 });

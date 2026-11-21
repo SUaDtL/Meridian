@@ -31,7 +31,7 @@ function labelEvidence(result: RenderResult, frame: FrameGeometry): ReadabilityE
 }
 
 function connectionRoutes(result: RenderResult) {
-  return result.elements?.filter(item => item.kind === "edge").map(({ key, kind, measuredRoute }) => ({ id: key, kind, measuredRoute })) ?? [];
+  return result.elements?.filter(item => item.kind === "edge").map(({ key, kind, measuredRoute, routeOverSegmentLimit }) => ({ id: key, kind, measuredRoute, routeOverSegmentLimit })) ?? [];
 }
 
 export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDesign, selection, selectedRoleCounts, currentUrl, currentSize, editor, onApply, onClose }: {
@@ -222,13 +222,16 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   }
   function routeSummary(summary: CrossingSummary) {
     return `${summary.count} crossing ${summary.count === 1 ? "candidate" : "candidates"} in checked routes · ${summary.measured} measured · ${summary.unknown} unknown · ${summary.checked.toLocaleString()} pairs checked`
-      + (summary.skipped ? ` · ${summary.skipped.toLocaleString()} pairs skipped` : "");
+      + (summary.skipped ? ` · ${summary.skipped.toLocaleString()} pairs skipped` : "")
+      + (summary.routesOverSegmentLimit ? ` · ${summary.routesOverSegmentLimit.toLocaleString()} ${summary.routesOverSegmentLimit === 1 ? "route" : "routes"} skipped at the segment limit` : "");
   }
   function crossingComparison({ current, proposed, crossings }: NonNullable<Preview["evidence"]>) {
     if (!crossings) return null;
     const complete = [crossings.current, crossings.proposed].every(item => item.measured > 0 && !item.unknown && !item.skipped);
     if (!complete || crossings.current.measured !== crossings.proposed.measured) {
-      return "Crossing coverage is incomplete for this comparison.";
+      return crossings.current.skipped || crossings.proposed.skipped || crossings.current.routesOverSegmentLimit || crossings.proposed.routesOverSegmentLimit
+        ? "Not fully measured. Crossing coverage is incomplete for this comparison."
+        : "Crossing coverage is incomplete for this comparison.";
     }
     if (crossings.current.count === crossings.proposed.count) return "The checked routes have the same crossing candidate count.";
     if (crossings.proposed.count < crossings.current.count && current.smallest !== null && proposed.smallest !== null
@@ -360,7 +363,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
           <p>Current · {routeSummary(preview.evidence.crossings.current)}</p>
           <p>Proposed · {routeSummary(preview.evidence.crossings.proposed)}</p>
           {comparisonNote && <p>{comparisonNote}</p>}
-        </> : <p>The route comparison did not produce measurements.</p>}
+        </> : <p>Not fully measured. The route comparison did not produce measurements.</p>}
       </section>}
       {busy && <p role="status">Rendering the {title} {mode}…</p>}
       {cancelled && <p role="status">Preview cancelled. Your choices are ready to preview again.</p>}
