@@ -19,7 +19,7 @@ import { flowchartSubsetTopology, supportedUngroupSourceId } from "../lib/author
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
-import type { FrameGeometry, ReadabilityTarget, ViewingProfile } from "../lib/authoring/readability";
+import { rolePaintFields, type FrameGeometry, type ReadabilityTarget, type RolePaintField, type ViewingProfile } from "../lib/authoring/readability";
 import { buildExportFrame, buildMermaidProjectPresentation } from "../lib/export";
 import type { ProjectSaveState } from "../lib/persistence/project-save-queue";
 import { openWorkspaceDatabase, saveWorkspaceProjectCopy } from "../lib/persistence/workspace-db";
@@ -57,11 +57,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [componentHidden, setComponentHidden] = useState<number>();
   const [bulkTextHidden, setBulkTextHidden] = useState<number>();
-  const [designReset, setDesignReset] = useState<{ selection: ReadonlySet<string>; hidden: number }>();
+  const [designReset, setDesignReset] = useState<{ selection: ReadonlySet<string>; hidden: number; field?: RolePaintField }>();
   const [deleteConnections, setDeleteConnections] = useState<{ ids: string[]; hidden: number }>();
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
-  const [renameTarget, setRenameTarget] = useState<string>();
+  const [editTarget, setEditTarget] = useState<string>();
   const [highlight, setHighlight] = useState<(OutlineSourceLocation & { source: string })>();
   const [dismissedReadability, setDismissedReadability] = useState<ReadonlySet<string>>(new Set());
   const [readabilityOpen, setReadabilityOpen] = useState(false);
@@ -203,12 +203,25 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     const elements = new Map(currentFrame.rendered.result.elements?.map(element => [element.key, element]));
     const sourceIds = new Map(currentFrame.document.identity.elements.filter(item => item.status === "resolved")
       .map(item => [item.id, item.binding.sourceId]));
+    const roles = new Map(currentFrame.document.roles.map(item => [item.elementId, item.role]));
+    const { design } = currentFrame.document;
     return targetTable.targets.map((target): ReadabilityTarget => {
       const element = elements.get(target.id);
+      const role = target.elementKind === "node" ? roles.get(target.id) : undefined;
+      const policy = design.recipeElements[target.id]?.style;
+      const paint = element?.appearance;
+      const tokens = role && policy ? rolePaintFields.flatMap(field => {
+        const expected = policy[field];
+        if (!expected || !/^#[0-9a-f]{6}$/i.test(expected)) return [];
+        const known = field !== "fill" || paint?.fillKind === "solid";
+        const value = known ? paint?.[field] : undefined;
+        const actual = value && /^#[0-9a-f]{6}$/i.test(value) ? value : undefined;
+        return [{ field, expected, actual, override: design.elements[target.id]?.[field] }];
+      }) : [];
       return { id: target.id, kind: target.elementKind, label: target.label, sourceId: sourceIds.get(target.id), from: target.sourceId, to: target.targetId,
         typography: !!element?.capabilities.includes("typography"), measuredLabelSize: element?.appearance?.labelSizeInDiagram,
         solidTextPaint: element?.appearance?.solidTextPaint, labelOverflowInDiagram: element?.appearance?.labelOverflowInDiagram,
-        measuredRoute: element?.measuredRoute };
+        measuredRoute: element?.measuredRoute, rolePaint: role && tokens.length ? { role, tokens } : undefined };
     });
   }, [readabilityOpen, currentFrame, targetTable]);
   const identities = project?.identity.elements;
@@ -225,6 +238,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       ? [{ id: item.id, label: ids.has(item.id) ? `${item.label} (${ids.get(item.id)})` : item.label,
         sourceId: item.sourceId, targetId: item.targetId, direction: item.direction, explicit: ids.has(item.id), text: edgeLabels?.get(item.id) ?? "" }] : []) ?? [];
   }, [identities, targetTable, edgeLabels]);
+  const selectedSource = outlineSelection.size === 1 ? nodes.find(node => outlineSelection.has(node.id))?.id : undefined;
   const removableGroup = useMemo(() => {
     const identity = identities?.find(record => record.status === "resolved" && record.elementKind === "group"
       && record.binding.sourceId === ungroupSourceId);
@@ -272,8 +286,13 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   function renameFromOutline(id: string) {
     if (editingUnavailable || !nodes.some(node => node.id === id)) return;
     setOutlineOpen(false);
-    setRenameTarget(id);
+    setEditTarget(id);
     setEditFlowchart("setNodeLabel");
+  }
+  function openConnection() {
+    if (editingUnavailable || !nodes.length) return;
+    setEditTarget(selectedSource);
+    setEditFlowchart("addEdge");
   }
   function changeHistory(direction: "undo" | "redo") {
     void run(async () => {
@@ -328,7 +347,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: editingUnavailable, run: () => setEditFlowchart("addDecision") },
     { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
     { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
-      unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("addEdge") },
+      unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: openConnection },
     { id: "create-group", title: "Create group", category: "Diagram", synonyms: ["group nodes", "add subgraph"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose current node declarations." : undefined), run: () => setEditFlowchart("addGroup") },
     { id: "ungroup", title: "Ungroup", category: "Diagram", synonyms: ["remove container", "keep group members"],
@@ -434,6 +453,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
         canRename={!editingUnavailable} onClose={() => setOutlineOpen(false)}
         onRename={renameFromOutline} onSource={jumpToSource} onBulkText={setBulkTextHidden}
+        onConnect={!editingUnavailable && selectedSource ? openConnection : undefined}
         onDesign={flatFlowchart ? hidden => {
           setComparisonSelection({ ids: [...outlineSelection], hidden });
           setOutlineOpen(false);
@@ -460,7 +480,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return status;
         }} />}
       {designReset && targetTable && editor.current && <Suspense>
-        <DesignResetDialog editor={editor.current} token={targetTable.baseToken} selection={designReset.selection} hidden={designReset.hidden}
+        <DesignResetDialog editor={editor.current} token={targetTable.baseToken} selection={designReset.selection} hidden={designReset.hidden} initialField={designReset.field}
           onClose={() => setDesignReset(undefined)} onApply={proposal => {
             const current = editor.current!;
             const status = current.applyDesignReset(proposal);
@@ -475,7 +495,12 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         token={targetTable.baseToken} editor={editor.current} canvas={canvasProfile}
         dismissed={dismissedReadability} onDismissed={setDismissedReadability}
         onCompareLayouts={() => { setReadabilityOpen(false); setComparison("layout"); }}
-        onRename={!editingUnavailable ? id => { setReadabilityOpen(false); renameFromOutline(id); } : undefined} onClose={() => setReadabilityOpen(false)} onApply={proposal => {
+        onRename={!editingUnavailable ? id => { setReadabilityOpen(false); renameFromOutline(id); } : undefined}
+        onResetRolePaint={(id, field) => {
+          setReadabilityOpen(false);
+          setDesignReset({ selection: new Set([id]), hidden: 0, field });
+        }}
+        onClose={() => setReadabilityOpen(false)} onApply={proposal => {
           const current = editor.current!;
           const status = current.applyContrast(proposal);
           if (status === "applied") setProject(current.snapshot());
@@ -553,9 +578,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return result.status;
         }} />}
       {editFlowchart && editor.current && (
-        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} initialOperation={editFlowchart} initialTarget={renameTarget}
+        <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} initialOperation={editFlowchart} initialTarget={editTarget}
           deleteConnections={deleteConnections}
-          onClose={() => { setEditFlowchart(undefined); setRenameTarget(undefined); setDeleteConnections(undefined); }}
+          onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); }}
           onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);

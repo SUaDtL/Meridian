@@ -82,6 +82,51 @@ test('collapsing a verified group hides its selected member and never guesses a 
   await expect(outline.getByRole('status')).toHaveText('1 selected · 0 hidden');
 });
 
+test('uses touch checkboxes across filters and refuses selection beyond the interactive limit', async ({ browser }) => {
+  const context = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  try {
+    const page = await context.newPage();
+    const nodes = Array.from({ length: 200 }, (_, index) => `N${index}[Regular ${String(index).padStart(3, '0')}]`);
+    const source = ['flowchart LR', ...nodes, 'Final[Last system]', ''].join('\n');
+    const live = await openProject(page, 'Touch outline', source);
+    await live.getByRole('button', { name: 'Outline', exact: true }).tap();
+    const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+    const multi = outline.getByRole('button', { name: 'Select multiple', exact: true });
+    await multi.tap();
+    await expect(multi).toHaveAttribute('aria-pressed', 'true');
+    const first = outline.getByRole('checkbox', { name: /^Regular 000/ });
+    const firstRow = outline.locator('label').filter({ has: page.getByRole('checkbox', { name: /^Regular 000/ }) });
+    expect((await firstRow.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await firstRow.tap();
+    await outline.getByRole('checkbox', { name: /^Regular 001/ }).tap();
+    await expect(first).toBeChecked();
+    const search = outline.getByRole('textbox', { name: 'Find an element' });
+    await search.fill('Regular 000');
+    await expect(outline.getByRole('status')).toHaveText('2 selected · 1 hidden');
+    await outline.getByRole('button', { name: 'Select all diagram elements' }).tap();
+    await expect(outline.getByRole('alert')).toHaveText('That action would select 201 elements. The limit is 200. 2 are selected.');
+    await expect(first).toBeChecked();
+    await search.fill('Regular');
+    const showMore = outline.getByRole('button', { name: 'Show more' });
+    await showMore.tap();
+    await showMore.tap();
+    await outline.getByRole('button', { name: 'Select visible results' }).tap();
+    await expect(outline.getByRole('status')).toHaveText('200 selected · 0 hidden');
+    await search.fill('Last system');
+    const last = outline.getByRole('checkbox', { name: /^Last system/ });
+    await last.tap();
+    await expect(last).not.toBeChecked();
+    await expect(outline.getByRole('alert')).toHaveText('That action would select 201 elements. The limit is 200. 200 are selected.');
+    await expect(outline.getByRole('status')).toHaveText('200 selected · 200 hidden');
+    await search.fill('Regular 000');
+    await search.press('ArrowDown');
+    await expect(first).toBeFocused();
+    await first.press('Space');
+    await expect(first).not.toBeChecked();
+    await expect(outline.getByRole('status')).toHaveText('199 selected · 199 hidden');
+  } finally { await context.close(); }
+});
+
 test('applies one reviewed text color to eligible labels across an outline filter', async ({ page }, info) => {
   const nodes = Array.from({ length: 10 }, (_, index) => `N${index}[${index < 2 ? 'Focus' : 'Other'} ${index}]`);
   const source = ['flowchart LR', ...nodes, 'N0 path@--> N1', ''].join('\n');

@@ -151,3 +151,97 @@ test('resumes component parameters and distinguishes unanswered, unconnected, an
   await expect(component.getByRole('button', { name: /^Configurable worker/ })).toBeVisible();
   await expect(resume).toHaveCount(0);
 });
+
+test('reviews a same-version replacement and rejects an already prepared insertion from another tab', async ({ page }, info) => {
+  const project = { ...createDocument(), title: 'Replacement insertion', source: 'flowchart LR\n  In[Intake]\n' };
+  const definition: ComponentDefinition = {
+    schema: 'meridian-component/v1', family: 'flowchart', id: crypto.randomUUID(), version: '1.0.0',
+    name: 'Current worker', description: '', tags: [],
+    provenance: { author: 'Meridian test', source: 'Browser fixture', license: '', licenseText: '' },
+    fragment: { nodes: [{ id: 'worker', label: 'First worker', shape: 'rect', role: 'service' }], edges: [], groups: [] },
+    ports: [], parameters: [], labelBindings: [],
+  };
+  const replacement = { ...definition, name: 'Reviewed worker', fragment: { ...definition.fragment,
+    nodes: [{ ...definition.fragment.nodes[0], label: 'Second worker' }] } };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Replacement insertion' }).click();
+  const live = page.getByRole('dialog', { name: 'Replacement insertion' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Replacement insertion' })).toBeVisible();
+  async function download() {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing replacement insertion project.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  }
+  async function openInsertion() {
+    await live.getByRole('button', { name: 'Commands', exact: true }).click();
+    const search = page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox');
+    await search.fill('Insert component');
+    await search.press('Enter');
+  }
+  const component = page.getByRole('dialog', { name: 'Insert component' });
+  const importLabel = 'Import a component definition or library';
+  const fixture = (value: ComponentDefinition) => ({ name: 'worker.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)) });
+  const insert = component.getByRole('button', { name: 'Insert reviewed component' });
+  const preview = component.getByRole('button', { name: 'Preview component' });
+  await openInsertion();
+  await component.getByLabel(importLabel).setInputFiles(fixture(definition));
+  await preview.click();
+  await insert.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const before = await download();
+  expect(before.source).toContain('First worker');
+  await openInsertion();
+  await component.getByRole('button', { name: /^Current worker/ }).click();
+  await preview.click();
+  await expect(insert).toBeEnabled();
+
+  const other = await page.context().newPage();
+  try {
+    await other.goto('/');
+    await other.getByRole('button', { name: 'Build with guidance' }).click();
+    await other.getByRole('button', { name: 'Browse components' }).click();
+    const shelf = other.getByRole('dialog', { name: 'Components' });
+    const file = shelf.getByLabel(importLabel);
+    await file.setInputFiles(fixture(replacement));
+    const comparison = shelf.getByRole('region', { name: 'Compare component definitions' });
+    await expect(comparison.getByRole('heading', { name: 'Review changes to a saved component' })).toBeFocused();
+    await expect(comparison.getByRole('list', { name: 'Changed definition fields' }).getByRole('listitem'))
+      .toHaveText(['Name', 'Nodes, connections, and groups']);
+    await expect(comparison.getByRole('button', { name: 'Import as copy' })).toBeEnabled();
+    await other.screenshot({ path: info.outputPath('component-replacement-desktop.png') });
+    await other.setViewportSize({ width: 390, height: 844 });
+    await other.screenshot({ path: info.outputPath('component-replacement-mobile.png') });
+    await comparison.getByText('Compare exact definitions').click();
+    await expect(comparison.locator('pre').first()).toContainText('First worker');
+    await expect(comparison.locator('pre').last()).toContainText('Second worker');
+    await comparison.getByRole('button', { name: 'Cancel import' }).click();
+    await expect(file).toBeFocused();
+    await expect(shelf.getByRole('button', { name: /^Current worker/ })).toBeVisible();
+    await file.setInputFiles(fixture(replacement));
+    await comparison.getByRole('button', { name: 'Replace saved definition' }).click();
+    await expect(shelf.getByRole('status')).toHaveText('Saved the reviewed replacement definition.');
+  } finally { await other.close(); }
+
+  await insert.click();
+  await expect(component.getByRole('alert')).toContainText('The saved definition changed.');
+  await expect(insert).toHaveCount(0);
+  await component.getByRole('button', { name: 'Close dialog' }).click();
+  expect(await download()).toEqual(before);
+  await openInsertion();
+  await component.getByRole('button', { name: /^Reviewed worker/ }).click();
+  await preview.click();
+  await insert.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const after = await download();
+  expect(after.source).toContain('First worker');
+  expect(after.source).toContain('Second worker');
+  expect(after.componentInstances[0]).toEqual(before.componentInstances[0]);
+  expect(after.componentInstances[1]).toMatchObject({ definitionId: definition.id, definitionVersion: definition.version });
+  expect(after.componentInstances[1].definitionHash).not.toBe(before.componentInstances[0].definitionHash);
+});

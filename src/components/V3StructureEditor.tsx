@@ -40,8 +40,8 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
   const [nodeQuery, setNodeQuery] = useState("");
   const [edgeDirection, setEdgeDirection] = useState<ConnectionDirection>("forward");
   const [approvedDuplicate, setApprovedDuplicate] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState(initialOperation === "removeGroup" ? group?.id ?? "" : initialTarget);
+  const [from, setFrom] = useState(initialOperation === "addEdge" ? initialTarget : "");
+  const [to, setTo] = useState(initialOperation === "removeGroup" ? group?.id ?? "" : initialOperation === "addEdge" ? "" : initialTarget);
   const [members, setMembers] = useState<ReadonlySet<string>>(new Set());
   const [branches, setBranches] = useState(emptyBranches);
   const [error, setError] = useState("");

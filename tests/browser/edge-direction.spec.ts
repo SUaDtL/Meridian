@@ -22,11 +22,23 @@ test('reviews explicit connection direction and requires consent for an identica
   }
 
   const original = await download();
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^Service/ }).click();
+  const connect = outline.getByRole('button', { name: 'Connect from selected node' });
+  await connect.click();
+  const form = page.getByRole('dialog', { name: 'Edit flowchart' });
+  const from = form.getByRole('combobox', { name: 'From', exact: true });
+  await expect(from.locator('option:checked')).toHaveText('Service (B)');
+  await form.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(connect).toBeFocused();
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
+
   await live.getByRole('button', { name: 'Commands', exact: true }).click();
   const search = page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox');
   await search.fill('Connect nodes');
   await search.press('Enter');
-  const form = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await expect(from.locator('option:checked')).toHaveText('Service (B)');
   const endpointQuery = form.getByRole('textbox', { name: 'Find connection endpoints' });
   await endpointQuery.fill('Service');
   await form.getByRole('combobox', { name: 'From', exact: true }).selectOption({ label: 'Service (B)' });
@@ -53,7 +65,6 @@ test('reviews explicit connection direction and requires consent for an identica
   expect(saved.source).toBe(source + '  B m_e1@---|"Exchange"| A\r\n');
   await expect(live.getByRole('img', { name: 'Diagram preview for Connection review' })).toBeVisible();
   await live.getByRole('button', { name: 'Outline', exact: true }).click();
-  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
   await outline.getByRole('button', { name: 'Relationships' }).click();
   await expect(outline.getByRole('option', { name: /Client ↔ Service.*exchange/ })).toBeVisible();
   await expect(outline.getByRole('option', { name: /Service – Client.*m_e1/ })).toBeVisible();

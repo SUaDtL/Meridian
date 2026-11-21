@@ -10,13 +10,14 @@ import Modal from "./Modal";
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type ResetChanges = Awaited<ReturnType<Editor["prepareDesignReset"]>>["changes"];
 
-export default function DesignResetDialog({ editor, token, selection, hidden, onApply, onClose }: {
+export default function DesignResetDialog({ editor, token, selection, hidden, initialField, onApply, onClose }: {
   editor: Editor; token: BaseToken; selection: ReadonlySet<string>; hidden: number;
+  initialField?: keyof ElementStyle;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyDesignReset"]>; onClose: () => void;
 }) {
   const { fields, hasRecipes } = designResetFields(editor.snapshot(), selection);
   const [layer, setLayer] = useState<DesignReset["layer"]>(fields.length ? "user" : "recipe");
-  const [field, setField] = useState<keyof ElementStyle | "">(fields[0] ?? "");
+  const [field, setField] = useState<keyof ElementStyle | "">(initialField && fields.includes(initialField) ? initialField : fields[0] ?? "");
   const [ready, setReady] = useState<{ proposal: ReadyProposal; url: string; changes: ResetChanges }>();
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState(false);

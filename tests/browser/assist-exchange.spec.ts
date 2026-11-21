@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { canonicalDigest } from '../../src/lib/authoring/base-token';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
+import { createScene } from '../../src/lib/storyboard';
 
 async function download(page: Page, button: Locator) {
   const [file] = await Promise.all([page.waitForEvent('download'), button.click()]);
@@ -10,8 +11,9 @@ async function download(page: Page, button: Locator) {
   return readFile(path, 'utf8');
 }
 
-async function openProject(page: Page, title: string, source: string) {
+async function openProject(page: Page, title: string, source: string, configure?: (project: ReturnType<typeof createDocument>) => void) {
   const project = { ...createDocument(), title, source };
+  configure?.(project);
   await page.addInitScript(({ key, project }) => localStorage.setItem(
     key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] }),
   ), { key: STORAGE_KEY, project });
@@ -91,7 +93,7 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
     operations: [{ op: 'setNodeLabel', targetId: writable.id, label: 'Reviewed label' }],
   };
   await review(dialog, { ...proposal, origin: 'canvas' });
-  await expect(dialog.getByRole('alert')).toContainText('one supported node or connection label edit');
+  await expect(dialog.getByRole('alert')).toContainText('one supported label edit or one connection removal');
   await review(dialog, { ...proposal, operations: [{ ...proposal.operations[0], targetId: contextOnly.id }] });
   await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
   await review(dialog, { ...proposal, baseToken: { ...proposal.baseToken, stateDigest: 'a'.repeat(64) } });
@@ -153,6 +155,8 @@ test('grants one explicit connection label with context-only endpoints and prote
   };
   await review(dialog, { ...proposal, operations: [{ ...operation, targetId: otherId }] });
   await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
+  await review(dialog, { ...proposal, operations: [{ op: 'removeEdge', targetId: edgeId, annotationPolicy: 'preserve-orphans' }] });
+  await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
   await review(dialog, { ...proposal, operations: [{ op: 'setNodeLabel', targetId: request.graph.nodes[0].id, label: 'Changed' }] });
   await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
   await review(dialog, proposal);
@@ -167,4 +171,72 @@ test('grants one explicit connection label with context-only endpoints and prote
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const undone = JSON.parse(await download(page, projectFile));
   expect(undone).toEqual({ ...original, revision: applied.revision + 1, updatedAt: undone.updatedAt });
+});
+
+test('removes one explicitly authorized connection offline and retains its scene references with exact Undo', async ({ page, context }, info) => {
+  const source = 'flowchart LR\r\n A[First]\r\n B[Second]\r\n A drop@-->|"Remove this"| B\r\n A keep@-->|"Keep this"| B\r\n linkStyle 0 stroke:#aaaaaa\r\n linkStyle 1 stroke:#123456\r\n';
+  const key = 'edge:id:drop';
+  const scene = { ...createScene(), title: 'Original transition', visible: ['node:A', 'node:B', key], flow: [key] };
+  const live = await openProject(page, 'Connection removal exchange', source, project => {
+    project.storyboard = { version: 1, scenes: [scene], loop: false };
+    project.design.elements[key] = { stroke: '#abcdef' };
+  });
+  const projectFile = live.getByRole('button', { name: 'Download v3 project' });
+  const original = JSON.parse(await download(page, projectFile));
+  const dialog = await openExchange(page, live);
+  await context.setOffline(true);
+  await dialog.getByLabel('Instruction').fill('Review removing the obsolete connection.');
+  await dialog.getByRole('combobox', { name: 'First', exact: true }).selectOption('context');
+  await dialog.getByRole('combobox', { name: 'Second', exact: true }).selectOption('context');
+  const selected = dialog.getByRole('checkbox', { name: 'First to Second (drop) · Remove this' });
+  await selected.check();
+  await dialog.getByRole('combobox', { name: 'Allowed connection change' }).selectOption('removeEdge');
+  await expect(selected).not.toBeChecked();
+  const share = dialog.getByRole('button', { name: 'Review what will be shared' });
+  await expect(share).toBeDisabled();
+  await selected.check();
+  await share.click();
+  const disclosure = dialog.getByRole('region', { name: 'What will be shared' });
+  await expect(disclosure.getByText(/Remove this.*Removal allowed/)).toBeVisible();
+  await expect(disclosure.getByText(/Keep this.*Read-only context/)).toBeVisible();
+  const request = JSON.parse(await download(page, dialog.getByRole('button', { name: 'Download request' })));
+  const edgeId = request.graph.edges.find((edge: { label: string }) => edge.label === 'Remove this').id;
+  const neighborId = request.graph.edges.find((edge: { label: string }) => edge.label === 'Keep this').id;
+  expect(request.scope.writableElementIds).toEqual([edgeId]);
+  expect(request.allowedOperations).toEqual(['removeEdge']);
+  await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+  const operation = { op: 'removeEdge', targetId: edgeId, annotationPolicy: 'preserve-orphans' };
+  const proposal = {
+    schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'ai',
+    requestId: request.requestId, requestHash: await canonicalDigest('meridian-assist-request/v1', request), baseToken: request.baseToken,
+    operations: [operation],
+  };
+  await review(dialog, { ...proposal, operations: [{ ...operation, annotationPolicy: 'remove-related' }] });
+  await expect(dialog.getByRole('alert')).toContainText('that preserves annotations');
+  await review(dialog, { ...proposal, operations: [{ ...operation, targetId: neighborId }] });
+  await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
+  await review(dialog, proposal);
+  await expect(dialog.getByRole('img', { name: 'Diagram preview after proposed connection removal' })).toBeVisible();
+  const impact = dialog.getByRole('region', { name: 'Retained annotations' });
+  await expect(impact).toContainText('2 scene references and 1 style');
+  await expect(impact).toContainText('Original transition');
+  await page.screenshot({ path: info.outputPath('connection-removal-review-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('connection-removal-review-mobile.png') });
+  await dialog.getByRole('button', { name: 'Apply reviewed connection removal' }).click();
+  await expect(dialog).toBeHidden();
+  const removed = JSON.parse(await download(page, projectFile));
+  expect(removed.source).toBe(source.replace('A drop@-->|"Remove this"| B', '').replace('linkStyle 0 stroke:#aaaaaa', '')
+    .replace('linkStyle 1 stroke:#123456', 'linkStyle 0 stroke:#123456'));
+  expect(removed.identity.orphans).toContainEqual(expect.objectContaining({ formerElementId: edgeId, retained: {
+    style: { stroke: '#abcdef' }, sceneReferences: [{ sceneId: scene.id, field: 'visible', index: 2 }, { sceneId: scene.id, field: 'flow', index: 0 }],
+  } }));
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const undone = JSON.parse(await download(page, projectFile));
+  expect(undone).toEqual({ ...original, revision: removed.revision + 1, updatedAt: undone.updatedAt });
+  await openExchange(page, live);
+  await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+  await review(dialog, proposal);
+  await expect(dialog.getByRole('alert')).toContainText('no longer matches a live request');
 });

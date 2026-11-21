@@ -2,20 +2,22 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import ReadabilityWorker from "../lib/authoring/readability.worker?worker&inline";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
 import { canonicalDigest, type BaseToken } from "../lib/authoring/base-token";
+import { styleFieldLabels } from "../lib/authoring/design-reset";
 import type { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import { minimumAdvisoryLabelSize, normalizedName, viewingScale, type FrameGeometry, type ReadabilityFinding, type ReadabilityReport,
-  type ReadabilityTarget, type ViewingProfile } from "../lib/authoring/readability";
+  type ReadabilityTarget, type RolePaintField, type ViewingProfile } from "../lib/authoring/readability";
 import { routeTolerance } from "../lib/authoring/route-geometry";
 import Modal from "./Modal";
 
 const presentation: ViewingProfile = { width: 1280, height: 720, padding: 32 };
 const checkNames = { "QC-01": "Solid text contrast", "QC-03": "Viewed label size", "QC-04": "Label containment",
-  "QC-05": "Duplicate names", "QC-06": "Separate regions", "QC-07": "Crossing candidates" } as const;
+  "QC-05": "Duplicate names", "QC-06": "Separate regions", "QC-07": "Crossing candidates", "QC-08": "Explicit role styling" } as const;
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type ContrastPreview = NonNullable<ReturnType<Editor["readContrastPreview"]>>;
 
-export default function ReadabilityDialog({ frame, targets, token, editor, canvas, dismissed, onDismissed, onRename, onCompareLayouts, onApply, onClose }: {
+export default function ReadabilityDialog({ frame, targets, token, editor, canvas, dismissed, onDismissed, onRename, onResetRolePaint,
+  onCompareLayouts, onApply, onClose }: {
   frame: FrameGeometry;
   targets: ReadabilityTarget[];
   token: BaseToken;
@@ -24,6 +26,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
   dismissed: ReadonlySet<string>;
   onDismissed: Dispatch<SetStateAction<ReadonlySet<string>>>;
   onRename?: (elementId: string) => void;
+  onResetRolePaint?: (elementId: string, field: RolePaintField) => void;
   onCompareLayouts?: () => void;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyContrast"]>;
   onClose: () => void;
@@ -141,6 +144,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
     if (finding.rule === "QC-06") {
       return [finding.rule, 1, finding.regions.map(region => [...region].sort()).sort()];
     }
+    if (finding.rule === "QC-08") return [1, finding];
     return [1, finding, profile];
   }
 
@@ -182,6 +186,11 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
       const [a, b] = finding.targets.map(id => byId.get(id)?.label || "Unnamed connection");
       return <>{a} and {b} cross approximately {finding.count === 1 ? "once" : `${finding.count} times`} within the measured routes.</>;
     }
+    if (finding.rule === "QC-08") {
+      const name = byId.get(finding.target)?.label || "Unnamed node";
+      return <>{name} has the {finding.role} role. {styleFieldLabels[finding.field]} renders as {finding.actual}.
+        {" "}The saved recipe specifies {finding.expected}.{finding.override && ` User override ${finding.override}.`}</>;
+    }
     return <>The diagram contains {finding.regions.length} regions with no connection between them.</>;
   }
 
@@ -219,6 +228,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
         <ul>{result.report.coverage.map(item => <li key={item.rule}>{checkNames[item.rule]} · {item.measured} measured · {item.unknown} unknown · {item.inapplicable} not applicable</li>)}</ul>
         <p>Contrast measurements cover text with a verified solid backdrop. Gradients and unverified overlaps appear as unknown.</p>
         <p>Label containment compares text bounds with square-corner node shapes. It flags spill greater than half a CSS pixel in the selected viewing area.</p>
+        {!!targets.some(item => item.rolePaint) && <p>Explicit role styling compares measured paint with the saved recipe on nodes with an assigned role.</p>}
         {!!targets.some(item => item.kind === "edge") && <p>
           Crossing candidates count intersections inside route segments with a {routeTolerance} diagram unit approximation.
           {" "}{result.report.crossings.checked.toLocaleString()} segment pairs checked.
@@ -250,6 +260,9 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
           </details>}
           {finding.rule === "QC-07" && onCompareLayouts && !dismissed.has(key) && <button type="button" className="button secondary"
             disabled={busy} onClick={onCompareLayouts}>Compare layouts</button>}
+          {finding.rule === "QC-08" && onResetRolePaint && !dismissed.has(key)
+            && finding.override?.toLowerCase() === finding.actual.toLowerCase() && <button type="button" className="button secondary"
+            disabled={busy} onClick={() => onResetRolePaint(finding.target, finding.field)}>Review reset for {byId.get(finding.target)?.label || "unnamed node"}</button>}
           <button type="button" className="button quiet" disabled={busy} onClick={() => toggleDismissal(key, dismissed.has(key))}>
             {dismissed.has(key) ? "Restore finding" : "Ignore for this session"}
           </button>

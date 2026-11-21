@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { canonicalDigest, projectBaseToken, sameBaseToken } from "../lib/authoring/base-token";
+import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken } from "../lib/authoring/base-token";
 import { AuthoringWorkerTimeout, runAuthoringWorker } from "../lib/authoring/authoring-worker";
 import { maxComponentLibraryBytes, type ComponentDefinition, type parseComponentFile } from "../lib/authoring/component-definition";
 import ComponentFileWorker from "../lib/authoring/component-file.worker?worker&inline";
@@ -9,7 +9,7 @@ import type { ReadyProposal } from "../lib/authoring/proposals";
 import { buildComponentProject, materializeComponent } from "../lib/authoring/component-project";
 import { curatedComponents } from "../lib/authoring/curated-components";
 import { buildExportFrame } from "../lib/export";
-import { readComponentLibrary, removeComponentDefinition, restoreComponentDefinition, saveComponentDefinitions } from "../lib/persistence/component-library";
+import { readComponentLibrary, removeComponentDefinition, replaceComponentDefinition, restoreComponentDefinition, saveComponentDefinitions } from "../lib/persistence/component-library";
 import { listComponentCheckpoints, saveComponentCheckpoint, type ComponentCheckpoint, type ComponentDraft } from "../lib/persistence/component-drafts";
 import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
@@ -19,6 +19,11 @@ import Modal from "./Modal";
 type Preview = Awaited<ReturnType<typeof buildComponentProject>> & { url: string; proposal?: ReadyProposal; attachments?: number };
 type Insertion = { editor: Awaited<ReturnType<typeof openStoredProjectEditor>>; nodes: readonly { id: string; label: string }[]; onApplied: () => void };
 type DraftAttachment = { targetId: string; direction: "in" | "out" | null } | null;
+type ImportConflict = { saved: ComponentDefinition; incoming: ComponentDefinition };
+const differenceLabels = {
+  name: "Name", description: "Description", tags: "Tags", provenance: "Provenance and license",
+  fragment: "Nodes, connections, and groups", parameters: "Parameters", labelBindings: "Label bindings", ports: "Attachment points",
+} as const;
 
 export default function ComponentProjectDialog({ onCreated, insertion, onBack, onClose }: {
   onBack: () => void;
@@ -30,6 +35,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
   const [libraryStatus, setLibraryStatus] = useState("");
   const [removeCandidate, setRemoveCandidate] = useState<ComponentDefinition>();
   const [removedDefinition, setRemovedDefinition] = useState<ComponentDefinition>();
+  const [importConflict, setImportConflict] = useState<ImportConflict>();
   const [retryFile, setRetryFile] = useState<File>();
   const [definition, setDefinition] = useState<ComponentDefinition>();
   const [drafts, setDrafts] = useState<ComponentCheckpoint[]>([]);
@@ -45,6 +51,8 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
   const [error, setError] = useState("");
   const work = useRef<AbortController | undefined>(undefined);
   const removalHeading = useRef<HTMLHeadingElement>(null);
+  const conflictHeading = useRef<HTMLHeadingElement>(null);
+  const importInput = useRef<HTMLInputElement>(null);
   const undoRemoval = useRef<HTMLButtonElement>(null);
   const projectId = insertion?.editor.snapshot().id ?? null;
   const targetIds = new Set(insertion?.nodes.map(node => node.id));
@@ -60,6 +68,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
 
   useEffect(() => () => work.current?.abort(), []);
   useEffect(() => { if (removeCandidate) removalHeading.current?.focus(); }, [removeCandidate]);
+  useEffect(() => { if (importConflict) conflictHeading.current?.focus(); }, [importConflict]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
   useEffect(() => {
     let closed = false;
@@ -213,6 +222,16 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
     try {
       const db = await openWorkspaceDatabase();
       try {
+        if (!parsed.pack) {
+          const incoming = parsed.definitions[0];
+          const saved = (await readComponentLibrary(db)).find(item => item.id === incoming.id && item.version === incoming.version);
+          signal.throwIfAborted();
+          if (saved && canonicalJson(saved) !== canonicalJson(incoming)) {
+            setImportConflict({ saved, incoming });
+            setLibraryStatus("");
+            return;
+          }
+        }
         const outcomes = await saveComponentDefinitions(db, parsed.definitions, curatedComponents);
         setLibrary(current => {
           const next = new Map(current.map(item => [`${item.id}:${item.version}`, item]));
@@ -239,6 +258,21 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
     }
   }
 
+  async function resolveConflict(action: 'copy' | 'replace', signal: AbortSignal) {
+    if (!importConflict) return;
+    const { saved, incoming } = importConflict;
+    const db = await openWorkspaceDatabase();
+    try {
+      signal.throwIfAborted();
+      const next = action === "replace" ? await replaceComponentDefinition(db, saved, incoming)
+        : (await saveComponentDefinitions(db, [{ ...incoming, id: crypto.randomUUID() }], curatedComponents))[0].definition;
+      setLibrary(previous => [...previous.filter(item => item.id !== next.id || item.version !== next.version), next]);
+      setImportConflict(undefined);
+      select(next);
+      setLibraryStatus(action === "replace" ? "Saved the reviewed replacement definition." : "Saved a separate local copy of the conflicting definition.");
+    } finally { db.close(); }
+  }
+
   async function prepare(signal: AbortSignal) {
     if (!definition || !readyPorts) return;
     const requested = new Map<string, PortAssignment>();
@@ -262,7 +296,13 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
     }
     signal.throwIfAborted();
     if (insertion && preview.proposal) {
-      const status = await insertion.editor.applyInsertion(preview.proposal, signal);
+      let status: Awaited<ReturnType<Insertion["editor"]["applyInsertion"]>>;
+      try {
+        status = await insertion.editor.applyInsertion(preview.proposal, signal);
+      } catch (reason) {
+        setPreview(undefined);
+        throw reason;
+      }
       if (status !== "applied") {
         setPreview(undefined);
         throw new Error(status === "stale" ? "The diagram changed. Review the current attachment targets."
@@ -330,6 +370,27 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
   return (
     <Modal title={insertion ? "Insert component" : "Components"} wide busy={!!busy && busy !== "preview"}
       onClose={() => leaveChoices(onClose)}>
+      {importConflict && <section className="heading-form" aria-label="Compare component definitions">
+        <h3 ref={conflictHeading} tabIndex={-1}>Review changes to a saved component</h3>
+        <p>Saved definition “{importConflict.saved.name}” · Imported definition “{importConflict.incoming.name}”</p>
+        <p>Version {importConflict.saved.version} · {importConflict.saved.id}</p>
+        <p>Existing projects keep their inserted elements and recorded definition digest.</p>
+        <ul aria-label="Changed definition fields">{(Object.keys(differenceLabels) as (keyof typeof differenceLabels)[])
+          .filter(field => canonicalJson(importConflict.saved[field]) !== canonicalJson(importConflict.incoming[field]))
+          .map(field => <li key={field}>{differenceLabels[field]}</li>)}</ul>
+        <details className="migration-preview component-definition-comparison"><summary>Compare exact definitions</summary>
+          <h4>Saved definition</h4><pre tabIndex={0}>{JSON.stringify(importConflict.saved, null, 2)}</pre>
+          <h4>Imported definition</h4><pre tabIndex={0}>{JSON.stringify(importConflict.incoming, null, 2)}</pre>
+        </details>
+        <div className="dialog-actions">
+          <button className="button quiet" disabled={!!busy} onClick={() => {
+            setImportConflict(undefined); setError("");
+            requestAnimationFrame(() => importInput.current?.focus());
+          }}>Cancel import</button>
+          <button className="button secondary" disabled={!!busy} onClick={() => void run("library", signal => resolveConflict("replace", signal))}>Replace saved definition</button>
+          <button className="button primary" disabled={!!busy} onClick={() => void run("library", signal => resolveConflict("copy", signal))}>Import as copy</button>
+        </div>
+      </section>}
       {removeCandidate && <section className="heading-form" aria-label="Review library removal">
         <h3 ref={removalHeading} tabIndex={-1}>Remove {removeCandidate.name} from the local library</h3>
         <p>Version {removeCandidate.version} · {removeCandidate.id.slice(0, 8)}</p>
@@ -343,7 +404,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
           <button className="button primary" disabled={!!busy} onClick={() => void run("library", removeDefinition)}>Remove definition</button>
         </div>
       </section>}
-      {!definition && !removeCandidate && <div className="heading-form">
+      {!definition && !removeCandidate && !importConflict && <div className="heading-form">
         <button className="button quiet" disabled={!!busy} onClick={onBack}>{insertion ? "Back to diagram" : "Process steps"}</button>
         {!!drafts.length && <ul className="project-list" aria-label="Component drafts">
           {drafts.map(saved => {
@@ -360,7 +421,7 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
         {changedDefinition && <button className="button secondary" disabled={!!busy}
           onClick={() => void run("draft", signal => restoreDraft(changedDefinition, signal, true))}>Use current definition</button>}
         <label>Search components<input value={query} maxLength={120} disabled={!!busy} onChange={event => setQuery(event.target.value)} /></label>
-        <label>Import a component definition or library<input type="file" accept=".json,application/json" disabled={!!busy} onChange={event => {
+        <label>Import a component definition or library<input ref={importInput} type="file" accept=".json,application/json" disabled={!!busy} onChange={event => {
           const file = event.target.files?.[0]; if (file) void run("read", signal => importFile(file, signal));
         }} /></label>
         {retryFile && <button className="button secondary" disabled={!!busy} onClick={() => void run("read", signal => importFile(retryFile, signal, true))}>Retry for five seconds</button>}
