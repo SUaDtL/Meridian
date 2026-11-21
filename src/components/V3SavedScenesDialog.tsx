@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { openStoredProjectEditor, StorySceneDetails, StorySceneOrderEdit } from "../lib/authoring/project-editor";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import { buildExportFrame } from "../lib/export";
+import { createScene } from "../lib/storyboard";
 import { getTheme } from "../lib/themes";
 import type { StoryScene } from "../types/storyboard";
 import Modal from "./Modal";
@@ -15,16 +16,19 @@ function sceneDetails(scene: StoryScene): StorySceneDetails {
     easing: scene.easing, reveal: scene.reveal, padding: scene.camera.padding };
 }
 
-export default function V3SavedScenesDialog({ editor, onApply, onOrderChange, onClose }: {
+export default function V3SavedScenesDialog({ editor, startNew, onApply, onOrderChange, onClose }: {
   editor: Editor;
+  startNew: boolean;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStory"]>;
   onOrderChange: (...args: Parameters<Editor["editStorySceneOrder"]>) => ReturnType<Editor["editStorySceneOrder"]>;
   onClose: () => void;
 }) {
   const [base, setBase] = useState(editor.snapshot);
-  const [selected, setSelected] = useState<string | undefined>(base.storyboard.scenes[0]?.id);
+  const [newScene, setNewScene] = useState(() => startNew ? createScene(base.storyboard.scenes.length) : undefined);
+  const [selected, setSelected] = useState<string | undefined>(newScene?.id ?? base.storyboard.scenes[0]?.id);
   const selectedIndex = base.storyboard.scenes.findIndex(item => item.id === selected);
-  const scene = selectedIndex < 0 ? undefined : base.storyboard.scenes[selectedIndex];
+  const creating = !!newScene && selected === newScene.id;
+  const scene = creating ? newScene : selectedIndex < 0 ? undefined : base.storyboard.scenes[selectedIndex];
   const [drafts, setDrafts] = useState(new Map<string, StorySceneDetails>());
   const draft = scene ? drafts.get(scene.id) ?? sceneDetails(scene) : undefined;
   const [review, setReview] = useState<Review>();
@@ -37,6 +41,8 @@ export default function V3SavedScenesDialog({ editor, onApply, onOrderChange, on
   const cards = useRef(new Map<string, HTMLButtonElement>());
   const cancelRemoval = useRef<HTMLButtonElement>(null);
   const empty = useRef<HTMLParagraphElement>(null);
+  const titleField = useRef<HTMLInputElement>(null);
+  const add = useRef<HTMLButtonElement>(null);
   const previewScenes = useMemo(() => review ? [review.scene] : [], [review]);
   const changed = !!scene && JSON.stringify(draft) !== JSON.stringify(sceneDetails(scene));
   useEffect(() => () => operation.current?.abort(), []);
@@ -55,7 +61,7 @@ export default function V3SavedScenesDialog({ editor, onApply, onOrderChange, on
   }
 
   async function prepare() {
-    if (!selected || !draft || !changed || operation.current) return;
+    if (!selected || !draft || (!creating && !changed) || operation.current) return;
     const work = new AbortController();
     operation.current = work;
     setBusy(true);
@@ -63,9 +69,9 @@ export default function V3SavedScenesDialog({ editor, onApply, onOrderChange, on
     setReview(undefined);
     setError("");
     try {
-      const proposal = await editor.prepareStoryScene(selected, draft, base, work.signal);
+      const proposal = await editor.prepareStoryScene(creating ? null : selected, draft, base, work.signal);
       const result = editor.readStoryPreview(proposal);
-      const edited = result?.next.storyboard.scenes.find(item => item.id === selected);
+      const edited = creating ? result?.next.storyboard.scenes.at(-1) : result?.next.storyboard.scenes.find(item => item.id === selected);
       if (!edited || !result?.rendered.targetTable) throw new Error("The project changed. Open the current story again.");
       const { svg } = buildExportFrame(result.rendered.result, result.next, { animated: true });
       work.signal.throwIfAborted();
@@ -82,20 +88,46 @@ export default function V3SavedScenesDialog({ editor, onApply, onOrderChange, on
     if (!selected || !review || !ready || busy) return;
     const result = onApply(review.proposal);
     if (result === "applied") {
+      const id = review.scene.id;
       setBase(editor.snapshot());
       setDrafts(previous => {
         const next = new Map(previous);
         next.delete(selected);
         return next;
       });
+      if (creating) {
+        setSelected(id);
+        setNewScene(undefined);
+      }
       resetReview();
-      setStatus("Scene updated.");
-      requestAnimationFrame(() => cards.current.get(selected)?.focus());
+      setStatus(creating ? "Scene added to the storyboard." : "Scene updated.");
+      requestAnimationFrame(() => cards.current.get(id)?.focus());
     } else {
       setReview(undefined);
       setReady(false);
       setError(result === "stale" ? "The project changed. Open the current story again." : "The scene could not be applied with Undo.");
     }
+  }
+
+  function startScene() {
+    const draftScene = newScene ?? createScene(base.storyboard.scenes.length);
+    setNewScene(draftScene);
+    setSelected(draftScene.id);
+    setConfirmRemoval(false);
+    resetReview();
+    requestAnimationFrame(() => titleField.current?.focus());
+  }
+
+  function cancelNewScene() {
+    setDrafts(previous => {
+      const remaining = new Map(previous);
+      if (newScene) remaining.delete(newScene.id);
+      return remaining;
+    });
+    setNewScene(undefined);
+    setSelected(base.storyboard.scenes[0]?.id);
+    resetReview();
+    requestAnimationFrame(() => add.current?.focus());
   }
 
   function editOrder(action: StorySceneOrderEdit) {
@@ -126,7 +158,9 @@ export default function V3SavedScenesDialog({ editor, onApply, onOrderChange, on
     }
   }
 
-  return <Modal title="Edit saved scenes" wide onClose={onClose} initialFocus="[aria-pressed='true']">
+  return <Modal title="Edit saved scenes" wide onClose={onClose} initialFocus={startNew ? "[name='scene-title']" : "[aria-pressed='true']"}>
+    <button type="button" className="button secondary" ref={add} disabled={busy || creating || base.storyboard.scenes.length >= 50}
+      onClick={startScene}>{newScene && !creating ? "Resume new overview scene" : "New overview scene"}</button>
     <ol className="project-list" aria-label="Saved scenes">{base.storyboard.scenes.map((item, index) => (
       <li className="project-row" key={item.id}>
         <button type="button" className="button quiet" aria-pressed={item.id === selected} disabled={busy}
@@ -137,7 +171,7 @@ export default function V3SavedScenesDialog({ editor, onApply, onOrderChange, on
       </li>
     ))}</ol>
     {!scene && <p ref={empty} tabIndex={-1}>No saved scenes.</p>}
-    {scene && <div className="dialog-actions" role="group" aria-label="Selected scene order">
+    {scene && !creating && <div className="dialog-actions" role="group" aria-label="Selected scene order">
       <button type="button" className="button quiet" disabled={busy || confirmRemoval || selectedIndex === 0}
         onClick={() => editOrder("earlier")}>Move earlier</button>
       <button type="button" className="button quiet" disabled={busy || confirmRemoval || selectedIndex === base.storyboard.scenes.length - 1}
@@ -159,7 +193,8 @@ export default function V3SavedScenesDialog({ editor, onApply, onOrderChange, on
     {status && <p role="status">{status}</p>}
     {error && <p role="alert">{error}</p>}
     {scene && draft && !confirmRemoval && <form className="heading-form" onSubmit={event => { event.preventDefault(); void prepare(); }}>
-      <label>Scene title<input value={draft.title} maxLength={120} disabled={busy} onChange={event => change({ ...draft, title: event.target.value })} /></label>
+      {creating && <p>The overview shows the entire diagram. Preview it before adding it to the end of the story.</p>}
+      <label>Scene title<input ref={titleField} name="scene-title" value={draft.title} maxLength={120} disabled={busy} onChange={event => change({ ...draft, title: event.target.value })} /></label>
       <label>Duration in seconds<input type="number" step="any" min={0.5} max={120} required disabled={busy}
         value={Number.isNaN(draft.duration) ? "" : draft.duration} onChange={event => change({ ...draft, duration: event.target.valueAsNumber })} /></label>
       <label>Entrance in seconds<input type="number" step="any" min={0} max={Math.min(10, draft.duration || 10)} required disabled={busy}
@@ -182,8 +217,9 @@ export default function V3SavedScenesDialog({ editor, onApply, onOrderChange, on
           accent={getTheme(base.settings.theme).accent} onReady={setReady} />
       </section>}
       <div className="dialog-actions">
-        <button className="button secondary" type="submit" disabled={!changed || busy}>Preview scene edit</button>
-        <button className="button primary" type="button" disabled={!review || !ready || busy} onClick={apply}>Apply scene edit</button>
+        {creating && <button className="button quiet" type="button" disabled={busy} onClick={cancelNewScene}>Cancel new scene</button>}
+        <button className="button secondary" type="submit" disabled={(!creating && !changed) || busy}>{creating ? "Preview new scene" : "Preview scene edit"}</button>
+        <button className="button primary" type="button" disabled={!review || !ready || busy} onClick={apply}>{creating ? "Add reviewed scene" : "Apply scene edit"}</button>
       </div>
     </form>}
   </Modal>;

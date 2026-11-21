@@ -217,6 +217,68 @@ test('moves saved scenes by keyboard, reviews deletion, and restores the exact s
   expect(JSON.parse(await download(page, live, 'Download v3 project')).storyboard).toEqual(original.storyboard);
 });
 
+test('authors the first overview scene by hand and appends a second reviewed scene', async ({ page, browser }, info) => {
+  const source = 'flowchart LR\n A[Start]\n B[Finish]\n A route@--> B\n';
+  const project = { ...createDocument(), title: 'Manual overview story', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Manual overview story' }).click();
+  const live = page.getByRole('dialog', { name: 'Manual overview story' });
+  const before = JSON.parse(await download(page, live, 'Download v3 project'));
+  expect(before.storyboard.scenes).toEqual([]);
+  await live.getByRole('button', { name: 'Create overview scene' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit saved scenes' });
+  const title = dialog.getByRole('textbox', { name: 'Scene title' });
+  await expect(title).toBeFocused();
+  await title.fill('Discarded scene');
+  await dialog.getByRole('button', { name: 'Cancel new scene' }).click();
+  await expect(dialog.getByText('No saved scenes.')).toBeVisible();
+  const newScene = dialog.getByRole('button', { name: 'New overview scene' });
+  await expect(newScene).toBeFocused();
+  await newScene.press('Enter');
+  await expect(title).toHaveValue('Scene 1');
+  await title.fill('Explain the workflow');
+  await dialog.getByRole('spinbutton', { name: 'Duration in seconds' }).fill('7');
+  const add = dialog.getByRole('button', { name: 'Add reviewed scene' });
+  const preview = dialog.getByRole('button', { name: 'Preview new scene' });
+  await expect(add).toBeDisabled();
+  await preview.click();
+  await expect(dialog.getByRole('button', { name: 'Preview Explain the workflow' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.getByRole('button', { name: 'Play story' })).toBeVisible();
+  await page.screenshot({ path: info.outputPath('manual-story-scene-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('manual-story-scene-mobile.png') });
+  await add.click();
+  await expect(dialog.getByRole('button', { name: /^1\. Explain the workflow/ })).toBeFocused();
+  await newScene.click();
+  await expect(title).toHaveValue('Scene 2');
+  await title.fill('Wrap up');
+  await preview.click();
+  await add.click();
+  await expect(dialog.getByRole('button', { name: /^2\. Wrap up/ })).toBeFocused();
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const after = JSON.parse(await download(page, live, 'Download v3 project'));
+  expect(after.source).toBe(source);
+  expect(after.identity).toEqual(before.identity);
+  expect(after.storyboard.scenes).toMatchObject([{ title: 'Explain the workflow', duration: 7, visible: null },
+    { title: 'Wrap up', duration: 5, visible: null }]);
+  const html = await download(page, live, 'Download HTML presentation');
+  const context = await browser.newContext({ offline: true, reducedMotion: 'reduce' });
+  try {
+    const offline = await context.newPage();
+    await offline.setContent(html);
+    await expect(offline.getByLabel('Choose scene').getByRole('option')).toHaveText(['1. Explain the workflow', '2. Wrap up']);
+  } finally { await context.close(); }
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  expect(JSON.parse(await download(page, live, 'Download v3 project')).storyboard.scenes).toEqual(after.storyboard.scenes.slice(0, 1));
+});
+
 test('resumes a local path draft after reload and reviews it against the newer project revision', async ({ page }) => {
   const source = 'flowchart LR\nA[Start]\nB[Review]\nC[Archive]\nA review@-->|"Send"| B\nB archive@--> C\n';
   const project = { ...createDocument(), title: 'Story draft example', source };
