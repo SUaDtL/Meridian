@@ -29,6 +29,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
   const [allowNodeAddition, setAllowNodeAddition] = useState(false);
   const [allowConnectionAddition, setAllowConnectionAddition] = useState(false);
   const [allowConnectedNode, setAllowConnectedNode] = useState(false);
+  const [allowGroup, setAllowGroup] = useState(false);
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(batchSize);
   const [request, setRequest] = useState<RequestPreview>();
@@ -64,7 +65,8 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
       const edgeStyles = new Map(elements.flatMap(item => item.kind === "edge" && item.appearance?.lineStyle
         ? [[item.key, item.appearance.lineStyle] as const] : []));
       const result = await buildAssistRequest(project, table, edgeLabels, edgeStyles, selected, instruction, writableEdges, edgeOperation, {
-        removeNode: allowNodeRemoval, addEdge: allowConnectionAddition, addNode: allowNodeAddition, addConnectedNode: allowConnectedNode,
+        removeNode: allowNodeRemoval, addEdge: allowConnectionAddition, addNode: allowNodeAddition,
+        addConnectedNode: allowConnectedNode, createGroup: allowGroup,
       });
       signal.throwIfAborted();
       if (editor.snapshot() !== project) throw new Error("The project changed. Close this dialog and review the current diagram.");
@@ -178,6 +180,10 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
           }} />
           Allow one new node and its connection together
         </label>
+        <label className="check-label">
+          <input type="checkbox" checked={allowGroup} disabled={!!busy} onChange={event => setAllowGroup(event.target.checked)} />
+          Allow one group around writable nodes
+        </label>
         <ul className="project-list">
           {visible.slice(0, limit).map(node => <li className="project-row" key={node.id}>
             <label>{node.label}
@@ -229,6 +235,8 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
         <p>A proposal may remove one connection marked for removal below.</p>}
       {(request.request.allowedOperations.includes("setNodeLabel") || request.request.allowedOperations.includes("setEdgeLabel")) &&
         <p>A proposal may change one label on an element marked writable below.</p>}
+      {request.request.allowedOperations.includes("createGroup") &&
+        <p>A proposal may group consecutive nodes marked writable below. Review the exact members before applying.</p>}
       {!request.pending.connectedNode && request.request.allowedOperations.includes("addNode") &&
         <p>A proposal may add one standalone node with a label and shape.</p>}
       {request.removableNodes.length > 0 && <>
@@ -261,6 +269,10 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
         : candidate.op === "removeEdge" ? <p>Remove {connectionName(candidate.targetId)}
           {edgeLabels.get(candidate.targetId) && ` · ${edgeLabels.get(candidate.targetId)}`}.</p>
         : candidate.op === "addNode" ? <p>Add {candidate.label} as a standalone {candidate.shape === "rect" ? "rectangle" : candidate.shape} node.</p>
+        : candidate.op === "addGroup" ? <>
+          <p>Create {candidate.label} around the reviewed nodes.</p>
+          <ul aria-label="Proposed group members">{candidate.memberIds.map(id => <li key={id}>{labels.get(id)}</li>)}</ul>
+        </>
         : candidate.op === "addNext" ? <>
           <p>Add {candidate.label} as a {candidate.shape === "rect" ? "rectangle" : candidate.shape} node.</p>
           <p>{candidate.incoming ? candidate.label : labels.get(candidate.anchorId)} → {candidate.incoming ? labels.get(candidate.anchorId) : candidate.label}
@@ -286,6 +298,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
       <img src={candidate.url} alt={candidate.op === "setNodeLabel" ? "Diagram preview with proposed node label"
         : candidate.op === "removeEdge" ? "Diagram preview after proposed connection removal"
         : candidate.op === "addNode" ? "Diagram preview with proposed new node"
+        : candidate.op === "addGroup" ? "Diagram preview with the proposed group"
         : candidate.op === "addNext" ? "Diagram preview with the proposed node and its connection"
         : candidate.op === "addEdge" ? "Diagram preview with proposed new connection"
         : candidate.op === "removeNode" ? "Diagram preview after proposed node removal" : "Diagram preview with proposed connection label"}
@@ -297,6 +310,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
           {candidate.op === "setNodeLabel" ? "Apply reviewed rename"
             : candidate.op === "removeEdge" ? "Apply reviewed connection removal"
             : candidate.op === "addNode" ? "Apply reviewed new node"
+            : candidate.op === "addGroup" ? "Apply reviewed group"
             : candidate.op === "addNext" ? "Apply reviewed node and connection"
             : candidate.op === "addEdge" ? "Apply reviewed new connection"
             : candidate.op === "removeNode" ? "Apply reviewed node removal" : "Apply reviewed connection label"}

@@ -479,3 +479,64 @@ test('reviews a connected assistant node through an explicit attachment and appl
   const restored = JSON.parse(await download(page, backup));
   expect(restored).toEqual({ ...original, revision: applied.revision + 1, updatedAt: restored.updatedAt });
 });
+
+test('reviews one assistant group around exact writable nodes and preserves boundary links', async ({ page, context }) => {
+  const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  %% Authored note\r\n  B[Second]\r\n  C[Outside]\r\n'
+    + '  A local@--> B\r\n  B remote@--> C\r\n  linkStyle 1 stroke:#446677\r\n';
+  const live = await openProject(page, 'Offline group proposal', source);
+  const backup = live.getByRole('button', { name: 'Download v3 project' });
+  const original = JSON.parse(await download(page, backup));
+  const dialog = await openExchange(page, live);
+  await context.setOffline(true);
+  await dialog.getByLabel('Instruction').fill('Group the two reviewed steps.');
+  await dialog.getByRole('combobox', { name: 'First', exact: true }).selectOption('writable');
+  await dialog.getByRole('combobox', { name: 'Second', exact: true }).selectOption('writable');
+  await dialog.getByRole('combobox', { name: 'Outside', exact: true }).selectOption('context');
+  const reviewScope = dialog.getByRole('button', { name: 'Review what will be shared' });
+  const requestDownload = dialog.getByRole('button', { name: 'Download request' });
+  const groupPermission = dialog.getByRole('checkbox', { name: 'Allow one group around writable nodes' });
+  const disclosure = dialog.getByRole('region', { name: 'What will be shared' });
+  const suggestion = async (request: { requestId: string; baseToken: unknown }, memberIds: string[]) => ({
+    schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'ai',
+    requestId: request.requestId, requestHash: await canonicalDigest('meridian-assist-request/v1', request),
+    baseToken: request.baseToken,
+    operations: [{ op: 'createGroup', ref: 'new:steps', label: 'Reviewed steps', memberIds, parentGroupId: null }],
+  });
+
+  await reviewScope.click();
+  await expect(disclosure.getByText(/may group consecutive nodes/)).toHaveCount(0);
+  const blocked = JSON.parse(await download(page, requestDownload));
+  expect(blocked.allowedOperations).toEqual(['setNodeLabel']);
+  const ids = new Map<string, string>(blocked.graph.nodes.map((item: { label: string; id: string }) => [item.label, item.id]));
+  const members = [ids.get('First')!, ids.get('Second')!];
+  await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+  await review(dialog, await suggestion(blocked, members));
+  await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
+
+  await dialog.getByRole('button', { name: 'Prepare a request' }).click();
+  await dialog.getByLabel('Instruction').fill('Group the two reviewed steps.');
+  await groupPermission.check();
+  await reviewScope.click();
+  await expect(disclosure.getByText(/may group consecutive nodes marked writable/)).toBeVisible();
+  const allowed = JSON.parse(await download(page, requestDownload));
+  expect(allowed.allowedOperations).toEqual(['setNodeLabel', 'createGroup']);
+  await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+  await review(dialog, await suggestion(allowed, [members[0], ids.get('Outside')!]));
+  await expect(dialog.getByRole('alert')).toContainText('Every proposed group member');
+  await review(dialog, await suggestion(allowed, [members[0], members[0]]));
+  await expect(dialog.getByRole('alert')).toContainText('List each proposed group member once.');
+  await review(dialog, await suggestion(allowed, members));
+  const preview = dialog.getByRole('region', { name: 'Unverified suggestion' });
+  await expect(preview.getByRole('list', { name: 'Proposed group members' }).getByRole('listitem')).toHaveText(['First', 'Second']);
+  await preview.getByRole('button', { name: 'Apply reviewed group' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const applied = JSON.parse(await download(page, backup));
+  expect(applied.source).toBe(source.replace('  A[First]', '  subgraph m_g1 ["Reviewed steps"]\r\n  A[First]')
+    .replace('  C[Outside]', '  end\r\n  C[Outside]'));
+  expect(applied.identity.elements.slice(0, original.identity.elements.length)).toEqual(original.identity.elements);
+  expect(applied.identity.elements.slice(original.identity.elements.length)).toEqual([expect.objectContaining({ elementKind: 'group' })]);
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = JSON.parse(await download(page, backup));
+  expect(restored).toEqual({ ...original, revision: applied.revision + 1, updatedAt: restored.updatedAt });
+});
