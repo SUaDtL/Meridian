@@ -70,7 +70,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [comparisonSelection, setComparisonSelection] = useState<{ ids: string[]; hidden: number }>();
   const [comparison, setComparison] = useState<"design" | "layout">();
   const [storyOpen, setStoryOpen] = useState(false);
-  const [savedScenesOpen, setSavedScenesOpen] = useState(false);
+  const [savedScenesOpen, setSavedScenesOpen] = useState<"edit" | "create">();
   const [storyDraft, setStoryDraft] = useState(initialGroupStoryDraft);
   const [canvasProfile, setCanvasProfile] = useState<ViewingProfile>();
   const previewImage = useRef<HTMLImageElement>(null);
@@ -337,7 +337,11 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to suggest scenes.", run: () => setStoryOpen(true) },
     { id: "edit-saved-scenes", title: "Edit saved scenes", category: "Story", synonyms: ["scene properties", "storyboard"],
       unavailable: outlineAvailable && project?.storyboard.scenes.length ? undefined : "Open a verified diagram with saved scenes.",
-      run: () => setSavedScenesOpen(true) },
+      run: () => setSavedScenesOpen("edit") },
+    { id: "create-scene", title: "Create overview scene", category: "Story", synonyms: ["new scene", "manual scene"],
+      unavailable: !outlineAvailable ? "Open a verified diagram before creating a scene."
+        : project && project.storyboard.scenes.length >= 50 ? "A storyboard can contain at most 50 scenes." : undefined,
+      run: () => setSavedScenesOpen("create") },
     { id: "add-node", title: "Add node", category: "Diagram", unavailable: editingUnavailable, run: () => setEditFlowchart("addNode") },
     { id: "add-next", title: "Add next", category: "Diagram", synonyms: ["connected step", "new connected node"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose a current node to connect." : undefined), run: () => setEditFlowchart("addNext") },
@@ -395,8 +399,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("design")}>Explore designs</button>}
               {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
               {outlineAvailable && <button ref={suggestScenesButton} className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
-              {outlineAvailable && !!project.storyboard.scenes.length && <button className="button secondary"
-                disabled={busy} onClick={() => setSavedScenesOpen(true)}>Edit saved scenes</button>}
+              {outlineAvailable && <button className="button secondary" disabled={busy}
+                onClick={() => setSavedScenesOpen(project.storyboard.scenes.length ? "edit" : "create")}>
+                {project.storyboard.scenes.length ? "Edit saved scenes" : "Create overview scene"}
+              </button>}
               <button className="button secondary" disabled={busy} onClick={openHeading}>Edit heading</button>
               {targetTable && <button className="button secondary" disabled={busy} onClick={() => setEditSource(true)}>Edit Mermaid source</button>}
               {!!project.componentInstances.length && <button className="button secondary" disabled={busy} onClick={() => setDetachOpen(true)}>Detach component</button>}
@@ -529,8 +535,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return status;
         }} />}
       {savedScenesOpen && editor.current && <Suspense>
-        <SavedScenesDialog editor={editor.current} onClose={() => {
-          setSavedScenesOpen(false);
+        <SavedScenesDialog editor={editor.current} startNew={savedScenesOpen === "create"} onClose={() => {
+          setSavedScenesOpen(undefined);
           if (!editor.current?.snapshot().storyboard.scenes.length) requestAnimationFrame(() => suggestScenesButton.current?.focus());
         }} onOrderChange={(...args) => {
           const current = editor.current!;
