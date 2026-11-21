@@ -1,0 +1,242 @@
+# Meridian acceptance coverage
+
+This checkpoint maps all 118 IDs in the design package’s `final/stories/backlog.csv` to the repository at `ffcc6114bbfb82a3b08a7ecaa652c24a2ffc1577`. The [implementation ledger](AUTHORING-IMPLEMENTATION.md) records the released scopes and workflow evidence. Each section gives the dependencies and next independently reviewable work for its stories.
+
+**Scoped evidence** (45) means the current checks exercise the scope described in the row. **Partial** (65) has implementation or evidence with a stated gap. **Open** (3) requires the stated local capability. **Operator gate** (5) needs a separately approved companion or pilot. Shared release gates require the aggregate evidence defined in the design package.
+
+G01 covers source preservation, G02 identity and rendering parity, G03 transactions and recovery, G04 responsiveness and memory, G05 accessibility and usability, G06 portable artifacts, G07 chart accuracy, G08 bounded local imports and G09 assistant operation.
+
+## F00 Authoring foundation
+
+F00a commands and render ownership, F00b exact source proof and identity, F00c durable recovery.
+
+Keep proposal-aware source commands and portable parity checks independently reviewable.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| FN01 | Base token and stale proposal | G01, G02, G03, G06 | Scoped evidence | [base-token.test.ts](../src/lib/authoring/base-token.test.ts), [proposals.test.ts](../src/lib/authoring/proposals.test.ts) | Cross-tab fixtures use the full authored-state digest. |
+| FN02 | Exact source and Unicode | G01, G02, G03, G06 | Partial | [base-token.test.ts](../src/lib/authoring/base-token.test.ts), [flowchart-source.test.ts](../src/lib/authoring/flowchart-source.test.ts) | Unify maximum Unicode and literal round-trip fixtures across authoring paths. |
+| FN03 | Invalid source and stale canvas | G01, G02, G03, G06 | Scoped evidence | [v3-source-editor.spec.ts](../tests/browser/v3-source-editor.spec.ts) | The editor retains invalid input and leaves accepted bytes and bindings intact. |
+| FN04 | Candidate and post-commit failure | G01, G02, G03, G06 | Partial | [project-editor.ts](../src/lib/authoring/project-editor.ts), [project-render.ts](../src/lib/authoring/project-render.ts) | Exercise injected sanitizer and post-commit paint failures. |
+| FN05 | Interleaved project history and IME | G01, G02, G03, G06 | Partial | [authoring-foundation.spec.ts](../tests/browser/authoring-foundation.spec.ts), [project-editor.ts](../src/lib/authoring/project-editor.ts) | Run one composed input, style and structure history sequence in v3. |
+| FN06 | Retirement and source ID reuse | G01, G02, G03, G06 | Partial | [retire-elements.ts](../src/lib/authoring/retire-elements.ts), [migrate-legacy-project.test.ts](../src/lib/authoring/migrate-legacy-project.test.ts) | Exercise delete, recreate and Undo with a pre-existing styled scene end to end. |
+| FN07 | Migrated story parity | G01, G02, G03, G06 | Partial | [migrate-legacy-project.test.ts](../src/lib/authoring/migrate-legacy-project.test.ts), [group-story.spec.ts](../tests/browser/group-story.spec.ts) | Compare one migrated directional fixture in studio and HTTP-blocked HTML. |
+| FN08 | Save races and history | G01, G02, G03, G06 | Partial | [project-save-queue.test.ts](../src/lib/persistence/project-save-queue.test.ts), [workspace-migration-review.spec.ts](../tests/browser/workspace-migration-review.spec.ts) | Combine multiple pending saves, Undo and two tabs in one browser test. |
+| FN09 | Annotation overflow and recovery | G01, G02, G03, G06 | Open | [retire-elements.ts](../src/lib/authoring/retire-elements.ts), [V3SourceEditor.tsx](../src/components/V3SourceEditor.tsx) | Complete an over-limit recovery export and validated reimport, then verify separate cleanup. |
+| FN10 | Closed proposal and exact writes | G01, G02, G03, G06 | Partial | [proposals.test.ts](../src/lib/authoring/proposals.test.ts), [flowchart-proof.test.ts](../src/lib/authoring/flowchart-proof.test.ts) | Extend generated proposal coverage beyond the currently supported operation subsets. |
+| FN11 | Portable acceptance bound | G01, G02, G03, G06 | Partial | [validate-mermaid-project.test.ts](../src/lib/authoring/validate-mermaid-project.test.ts), [workspace-migration-review.spec.ts](../tests/browser/workspace-migration-review.spec.ts) | Run maximum-size acceptance and portable reimport for both project kinds. |
+| FN12 | Worker and hostile-source recovery | G01, G02, G03, G06 | Partial | [authoring-worker.ts](../src/lib/authoring/authoring-worker.ts), [guided-process.spec.ts](../tests/browser/guided-process.spec.ts), [v3-source-editor.spec.ts](../tests/browser/v3-source-editor.spec.ts) | Combine deadlines, malformed fixtures and network blocking in the source review path. |
+
+## F00c Persistence and security
+
+F00a authored snapshots and F00b stable identity.
+
+Verify the IndexedDB migration and write-failure matrix before broader default migration.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| PS01 | Latest state under slow saves | G03, G06, G08 | Scoped evidence | [project-save-queue.test.ts](../src/lib/persistence/project-save-queue.test.ts) | Queue tests cover stale captured writes. |
+| PS02 | Cross-tab exact state | G03, G06, G08 | Scoped evidence | [base-token.test.ts](../src/lib/authoring/base-token.test.ts), [workspace-migration-review.spec.ts](../tests/browser/workspace-migration-review.spec.ts) | The authored digest and durable anchor are separate checks. |
+| PS03 | Interrupted migration boundaries | G03, G06, G08 | Partial | [workspace-migration.ts](../src/lib/persistence/workspace-migration.ts), [workspace-migration-review.spec.ts](../tests/browser/workspace-migration-review.spec.ts) | Inject interruption at every migration write boundary. |
+| PS04 | Quota and blocked upgrade recovery | G03, G06, G08 | Partial | [workspace-migration-review.spec.ts](../tests/browser/workspace-migration-review.spec.ts), [guided-systems.spec.ts](../tests/browser/guided-systems.spec.ts) | Complete a blocked-upgrade download exercise alongside quota recovery. |
+| PS05 | Network-free migrated animation | G03, G06, G08 | Partial | [migrate-legacy-project.test.ts](../src/lib/authoring/migrate-legacy-project.test.ts), [group-story.spec.ts](../tests/browser/group-story.spec.ts) | Reuse the full directional target and camera fixture from FN07. |
+| PS06 | Maximum materialized export | G03, G06, G08 | Partial | [validate-mermaid-project.test.ts](../src/lib/authoring/validate-mermaid-project.test.ts), [chart-project.spec.ts](../tests/browser/chart-project.spec.ts) | Measure exact maximum Unicode and dataset exports then reopen. |
+| PS07 | Allowlisted retained input | G03, G06, G08 | Partial | [terraform-import.spec.ts](../tests/browser/terraform-import.spec.ts), [assist-exchange.spec.ts](../tests/browser/assist-exchange.spec.ts) | Add a store-wide retention fixture covering every guided and engineering entry point. |
+| PS08 | Termination before durability | G03, G06, G08 | Partial | [project-save-queue.test.ts](../src/lib/persistence/project-save-queue.test.ts), [workspace-migration-review.spec.ts](../tests/browser/workspace-migration-review.spec.ts) | Close a page during a controlled pending write and verify the last durable state. |
+
+## F01 Smart Create
+
+F00a review, F00b canonical writer and F00c draft persistence.
+
+Verify complete process and systems tasks, then exact draft and expiry handling.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| SC-01 | Five-step independent creation | G01, G03, G05, G06 | Scoped evidence | [guided-process.spec.ts](../tests/browser/guided-process.spec.ts) | Browser fixture verifies five labels, four relationships and the download. |
+| SC-02 | Explicit decision paths | G01, G03, G05, G06 | Scoped evidence | [guided-process.spec.ts](../tests/browser/guided-process.spec.ts) | The branch review requires explicit choices and excludes an unintended cross-branch link. |
+| SC-03 | Duplicate system labels | G01, G03, G05, G06 | Scoped evidence | [guided-relationship-table.spec.ts](../tests/browser/guided-relationship-table.spec.ts), [guided-systems.spec.ts](../tests/browser/guided-systems.spec.ts) | Browser fixtures verify distinct bindings and portable output. |
+| SC-04 | Wizard target changes | G01, G03, G05, G06 | Partial | [GuidedProcessDialog.tsx](../src/components/GuidedProcessDialog.tsx), [project-editor.ts](../src/lib/authoring/project-editor.ts) | Current guided creation opens an independent project. Exercise stale target refusal where an existing-project Apply is added. |
+| SC-05 | Checkpoint restoration | G01, G03, G05, G06 | Partial | [guided-process.spec.ts](../tests/browser/guided-process.spec.ts), [guided-drafts.ts](../src/lib/persistence/guided-drafts.ts) | Verify restored timestamps and expiry announcements across all guided entry points. |
+| SC-06 | No-drag authoring parity | G01, G03, G05, G06 | Partial | [guided-process.spec.ts](../tests/browser/guided-process.spec.ts), [guided-systems.spec.ts](../tests/browser/guided-systems.spec.ts) | Run equivalent whole tasks with keyboard and touch on named devices. |
+| SC-07 | Literal label fidelity | G01, G03, G05, G06 | Scoped evidence | [guided-process.spec.ts](../tests/browser/guided-process.spec.ts), [flowchart-source.test.ts](../src/lib/authoring/flowchart-source.test.ts) | An unrenderable literal retains the input and blocks creation. |
+| SC-08 | Unmapped CSV retention | G01, G03, G05, G06 | Partial | [GuidedRelationshipTableDialog.tsx](../src/components/GuidedRelationshipTableDialog.tsx), [guided-relationship-table.spec.ts](../tests/browser/guided-relationship-table.spec.ts) | Inspect storage after closing or reloading with unmapped input. |
+| SC-09 | Terminal branch recovery | G01, G03, G05, G06 | Scoped evidence | [guided-process.spec.ts](../tests/browser/guided-process.spec.ts) | The resumed decision fixture preserves reviewed choices and branch endpoints. |
+
+## F02 Quality Coach
+
+F00a shared render and measurements, plus shared style resolution.
+
+Extend measured coverage and reversible fixes where the renderer proves the result.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| QC-09 | Exact contrast and reversible fix | G04, G05, G06 | Scoped evidence | [readability.spec.ts](../tests/browser/readability.spec.ts) | Browser fixtures cover exact measured color, focus and Apply with Undo. |
+| QC-10 | Unknown gradient contrast | G04, G05, G06 | Scoped evidence | [readability.spec.ts](../tests/browser/readability.spec.ts) | The measured report identifies a gradient node as unmeasured. |
+| QC-11 | Viewing profile and PNG density | G04, G05, G06 | Partial | [readability.spec.ts](../tests/browser/readability.spec.ts), [ExportDialog.tsx](../src/components/ExportDialog.tsx) | DPR profile evidence exists. Compare actual PNG1x and PNG2x exports at one intended width. |
+| QC-12 | Separate regions | G04, G05, G06 | Scoped evidence | [readability.spec.ts](../tests/browser/readability.spec.ts) | The check discloses both regions without modifying the source. |
+| QC-13 | Relevant style dismissal | G04, G05, G06 | Partial | [readability.spec.ts](../tests/browser/readability.spec.ts), [ReadabilityDialog.tsx](../src/components/ReadabilityDialog.tsx) | Measured contrast fixtures exist. Add the exact role-style dismissal and style revision fixture. |
+| QC-14 | Partial measurement budget | G04, G05, G06 | Partial | [layout-crossings.worker.ts](../src/lib/authoring/layout-crossings.worker.ts), [readability.spec.ts](../tests/browser/readability.spec.ts) | Exercise segment and pair limits plus forced deadline in the visible result. |
+| QC-15 | Crossing and text-size tradeoff | G04, G05, G06 | Partial | [V3ComparisonDialog.tsx](../src/components/V3ComparisonDialog.tsx), [layout-alternatives.spec.ts](../tests/browser/layout-alternatives.spec.ts) | Pin a real graph where both measured changes disagree. |
+
+## F03 Design Director
+
+F00a preview coordinator, stable identity and shared style ownership.
+
+Separate typography and presentation shape review from scoped paint and scheduler fixtures.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| DD-01 | Preserve explicit overrides | G03, G04, G05, G06 | Scoped evidence | [design-recipes.spec.ts](../tests/browser/design-recipes.spec.ts) | Preview and portable state preserve the scoped user paint override. |
+| DD-02 | Scoped global settings | G03, G04, G05, G06 | Scoped evidence | [design-recipes.spec.ts](../tests/browser/design-recipes.spec.ts) | Browser checks reviewed scope and unchanged settings. |
+| DD-03 | Typography and external layout movement | G03, G04, G05, G06 | Open | [design-recipes.ts](../src/lib/authoring/design-recipes.ts), [V3ComparisonDialog.tsx](../src/components/V3ComparisonDialog.tsx) | Add individually reviewed eligible typography and report movement outside the selected targets. |
+| DD-04 | Foreground supersedes design previews | G03, G04, G05, G06 | Partial | [render.ts](../src/lib/render.ts), [V3ComparisonDialog.tsx](../src/components/V3ComparisonDialog.tsx) | Stress the shared renderer with three sequential requests and a foreground revision. |
+| DD-05 | Failure stays scoped to a card | G03, G04, G05, G06 | Partial | [V3ComparisonDialog.tsx](../src/components/V3ComparisonDialog.tsx), [design-recipes.spec.ts](../tests/browser/design-recipes.spec.ts) | Exercise comparison after one failed candidate and one independently successful candidate. |
+| DD-06 | Presentation shape fidelity | G03, G04, G05, G06 | Partial | [project-render.ts](../src/lib/authoring/project-render.ts), [design-recipes.ts](../src/lib/authoring/design-recipes.ts) | Implement an explicit role recipe shape review and compare source and portable exports. |
+| DD-07 | Undo restores recipe and overrides | G03, G04, G05, G06 | Scoped evidence | [design-recipes.spec.ts](../tests/browser/design-recipes.spec.ts) | The scope fixture verifies exact user and recipe layer restoration. |
+| DD-08 | Recipe dependency digest | G03, G04, G05, G06 | Partial | [project-editor.ts](../src/lib/authoring/project-editor.ts), [design-recipes.ts](../src/lib/authoring/design-recipes.ts) | Inject a same-version recipe content change across preview and Apply. |
+
+## F04 Components
+
+F00a atomic review, F00b group and insertion proof, F00c local library.
+
+Cover exact portable attachment parity, library limits and recovery.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| CP-01 | Repeat insertion distinct identities | G01, G02, G03, G06, G08 | Scoped evidence | [component-insertion.spec.ts](../tests/browser/component-insertion.spec.ts) | The nested fixture inserts twice and preserves individual bindings and Undo. |
+| CP-02 | Explicit attachment and round-trip | G01, G02, G03, G06, G08 | Partial | [component-insertion.spec.ts](../tests/browser/component-insertion.spec.ts), [workspace-migration-review.spec.ts](../tests/browser/workspace-migration-review.spec.ts) | Reimport the exact attached component fixture and inspect its edge. |
+| CP-03 | Conflicting definition import | G01, G02, G03, G06, G08 | Partial | [component-library.ts](../src/lib/persistence/component-library.ts), [ComponentProjectDialog.tsx](../src/components/ComponentProjectDialog.tsx) | Verify copy and explicit replacement preserve all intended distinct entries. |
+| CP-04 | Unsupported extraction footprint | G01, G02, G03, G06, G08 | Partial | [component-selection.ts](../src/lib/authoring/component-selection.ts), [component-selection.spec.ts](../tests/browser/component-selection.spec.ts) | Add a selected unsupported reference fixture that demonstrates precise local feedback. |
+| CP-05 | Quota and definition download | G01, G02, G03, G06, G08 | Partial | [SaveComponentDialog.tsx](../src/components/SaveComponentDialog.tsx), [component-library.ts](../src/lib/persistence/component-library.ts) | Inject quota failure in the Save action and download the definition bytes. |
+| CP-06 | Parameter retention | G01, G02, G03, G06, G08 | Partial | [component-insertion.ts](../src/lib/authoring/component-insertion.ts), [component-insertion.spec.ts](../tests/browser/component-insertion.spec.ts) | Edit the inserted label and inspect its exported instance metadata for the prior value. |
+| CP-07 | Retired attachment target | G01, G02, G03, G06, G08 | Partial | [component-insertion.ts](../src/lib/authoring/component-insertion.ts), [ComponentProjectDialog.tsx](../src/components/ComponentProjectDialog.tsx) | Remove and reuse an attachment source ID during a resumable insertion. |
+| CP-08 | Aggregate component caps | G01, G02, G03, G06, G08 | Partial | [component-definition.test.ts](../src/lib/authoring/component-definition.test.ts), [component-library.ts](../src/lib/persistence/component-library.ts) | Exercise an aggregate library and expanded project limit in Chromium. |
+| CP-09 | Unanswered and unconnected ports | G01, G02, G03, G06, G08 | Scoped evidence | [component-insertion.spec.ts](../tests/browser/component-insertion.spec.ts) | Resumed fixture distinguishes unconnected and directed choices. |
+| CP-10 | Definition dependency replacement | G01, G02, G03, G06, G08 | Scoped evidence | [component-insertion.spec.ts](../tests/browser/component-insertion.spec.ts) | An explicit same-version replacement invalidates an older prepared operation from another tab. |
+
+## F05 Stories
+
+F00a shared runtime, stable typed targets and visibility closure.
+
+Finish migrated studio and portable parity and stale-target review fixtures.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| AS-01 | Ordered editable group scenes | G02, G03, G05, G06 | Scoped evidence | [group-story.spec.ts](../tests/browser/group-story.spec.ts) | The generated scenes keep reviewed order and saved scenes can be edited. |
+| AS-02 | Explicit loop scenes | G02, G03, G05, G06 | Scoped evidence | [group-story.spec.ts](../tests/browser/group-story.spec.ts) | The selected return edge appears in a bounded scene review. |
+| AS-03 | Append preserves manual scenes | G02, G03, G05, G06 | Scoped evidence | [group-story.spec.ts](../tests/browser/group-story.spec.ts) | The browser fixture checks original objects and exact Undo. |
+| AS-04 | Reduced-motion playback | G02, G03, G05, G06 | Partial | [group-story.spec.ts](../tests/browser/group-story.spec.ts), [StoryPreviewPlayer.tsx](../src/components/StoryPreviewPlayer.tsx) | Compare studio and portable playback with reduced motion and assert camera and flow independently. |
+| AS-05 | Removed target invalidates preview | G02, G03, G05, G06 | Partial | [project-editor.ts](../src/lib/authoring/project-editor.ts), [V3GroupStoryDialog.tsx](../src/components/V3GroupStoryDialog.tsx) | Inject the stale-target change between scene paint and Apply. |
+| AS-06 | Nested path ancestor visibility | G02, G03, G05, G06 | Partial | [group-story.spec.ts](../tests/browser/group-story.spec.ts), [path-story.ts](../src/lib/authoring/path-story.ts) | Compare measured nested path visibility and declared coverage in both outputs. |
+| AS-07 | Migrated directional story parity | G02, G03, G05, G06 | Partial | [migrate-legacy-project.test.ts](../src/lib/authoring/migrate-legacy-project.test.ts), [group-story.spec.ts](../tests/browser/group-story.spec.ts) | Reuse the exact studio and HTTP-blocked playback fixture from FN07. |
+| AS-08 | Old scene after source ID reuse | G02, G03, G05, G06 | Partial | [retire-elements.ts](../src/lib/authoring/retire-elements.ts), [V3SavedScenesDialog.tsx](../src/components/V3SavedScenesDialog.tsx) | Test the surviving named orphan before and after source ID reuse and Undo. |
+| AS-09 | Resume ordered paths | G02, G03, G05, G06 | Scoped evidence | [group-story.spec.ts](../tests/browser/group-story.spec.ts) | The browser fixture resumes ordered paths and re-reviews the current revision. |
+
+## F06 Layout assistance
+
+F00a coordinated preview and shared measurements, plus F00b for direction.
+
+Verify explicit candidate review and instrument phase, input and memory budgets.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| LY01 | Latest foreground render | G01, G04, G05, G06 | Partial | [render.ts](../src/lib/render.ts), [layout-alternatives.spec.ts](../tests/browser/layout-alternatives.spec.ts) | Instrument owner calls and supersession under competing foreground requests. |
+| LY02 | Unsupported direction capability | G01, G04, G05, G06 | Partial | [layout-alternatives.test.ts](../src/lib/authoring/layout-alternatives.test.ts), [V3ComparisonDialog.tsx](../src/components/V3ComparisonDialog.tsx) | Verify the full unsupported-family UI including safe available alternatives. |
+| LY03 | Stale preview and refresh | G01, G04, G05, G06 | Partial | [project-editor.ts](../src/lib/authoring/project-editor.ts), [V3ComparisonDialog.tsx](../src/components/V3ComparisonDialog.tsx) | Change a reviewed authoring revision and preserve the original layout choice during refresh. |
+| LY04 | One explicit bounded option | G01, G04, G05, G06 | Scoped evidence | [V3ComparisonDialog.tsx](../src/components/V3ComparisonDialog.tsx), [measure-layout-review.mjs](../scripts/measure-layout-review.mjs) | Manual admission is active. Keep automatic generation gated on measured budgets. |
+| LY05 | Aggregate cache and blob lifecycle | G01, G04, G05, G06 | Partial | [render-cache.ts](../src/lib/render-cache.ts), [V3ComparisonDialog.tsx](../src/components/V3ComparisonDialog.tsx) | Measure aggregate strings and actual browser memory on repeated project changes. |
+| LY06 | Density-independent measurement | G01, G04, G05, G06 | Partial | [readability.spec.ts](../tests/browser/readability.spec.ts), [layout-alternatives.spec.ts](../tests/browser/layout-alternatives.spec.ts) | Verify independent zoom and actual PNG1x and PNG2x at the same profile. |
+| LY07 | Comparable evidence and unknown geometry | G01, G04, G05, G06 | Partial | [V3ComparisonDialog.tsx](../src/components/V3ComparisonDialog.tsx), [readability.spec.ts](../tests/browser/readability.spec.ts) | Current copy discloses unknown geometry. Add a fixed real-layout tradeoff fixture. |
+| LY08 | Exact direction and settings Undo | G01, G04, G05, G06 | Partial | [layout-alternatives.spec.ts](../tests/browser/layout-alternatives.spec.ts), [project-editor.ts](../src/lib/authoring/project-editor.ts) | Add an accepted offline export comparison to the tested exact Undo flow. |
+
+## F07 Visual builder
+
+F00a transaction history, F00b source and identity proof, F00c storage and migration.
+
+Land each remaining mutation with exact scope, cancellation and Undo fixtures.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| VB01 | Exact reviewed rename | G01, G02, G03, G05 | Scoped evidence | [project-outline.spec.ts](../tests/browser/project-outline.spec.ts), [flowchart-proof.test.ts](../src/lib/authoring/flowchart-proof.test.ts) | The grouped fixture verifies authored spans, bindings and exact Undo. |
+| VB02 | Escape during validation | G01, G02, G03, G05 | Partial | [V3StructureEditor.tsx](../src/components/V3StructureEditor.tsx), [workspace-migration-review.spec.ts](../tests/browser/workspace-migration-review.spec.ts) | Hold validation, Escape, then blur and verify the late candidate cannot commit. |
+| VB03 | Resolve dirty rename first | G01, G02, G03, G05 | Partial | [workspace-migration-review.spec.ts](../tests/browser/workspace-migration-review.spec.ts), [V3StructureEditor.tsx](../src/components/V3StructureEditor.tsx) | Tested action transitions exist. Add direct project-switch coverage for pending input. |
+| VB04 | Keyboard and touch connection parity | G01, G02, G03, G05 | Partial | [edge-direction.spec.ts](../tests/browser/edge-direction.spec.ts), [command-search.spec.ts](../tests/browser/command-search.spec.ts) | Complete a searchable touch endpoint and independent keyboard parity fixture. |
+| VB05 | Decision display-only reorder | G01, G02, G03, G05 | Scoped evidence | [decision.spec.ts](../tests/browser/decision.spec.ts) | Reordering preserves the prepared connection topology and Undo. |
+| VB06 | Indexed edge style preservation | G01, G02, G03, G05 | Scoped evidence | [remove-connection.spec.ts](../tests/browser/remove-connection.spec.ts), [source-patches.test.ts](../src/lib/authoring/source-patches.test.ts) | Verified indexed rewrites preserve surviving authored relationships. |
+| VB07 | Unsupported deletion footprint | G01, G02, G03, G05 | Partial | [source-patches.ts](../src/lib/authoring/source-patches.ts), [V3StructureEditor.tsx](../src/components/V3StructureEditor.tsx) | Verify the exact source link and reason shown for blocked deletion. |
+| VB08 | Hidden bulk scope | G01, G02, G03, G05 | Scoped evidence | [project-outline.spec.ts](../tests/browser/project-outline.spec.ts) | Verified counts and explicit subset eligibility keep hidden selections in scope. |
+| VB09 | All-or-nothing group review | G01, G02, G03, G05 | Scoped evidence | [project-outline.spec.ts](../tests/browser/project-outline.spec.ts) | The mixed-selection fixture refuses partial grouping. |
+| VB10 | Ungroup and distinct destructive action | G01, G02, G03, G05 | Scoped evidence | [project-outline.spec.ts](../tests/browser/project-outline.spec.ts) | Nested fixtures verify exact promotion and separately reviewed deletion. |
+| VB11 | Hidden incidence and unresolved annotations | G01, G02, G03, G05 | Partial | [project-outline.spec.ts](../tests/browser/project-outline.spec.ts), [assist-exchange.spec.ts](../tests/browser/assist-exchange.spec.ts) | Merge combined fixture with hidden selected node, named scenes and source-driven Undo. |
+| VB12 | Rich labels in source | G01, G02, G03, G05 | Partial | [V3StructureEditor.tsx](../src/components/V3StructureEditor.tsx), [v3-source-editor.spec.ts](../tests/browser/v3-source-editor.spec.ts) | Exercise one long rich label through visual refusal and supported source review. |
+
+## F08 External assistant
+
+F00a/b/c and the closed scope contract. Hosted operation also requires an approved independent service.
+
+Implement remaining local operations separately from named-operator and pilot approval.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| AI01 | Network-free request export | G03, G08, G09 | Scoped evidence | [assist-exchange.spec.ts](../tests/browser/assist-exchange.spec.ts) | Offline request export leaves the current project unchanged. |
+| AI02 | Readable and writable scope | G03, G08, G09 | Partial | [assist-exchange.spec.ts](../tests/browser/assist-exchange.spec.ts), [assist-exchange.ts](../src/lib/authoring/assist-exchange.ts) | The Pages importer enforces scope. Independent service guard remains gated. |
+| AI03 | One reservation and invocation | G03, G08, G09 | Operator gate | — | Implement repeat ticket semantics in an approved isolated companion and verify a provider stub. |
+| AI04 | Ticket age and replay boundaries | G03, G08, G09 | Operator gate | — | Verify age rejection and tombstone cutoffs in the isolated companion. |
+| AI05 | Stale authored state on import | G03, G08, G09 | Partial | [base-token.test.ts](../src/lib/authoring/base-token.test.ts), [assist-exchange.ts](../src/lib/authoring/assist-exchange.ts) | Add an equal-source, equal-revision metadata race to the recorded request fixture. |
+| AI06 | Forged readiness and matching | G03, G08, G09 | Scoped evidence | [assist-exchange.spec.ts](../tests/browser/assist-exchange.spec.ts), [proposals.test.ts](../src/lib/authoring/proposals.test.ts) | Input is treated as an untrusted proposal requiring local validation and matching. |
+| AI07 | Concurrent exact spend cap | G03, G08, G09 | Operator gate | — | Exercise atomic subject and global reservation races against the approved ledger. |
+| AI08 | Uncertain provider submission | G03, G08, G09 | Operator gate | — | Exercise submitted timeout with retained reservation, real status recovery and no automatic retry. |
+| AI09 | Atomic Apply across authored state | G03, G08, G09 | Partial | [assist-exchange.spec.ts](../tests/browser/assist-exchange.spec.ts), [project-editor.ts](../src/lib/authoring/project-editor.ts) | Current single-operation cases are verified. Extend accepted mixed operation and remaining permission fixtures. |
+| AI10 | Mobile pilot value | G03, G08, G09 | Operator gate | — | Run approved expert pilot on named phones with measured manual comparison. |
+
+## F09 Productivity
+
+F00a command registry, stable IDs for targets and F00b for structural fixes.
+
+Verify pending tasks across mobile panels, exact diagnostic fixes and mixed editor history.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| PX01 | Relevant command palette | G01, G03, G05 | Scoped evidence | [command-search.spec.ts](../tests/browser/command-search.spec.ts), [CommandPalette.tsx](../src/components/CommandPalette.tsx) | Local search and capability-aware commands use the common palette. |
+| PX02 | Commands use guarded Connect | G01, G03, G05 | Scoped evidence | [command-search.spec.ts](../tests/browser/command-search.spec.ts), [edge-direction.spec.ts](../tests/browser/edge-direction.spec.ts) | The palette opens the normal connection review and shares the exact guard. |
+| PX03 | Hidden selection disclosure | G01, G03, G05 | Scoped evidence | [project-outline.spec.ts](../tests/browser/project-outline.spec.ts) | Complete authored scope survives filters and disclosed eligibility. |
+| PX04 | Completion in proven contexts | G01, G03, G05 | Partial | [source-suggestions.spec.ts](../tests/browser/source-suggestions.spec.ts), [SourceEditor.tsx](../src/components/SourceEditor.tsx) | Completion guards label and comment contexts. [Reviewed v3 PR #141](https://github.com/SUaDtL/Meridian/pull/141) and physical IME validation remain. |
+| PX05 | Stale diagnostic fix | G01, G03, G05 | Open | [v3-source-editor.spec.ts](../tests/browser/v3-source-editor.spec.ts), [project-editor.ts](../src/lib/authoring/project-editor.ts) | Add a narrowly proven diagnostic fix with exact source bounds and stale preview rejection. |
+| PX06 | Exact parallel source location | G01, G03, G05 | Scoped evidence | [project-outline.spec.ts](../tests/browser/project-outline.spec.ts) | The review disambiguates exact explicit source ranges and restores filtered Outline on return. |
+| PX07 | Undo across source and canvas | G01, G03, G05 | Partial | [authoring-foundation.spec.ts](../tests/browser/authoring-foundation.spec.ts), [v3-source-editor.spec.ts](../tests/browser/v3-source-editor.spec.ts) | Complete source-to-structure Undo with preserved cursor and validated selection in v3. |
+| PX08 | Four mobile panels | G01, G03, G05 | Partial | [V3ProjectSession.tsx](../src/components/V3ProjectSession.tsx), [v3-source-editor.spec.ts](../tests/browser/v3-source-editor.spec.ts) | [Mobile workspace PR #142](https://github.com/SUaDtL/Meridian/pull/142) checks a surviving source draft. Extend to other pending tasks and physical accessibility. |
+
+## F10 Quantitative charts
+
+F00a/c, a typed dataset and an exact local chart adapter.
+
+Finish whole portable round trips and physical-device accessibility and responsiveness.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| CH01 | Exact sum and mean with missing values | G03, G05, G06, G07 | Scoped evidence | [chart-values.test.ts](../src/lib/authoring/chart-values.test.ts), [chart-project.spec.ts](../tests/browser/chart-project.spec.ts) | Unit and hosted fixtures cover exact decimal aggregation. |
+| CH02 | All-missing aggregation | G03, G05, G06, G07 | Scoped evidence | [chart-values.test.ts](../src/lib/authoring/chart-values.test.ts) | Computed values preserve missing values and truthful observation counts. |
+| CH03 | Date ordering and duplicates | G03, G05, G06, G07 | Scoped evidence | [chart-values.test.ts](../src/lib/authoring/chart-values.test.ts) | The typed chart layer enforces explicit aggregation for duplicates. |
+| CH04 | Inspectable rational mean | G03, G05, G06, G07 | Scoped evidence | [chart-values.test.ts](../src/lib/authoring/chart-values.test.ts), [chart-project.spec.ts](../tests/browser/chart-project.spec.ts) | The exact rational is retained alongside the rendered decimal. |
+| CH05 | Unrepresentable typed inputs | G03, G05, G06, G07 | Scoped evidence | [chart-input.test.ts](../src/lib/authoring/chart-input.test.ts), [chart-values.test.ts](../src/lib/authoring/chart-values.test.ts) | Fixtures cover explicit number and time formats and strict typed values. |
+| CH06 | Clipping disclosures | G03, G05, G06, G07 | Scoped evidence | [chart-project.spec.ts](../tests/browser/chart-project.spec.ts) | Clipped observations remain inspectable in studio and exported data. |
+| CH07 | Retained dataset cap | G03, G05, G06, G07 | Scoped evidence | [chart-project.spec.ts](../tests/browser/chart-project.spec.ts) | The browser fixture reduces data only after explicit column exclusion. |
+| CH08 | Accessible table and units | G03, G05, G06, G07 | Partial | [chart-project.spec.ts](../tests/browser/chart-project.spec.ts), [ChartDataTable.tsx](../src/components/ChartDataTable.tsx) | Studio and offline semantics agree. Complete named screen-reader fixtures for units and aggregation. |
+| CH09 | Portable chart round-trip | G03, G05, G06, G07 | Partial | [chart-project.spec.ts](../tests/browser/chart-project.spec.ts), [chart-project.ts](../src/lib/authoring/chart-project.ts) | Run true export, new-workspace import and full field-order comparison on one fixture. |
+
+## F11 Engineering imports
+
+F00a/b/c, bounded local readers and local reference resolution.
+
+Deliver corpus, coverage and retention evidence for each adapter independently.
+
+| Story | Scope | Gates | Coverage | Current source and tests | Evidence or next work |
+| --- | --- | --- | --- | --- | --- |
+| IM01 | Distinct virtual file paths | G01, G06, G08 | Scoped evidence | [schema-import.spec.ts](../tests/browser/schema-import.spec.ts), [openapi-import.spec.ts](../tests/browser/openapi-import.spec.ts) | Review refuses colliding basenames before reference resolution. |
+| IM02 | Bounded static logical references | G01, G06, G08 | Partial | [schema-facts.test.ts](../src/lib/authoring/schema-facts.test.ts), [openapi-import.spec.ts](../tests/browser/openapi-import.spec.ts) | Supplied static IDs and anchors resolve. Expand remaining nested-resource and hostile pointer fixtures. |
+| IM03 | Unsupported semantics disclosure | G01, G06, G08 | Partial | [schema-import.spec.ts](../tests/browser/schema-import.spec.ts), [schema-facts.ts](../src/lib/authoring/schema-facts.ts) | Current review discloses dynamic coverage. Exercise each explicit unsupported dialect and reason. |
+| IM04 | Sensitive input stays out of artifacts | G01, G06, G08 | Scoped evidence | [terraform-import.spec.ts](../tests/browser/terraform-import.spec.ts) | Browser fixtures check normalized drafts and exported projects for prohibited Terraform fields. |
+| IM05 | Declared relationship provenance | G01, G06, G08 | Scoped evidence | [terraform-import.spec.ts](../tests/browser/terraform-import.spec.ts), [openapi-import.spec.ts](../tests/browser/openapi-import.spec.ts) | Browser review confirms path, pointer and declared relationship meaning. |
+| IM06 | Independent re-import | G01, G06, G08 | Partial | [OpenApiImportDialog.tsx](../src/components/OpenApiImportDialog.tsx), [SchemaImportDialog.tsx](../src/components/SchemaImportDialog.tsx) | Prepare an imported revision, manually edit it, re-import and compare original bytes. |
+| IM07 | Malformed and excess work recovery | G01, G06, G08 | Partial | [openapi-import.spec.ts](../tests/browser/openapi-import.spec.ts), [schema-facts.test.ts](../src/lib/authoring/schema-facts.test.ts), [authoring-worker.ts](../src/lib/authoring/authoring-worker.ts) | Extend hostile format fixtures and verify explicit worker timeout recovery for every adapter. |
+| IM08 | Keyboard and touch scope review | G01, G06, G08 | Partial | [schema-import.spec.ts](../tests/browser/schema-import.spec.ts), [terraform-import.spec.ts](../tests/browser/terraform-import.spec.ts) | Test exact hidden counts during complete touch and keyboard review on each adapter. |

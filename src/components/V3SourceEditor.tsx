@@ -1,3 +1,4 @@
+import type { EditorView } from "@codemirror/view";
 import { useEffect, useRef, useState } from "react";
 import { authoringLimits } from "../lib/authoring/flowchart-source";
 import { IdentityLimitError } from "../lib/authoring/identities";
@@ -11,6 +12,7 @@ import { PortableProjectLimitError } from "../lib/authoring/validate-mermaid-pro
 import { downloadText, safeFilename } from "../lib/storage";
 import { buildExportFrame } from "../lib/export";
 import Modal from "./Modal";
+import SourceEditor from "./SourceEditor";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Prepared = Awaited<ReturnType<Editor["prepareSource"]>>;
@@ -37,7 +39,8 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
   const [preview, setPreview] = useState<(Prepared & { url: string })>();
   const [painted, setPainted] = useState(false);
   const request = useRef<AbortController | null>(null);
-  const input = useRef<HTMLTextAreaElement>(null);
+  const input = useRef<EditorView>(null);
+  const [editorInstance, setEditorInstance] = useState(0);
   const lineEndings = sourceLineEndings(base.source);
   const source = lineEndings === "crlf" ? draft.text.replace(/\n/g, "\r\n") : draft.text;
   const canPreview = source !== base.source && (lineEndings !== "mixed" || draft.normalize);
@@ -100,7 +103,7 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
       if (restored !== recovered.sourceDraft) throw new Error("The recovery draft uses different line endings from the open source editor.");
       change({ base: base.source, text, normalize: lineEndings === "mixed", recovery: recovered.reason });
       setRecoveryMessage("Source draft restored. Preview it before applying any changes.");
-      requestAnimationFrame(() => input.current?.focus());
+      setEditorInstance(instance => instance + 1);
     });
   }
 
@@ -150,13 +153,16 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
     }
   }
 
-  return <Modal title="Edit Mermaid source" wide onClose={onClose} initialFocus="[name='v3-source-draft']">
+  return <Modal title="Edit Mermaid source" wide onClose={onClose} initialFocus=".v3-source-draft .cm-content">
     <form className="heading-form" onSubmit={event => { event.preventDefault(); void prepare(); }}>
       <p>Preview and apply source changes that keep the current diagram’s bindings. The draft stays in this session until you apply or discard it.</p>
-      <label>Mermaid source
-        <textarea ref={input} name="v3-source-draft" spellCheck={false} autoCapitalize="off" rows={13} value={draft.text} disabled={locked}
-          maxLength={authoringLimits.sourceCodeUnits} onChange={event => change({ base: draft.base, normalize: draft.normalize, text: event.target.value })} />
-      </label>
+      <div className="v3-source-draft">
+        <SourceEditor key={editorInstance} source={draft.text} onChange={text => change({ base: draft.base, normalize: draft.normalize, text })}
+          draft={{ readOnly: locked, maxLength: authoringLimits.sourceCodeUnits, onReady: view => {
+            input.current = view;
+            view.focus();
+          } }} />
+      </div>
       {lineEndings === "mixed" && <label className="check-label">
         <input type="checkbox" disabled={locked} checked={draft.normalize}
           onChange={event => change({ base: draft.base, text: draft.text, normalize: event.target.checked })} />
@@ -169,14 +175,14 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
             <p>{diagnostic.message}</p></> : <p>{String(error)}</p>}
         </div>
         {location && <button className="button quiet" type="button" onClick={() => {
+          input.current?.dispatch({ selection: { anchor: location.start, head: location.end }, scrollIntoView: true });
           input.current?.focus();
-          input.current?.setSelectionRange(location.start, location.end);
         }}>Go to line {affectedLine}</button>}
         {diagnostic?.detail && <details><summary>Mermaid parser details</summary>
           <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{diagnostic.detail}</pre>
         </details>}
       </div>}
-      <details open={!!draft.recovery || undefined}>
+        <details open={!!draft.recovery || undefined}>
         <summary>Source recovery file</summary>
         <input ref={recoveryInput} type="file" accept=".json,application/json" aria-label="Source recovery file" hidden onChange={event => {
           const file = event.target.files?.[0];
@@ -200,7 +206,10 @@ export default function V3SourceEditor({ editor, savedDraft, onDraft, onApply, o
       <div className="dialog-actions">
         <button className="button quiet" type="button" onClick={onClose}>Close</button>
         <button className="button quiet" type="button" disabled={!hasDraft || locked}
-          onClick={() => change({ base: base.source, text: baseText, normalize: false })}>Discard draft</button>
+          onClick={() => {
+            change({ base: base.source, text: baseText, normalize: false });
+            setEditorInstance(count => count + 1);
+          }}>Discard draft</button>
         <button className="button secondary" type="submit" disabled={!canPreview || locked}>Preview source</button>
         <button className="button primary" type="button" disabled={!preview || !painted || locked} onClick={apply}>Apply source</button>
       </div>
