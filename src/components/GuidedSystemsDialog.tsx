@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { shapeDelimiters } from "../lib/authoring/flowchart-source";
 import { prepareGuidedFlowchart } from "../lib/authoring/guided-flowchart";
-import type { GuidedSystemsAttachment } from "../lib/authoring/guided-systems-insertion";
+import type { GuidedAttachment } from "../lib/authoring/guided-systems-insertion";
+import GuidedAttachmentPicker, { emptyGuidedAttachment, GuidedAttachmentSummary, readyGuidedAttachment, type GuidedAttachmentTarget } from "./GuidedAttachmentPicker";
 import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { RenderResult } from "../types";
@@ -20,13 +21,9 @@ const roles = { neutral: "Neutral", service: "Service", database: "Database", qu
 const directions = { forward: "One-way", both: "Both ways", none: "No arrows" };
 const batch = 20;
 type Review = { document: MermaidProjectV3; rendered: RenderResult; url: string; proposal?: ReadyProposal };
-type AttachmentDraft = Omit<GuidedSystemsAttachment, "direction"> & { direction: GuidedSystemsAttachment["direction"] | "" };
-type ExistingTarget = {
+type ExistingTarget = GuidedAttachmentTarget & {
   title: string;
-  nodes: readonly { id: string; label: string }[];
-  attachment: AttachmentDraft;
-  onAttachment: (attachment: AttachmentDraft) => void;
-  prepare: (values: SystemsDraft, attachment: GuidedSystemsAttachment | undefined, signal: AbortSignal) =>
+  prepare: (values: SystemsDraft, attachment: GuidedAttachment | undefined, signal: AbortSignal) =>
     Promise<{ document: MermaidProjectV3; rendered: RenderResult; proposal: ReadyProposal }>;
   apply: (proposal: ReadyProposal, signal: AbortSignal) => Promise<"applied" | "stale">;
   onCompleted: (draftRetained: boolean) => void;
@@ -108,11 +105,7 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
   function reviewDiagram() {
     void run("Rendering the proposed diagram", async signal => {
       const input = normalizeSystemsDraft(values);
-      const attachment = target?.attachment;
-      if (attachment?.existingElementId && (!attachment.draftNodeId || !attachment.direction)) {
-        throw new Error("Choose the draft node and direction for the attachment.");
-      }
-      const port = attachment?.existingElementId && attachment.direction ? { ...attachment, direction: attachment.direction } : undefined;
+      const port = readyGuidedAttachment(target?.attachment);
       const result = target
         ? await target.prepare(input, port, signal)
         : await prepareGuidedFlowchart(input.title.trim() || "Untitled systems diagram", {
@@ -175,7 +168,7 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
           {saved.map(record => <li className="project-row" key={record.id}>
             <button className="project-open" disabled={!!busy} onClick={() => {
               onSession({ values: resumeSystemsDraft(record), checkpoint: record, dirty: false });
-              target?.onAttachment({ existingElementId: "", draftNodeId: "", direction: "" });
+              target?.onAttachment(emptyGuidedAttachment);
               setRecoveryExport(undefined);
               setNodeStart(0);
               setEdgeStart(0);
@@ -238,26 +231,8 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
           }}>Remove relationship</button>
         </fieldset>)}
         <PageControls count={values.edges.length} first={edgeStart} change={setEdgeStart} label="relationships" />
-        {target && <fieldset><legend>Attachment to this project</legend>
-          <p>Choose the attachment for this project after opening a saved systems draft.</p>
-          <label>Existing node<select value={target.attachment.existingElementId} disabled={!!busy}
-            onChange={event => target.onAttachment({ ...target.attachment, existingElementId: event.target.value })}>
-            <option value="">Leave separate</option>
-            {target.nodes.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-          </select></label>
-          {target.attachment.existingElementId && <>
-            <label>Draft node<select value={target.attachment.draftNodeId} disabled={!!busy}
-              onChange={event => target.onAttachment({ ...target.attachment, draftNodeId: event.target.value })}>
-              <option value="">Choose a draft node</option>
-              {[...nodeLabels].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-            </select></label>
-            <label>Attachment direction<select value={target.attachment.direction} disabled={!!busy}
-              onChange={event => target.onAttachment({ ...target.attachment, direction: event.target.value as AttachmentDraft["direction"] })}>
-              <option value="">Choose the direction</option><option value="from-existing">Existing node to draft node</option>
-              <option value="to-existing">Draft node to existing node</option>
-            </select></label>
-          </>}
-        </fieldset>}
+        {target && <GuidedAttachmentPicker target={target} disabled={!!busy}
+          draftNodes={[...nodeLabels].map(([id, label]) => ({ id, label }))} />}
         <div className="dialog-actions">
           <button className="button quiet" disabled={!!busy} onClick={() => setStage("systems")}>Back to systems</button>
           <button className="button secondary" disabled={!!busy || values.edges.length >= 400} onClick={() => {
@@ -270,11 +245,7 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
       </>}
       {review && <section className="migration-preview" aria-label="Proposed systems diagram">
         <p>{target ? `Insert into ${review.document.title}` : "Create a separate project"} with {values.nodes.length} systems and {values.edges.length} relationships.</p>
-        {target?.attachment.existingElementId && <p>Attachment{" "}
-          {target.attachment.direction === "from-existing"
-            ? `${target.nodes.find(item => item.id === target.attachment.existingElementId)?.label} → ${nodeLabels.get(target.attachment.draftNodeId)}`
-            : `${nodeLabels.get(target.attachment.draftNodeId)} → ${target.nodes.find(item => item.id === target.attachment.existingElementId)?.label}`}
-        </p>}
+        {target && <GuidedAttachmentSummary target={target} draftNodes={[...nodeLabels].map(([id, label]) => ({ id, label }))} />}
         <img src={review.url} alt="Proposed systems diagram" onLoad={() => setPainted(true)} onError={() => setError("The proposed diagram could not be displayed.")} />
         {!!values.edges.length && <details><summary>Review relationships</summary>
           <ul>{values.edges.map(item => <li key={item.id}>

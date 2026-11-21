@@ -1,27 +1,38 @@
-import type { MermaidProjectV3 } from './mermaid-project';
+import type { MermaidProjectV3, SemanticRole } from './mermaid-project';
 import { prepareProjectFragment } from './project-fragment';
 import type { FlowchartFragment } from './source-patches';
 import { normalizeSystemsDraft, type SystemsDraft } from './systems-draft';
 import { validateMermaidProject } from './validate-mermaid-project';
 
-export type GuidedSystemsAttachment = {
+export type GuidedAttachment = {
   existingElementId: string;
   draftNodeId: string;
   direction: 'from-existing' | 'to-existing';
 };
 
-export async function prepareGuidedSystemsInsertion(
-  base: MermaidProjectV3, values: SystemsDraft, attachment?: GuidedSystemsAttachment, signal?: AbortSignal,
+type GuidedNode = FlowchartFragment['nodes'][number] & { role?: SemanticRole | null };
+
+export function prepareGuidedSystemsInsertion(
+  base: MermaidProjectV3, values: SystemsDraft, attachment?: GuidedAttachment, signal?: AbortSignal,
 ) {
   const input = normalizeSystemsDraft(values);
-  const edges: FlowchartFragment['edges'][number][] = input.edges.map(item => ({
+  const nodes = input.nodes.map(({ id, ...item }) => ({ ...item, key: id }));
+  const edges = input.edges.map(item => ({
     key: item.id, from: { key: item.sourceId }, to: { key: item.targetId }, label: item.label, direction: item.direction,
   }));
+  return prepareGuidedFragmentInsertion(base, nodes, edges, attachment, signal);
+}
+
+export async function prepareGuidedFragmentInsertion(
+  base: MermaidProjectV3, nodes: readonly GuidedNode[], relationships: FlowchartFragment['edges'],
+  attachment?: GuidedAttachment, signal?: AbortSignal,
+) {
+  const edges = [...relationships];
   if (attachment) {
-    if (input.edges.length >= 400) throw new Error('Leave room for the attachment within the 400-relationship limit.');
+    if (edges.length >= 400) throw new Error('Leave room for the attachment within the 400-relationship limit.');
     const target = base.identity.elements.find(item => item.id === attachment.existingElementId &&
       item.status === 'resolved' && item.elementKind === 'node');
-    if (!target || !input.nodes.some(item => item.id === attachment.draftNodeId) ||
+    if (!target || !nodes.some(item => item.key === attachment.draftNodeId) ||
         !['from-existing', 'to-existing'].includes(attachment.direction)) {
       throw new Error('Choose a current project node, a draft node and the attachment direction.');
     }
@@ -31,9 +42,8 @@ export async function prepareGuidedSystemsInsertion(
     edges.push({ key: 'meridian:guided-attachment', from: outgoing ? existing : inserted, to: outgoing ? inserted : existing,
       label: '', direction: 'forward' });
   }
-  const fragment = { nodes: input.nodes.map(item => ({ key: item.id, label: item.label, shape: item.shape })), edges };
-  const resolved = await prepareProjectFragment(base, fragment, signal);
-  const roles = input.nodes.flatMap((item, index) => item.role
+  const resolved = await prepareProjectFragment(base, { nodes, edges }, signal);
+  const roles = nodes.flatMap((item, index) => item.role
     ? [{ elementId: resolved.bind(resolved.nodes[index].sourceId), role: item.role }] : []);
   return validateMermaidProject({
     ...base, source: resolved.source, revision: base.revision + 1, updatedAt: new Date().toISOString(),

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Modal from "./Modal";
+import GuidedAttachmentPicker, { emptyGuidedAttachment, GuidedAttachmentSummary, readyGuidedAttachment, type GuidedAttachmentTarget } from "./GuidedAttachmentPicker";
+import type { GuidedAttachment } from "../lib/authoring/guided-systems-insertion";
+import type { ReadyProposal } from "../lib/authoring/proposals";
 import ProcessConnectionTable from "./ProcessConnectionTable";
 import { prepareGuidedProcess, type ProcessStep } from "../lib/authoring/guided-process";
 import { markProcessDecision, type ProcessConnections } from "../lib/authoring/process-connections";
@@ -19,18 +22,28 @@ export type GuidedProcessDraft = {
   unsaved?: boolean;
   checkpoint?: ProcessCheckpoint;
 };
-type Review = { document: Awaited<ReturnType<typeof prepareGuidedProcess>>["document"]; url: string };
+type PreparedProcess = Pick<Awaited<ReturnType<typeof prepareGuidedProcess>>, "document" | "rendered">;
+type Review = Pick<PreparedProcess, "document"> & { url: string; proposal?: ReadyProposal };
+type ExistingTarget = GuidedAttachmentTarget & {
+  title: string;
+  prepare: (steps: readonly ProcessStep[], connections: ProcessConnections | undefined,
+    attachment: GuidedAttachment | undefined, signal: AbortSignal) => Promise<PreparedProcess & { proposal: ReadyProposal }>;
+  apply: (proposal: ReadyProposal) => Promise<"applied" | "stale">;
+  onCompleted: (draftRetained: boolean) => void;
+};
 
-export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelationshipTable, onComponents, onChart, onEngineeringFile, onClose }: {
+type Props = {
   draft: GuidedProcessDraft;
   onDraft: Dispatch<SetStateAction<GuidedProcessDraft>>;
-  onCreated: (id: string, draftRetained?: boolean) => void;
-  onRelationshipTable: () => void;
-  onComponents: () => void;
-  onChart: () => void;
-  onEngineeringFile: () => void;
   onClose: () => void;
-}) {
+} & (
+  | { target?: never; onCreated: (id: string, draftRetained?: boolean) => void;
+      onRelationshipTable: () => void; onComponents: () => void; onChart: () => void; onEngineeringFile: () => void }
+  | { target: ExistingTarget; onCreated?: never; onRelationshipTable?: never; onComponents?: never;
+      onChart?: never; onEngineeringFile?: never }
+);
+
+export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelationshipTable, onComponents, onChart, onEngineeringFile, onClose, target }: Props) {
   const [stage, setStage] = useState<"input" | "connections" | "review">("input");
   const [review, setReview] = useState<Review>();
   const [imageReady, setImageReady] = useState(false);
@@ -42,15 +55,17 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
   const controller = useRef<AbortController | undefined>(undefined);
   const writing = useRef(false);
   const titleInput = useRef<HTMLInputElement>(null);
+  const stepsInput = useRef<HTMLTextAreaElement>(null);
   const stepHeading = useRef<HTMLHeadingElement>(null);
   const steps = draft.steps ?? [];
   const connections = draft.connections;
+  const draftNodes = steps.map(step => ({ id: String(step.line), label: `${step.label} · line ${step.line}` }));
   useEffect(() => () => { controller.current?.abort(); }, []);
   useEffect(() => () => { if (review) URL.revokeObjectURL(review.url); }, [review]);
   useEffect(() => {
-    if (stage === "input") titleInput.current?.focus();
+    if (stage === "input") (target ? stepsInput.current : titleInput.current)?.focus();
     else stepHeading.current?.focus();
-  }, [stage]);
+  }, [stage, !!target]);
 
   useEffect(() => {
     let closed = false;
@@ -116,6 +131,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
   }
 
   function resume(saved: ProcessCheckpoint) {
+    target?.onAttachment(emptyGuidedAttachment);
     const normalized = saved.payload.nodes.map(node => ({ line: node.sourceRow, original: node.label, label: node.label }));
     onDraft({ title: saved.payload.title, text: normalized.map(row => row.label).join("\n"),
       steps: normalized, connections: checkpointConnections(saved), checkpoint: saved });
@@ -157,11 +173,14 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
     setBusy("preview");
     setError("");
     try {
-      const { document, rendered } = await prepareGuidedProcess(draft.title, steps, attempt.signal, connections);
+      const prepared: PreparedProcess & { proposal?: ReadyProposal } = target
+        ? await target.prepare(steps, connections, readyGuidedAttachment(target.attachment), attempt.signal)
+        : await prepareGuidedProcess(draft.title, steps, attempt.signal, connections);
+      const { document, rendered, proposal } = prepared;
       attempt.signal.throwIfAborted();
       const svg = buildExportFrame(rendered, document).svg;
       setImageReady(false);
-      setReview({ document, url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) });
+      setReview({ document, proposal, url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) });
       setStage("review");
     } catch (reason) {
       if (!attempt.signal.aborted) setError(reason instanceof Error ? reason.message : "The diagram could not be previewed.");
@@ -178,12 +197,25 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
     setError("");
     let db: IDBDatabase | undefined;
     try {
+      if (target) {
+        if (!review.proposal) throw new Error("Preview the current insertion first.");
+        if (await target.apply(review.proposal) === "stale") {
+          setReview(undefined);
+          setStage("connections");
+          throw new Error("The saved project changed. Your steps, connections and attachment are still in this draft. Preview against the current project.");
+        }
+        const checkpoint = draft.checkpoint;
+        const draftRetained = !!checkpoint &&
+          await withDatabase(local => discardProcessCheckpoint(local, checkpoint)).then(() => false, () => true);
+        target.onCompleted(draftRetained);
+        return;
+      }
       db = await openWorkspaceDatabase();
       await writeWorkspaceProject(db, review.document, null);
       const draftRetained = draft.checkpoint
         ? await discardProcessCheckpoint(db, draft.checkpoint).then(() => false, () => true)
         : false;
-      onCreated(review.document.id, draftRetained);
+      onCreated?.(review.document.id, draftRetained);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The project could not be saved.");
     } finally {
@@ -194,15 +226,17 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
   }
 
   return (
-    <Modal title="Build with guidance" wide onClose={onClose}
-      busy={busy === "save" || busy === "checkpoint" || busy === "discard"} initialFocus="[name='process-title']">
+    <Modal title={target ? "Insert process diagram" : "Build with guidance"} wide onClose={onClose}
+      busy={busy === "save" || busy === "checkpoint" || busy === "discard"} initialFocus={target ? "[name='process-steps']" : "[name='process-title']"}>
       <h3 tabIndex={-1} ref={stepHeading}>{stage === "input" ? "Process steps" : stage === "connections" ? "Connections" : "Review your process"}</h3>
       {stage === "input" && (
         <form className="heading-form" onSubmit={event => { event.preventDefault(); if (!busy && normalization === null) void showConnections(); }}>
-          <button type="button" className="button quiet" disabled={!!busy} onClick={onRelationshipTable}>Systems and relationships</button>
-          <button type="button" className="button quiet" disabled={!!busy} onClick={onComponents}>Browse components</button>
-          <button type="button" className="button quiet" disabled={!!busy} onClick={onChart}>Chart values</button>
-          <button type="button" className="button quiet" disabled={!!busy} onClick={onEngineeringFile}>Engineering file</button>
+          {!target && <>
+            <button type="button" className="button quiet" disabled={!!busy} onClick={onRelationshipTable}>Systems and relationships</button>
+            <button type="button" className="button quiet" disabled={!!busy} onClick={onComponents}>Browse components</button>
+            <button type="button" className="button quiet" disabled={!!busy} onClick={onChart}>Chart values</button>
+            <button type="button" className="button quiet" disabled={!!busy} onClick={onEngineeringFile}>Engineering file</button>
+          </>}
           {drafts.length > 0 && (
             <ul className="project-list">
               {drafts.map(saved => (
@@ -219,13 +253,14 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
               ))}
             </ul>
           )}
-          <label>Project title<input name="process-title" ref={titleInput} maxLength={120} value={draft.title} readOnly={busy === "normalize"}
-            onChange={event => onDraft({ ...draft, title: event.target.value, unsaved: true })} /></label>
+          {target ? <p>Destination <strong>{target.title}</strong></p> : <label>Project title<input name="process-title" ref={titleInput} maxLength={120} value={draft.title} readOnly={busy === "normalize"}
+            onChange={event => onDraft({ ...draft, title: event.target.value, unsaved: true })} /></label>}
           <label>Put one step on each line
-            <textarea value={draft.text} rows={7} readOnly={busy === "normalize" || !!connections} placeholder={"Receive request\nReview request\nSend decision"}
+            <textarea name="process-steps" ref={stepsInput} value={draft.text} rows={7} readOnly={busy === "normalize" || !!connections} placeholder={"Receive request\nReview request\nSend decision"}
               onChange={event => {
                 setNormalization(null);
                 setError("");
+                target?.onAttachment(emptyGuidedAttachment);
                 onDraft({ title: draft.title, text: event.target.value, checkpoint: draft.checkpoint, unsaved: true });
               }} />
           </label>
@@ -235,6 +270,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
             {connections && <button type="button" className="button quiet" onClick={() => {
               setError("");
               setDraftError("");
+              target?.onAttachment(emptyGuidedAttachment);
               onDraft({ title: draft.title, text: draft.text, unsaved: true });
             }}>{draft.unsaved ? "Discard unsaved changes and start a new list" : "Start a new step list"}</button>}
             {normalization === "retry" ? (
@@ -247,7 +283,7 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
       )}
       {stage !== "input" && (
         <>
-          <p>{steps.length} steps · {connections?.edges.length ?? steps.length - 1} connections · New project</p>
+          <p>{steps.length} steps · {connections?.edges.length ?? steps.length - 1} connections · {target ? target.title : "New project"}</p>
           <ol aria-label="Process steps" className="guided-process-connections">
             {steps.map((step, index) => (
               <li key={step.line}>
@@ -289,6 +325,8 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
           )}
         </>
       )}
+      {stage === "connections" && target && <GuidedAttachmentPicker target={target} disabled={!!busy}
+        draftNodes={draftNodes} />}
       {stage === "connections" && (
         <div className="dialog-actions">
           <button className="button quiet" disabled={!!busy} onClick={() => { setError(""); setStage("input"); }}>Back to steps</button>
@@ -298,6 +336,8 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
       )}
       {stage === "review" && review && (
         <>
+          {target && <p>Destination <strong>{target.title}</strong></p>}
+          {target && <GuidedAttachmentSummary target={target} draftNodes={draftNodes} />}
           <div className="migration-preview">
             <img src={review.url} alt="Proposed process diagram" onLoad={() => setImageReady(true)}
               onError={() => setError("The preview image could not be displayed.")} />
@@ -305,13 +345,13 @@ export default function GuidedProcessDialog({ draft, onDraft, onCreated, onRelat
           </div>
           <div className="dialog-actions">
             <button className="button quiet" disabled={!!busy} onClick={() => { setReview(undefined); setError(""); setStage("connections"); }}>Back to connections</button>
-            <button className="button primary" disabled={!!busy || !imageReady} onClick={() => void create()}>Create process</button>
+            <button className="button primary" disabled={!!busy || !imageReady} onClick={() => void create()}>{target ? "Insert process" : "Create process"}</button>
           </div>
         </>
       )}
       {busy === "normalize" && <p role="status">Reading process steps…</p>}
       {busy === "preview" && <p role="status">Checking and rendering the process…</p>}
-      {busy === "save" && <p role="status">Saving the new project…</p>}
+      {busy === "save" && <p role="status">{target ? "Saving the insertion…" : "Saving the new project…"}</p>}
       {busy === "checkpoint" && <p role="status">Saving draft…</p>}
       {stage !== "input" && !busy && !draftError && draft.checkpoint && !draft.unsaved && (
         <p role="status">Draft saved locally · expires {formatTime(draft.checkpoint.expiresAt)}</p>
