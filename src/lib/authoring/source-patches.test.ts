@@ -15,7 +15,14 @@ it('wraps a consecutive authored range and leaves comments and relationship line
   expect(inverse.memberIds).toEqual(['A', 'B']);
   expect(applySourcePatches(grouped, inverse.patches)).toBe(source);
   const nested = grouped.replace('  A[First]', '  subgraph nested [Nested]\r\n  A[First]').replace('  B[Second]', '  end\r\n  B[Second]');
-  expect(() => planGroupRemoval(nested, 'm_g1')).toThrow('source panel');
+  expect(applySourcePatches(nested, planGroupRemoval(nested, 'nested').patches)).toBe(grouped);
+  const promoted = applySourcePatches(nested, planGroupRemoval(nested, 'm_g1').patches);
+  expect(promoted).toBe(nested.replace('  subgraph m_g1 ["First two"]\r\n', '').replace('  end\r\n  C[Last]', '  C[Last]'));
+  expect(() => planGroupRemoval(nested + '  nested container@--> C\r\n', 'nested')).toThrow('connection on its container');
+  const comments = nested.replace('  subgraph nested [Nested]', '  subgraph nested [Nested]; %% Start of batch')
+    .replace('  end\r\n  B[Second]', '  end %% End of batch\r\n  B[Second]');
+  expect(applySourcePatches(comments, planGroupRemoval(comments, 'nested').patches)).toBe(
+    comments.replace('subgraph nested [Nested];', '').replace('end %% End of batch', ' %% End of batch'));
 });
 
 it('moves the exact standalone line and omits members and shared source lines', () => {

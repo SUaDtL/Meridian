@@ -280,6 +280,53 @@ test('renames nested node and explicit connection labels without rewriting group
   expect((await download()).source).toBe(source);
 });
 
+test('removes one nested container while keeping the parent, member identities, connections and exact Undo', async ({ page }, info) => {
+  const source = [
+    '\uFEFFflowchart LR', '  subgraph Fleet [Fleet]', '    subgraph Rack [Rack]',
+    '      %% Keep the published description', '      A[Service]', '    end', '    B[Neighbor]', '  end',
+    '  C[External]', '  A existing@--> C', '  linkStyle 0 stroke:#446677', '',
+  ].join('\r\n');
+  const live = await openProject(page, 'Nested ungroup', source);
+  const download = async () => {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing project backup.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  };
+  const original = await download();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  const openOutline = live.getByRole('button', { name: 'Outline', exact: true });
+  const member = outline.getByRole('treeitem', { name: /Service/ });
+  await openOutline.click();
+  await expect(member).toHaveAttribute('aria-level', '3');
+  await outline.getByRole('treeitem', { name: /Rack/ }).click();
+  await outline.getByRole('button', { name: 'Ungroup', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit flowchart' });
+  await expect(edit.getByText('Ungroup Rack. Its members and connections will stay in the diagram.')).toBeVisible();
+  await expect(edit.getByRole('option', { name: 'Delete group and contents' })).toHaveCount(0);
+  await edit.getByRole('button', { name: 'Preview change' }).click();
+  const apply = edit.getByRole('button', { name: 'Apply change' });
+  await expect(apply).toBeEnabled();
+  await page.screenshot({ path: info.outputPath('nested-ungroup-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('nested-ungroup-mobile.png') });
+  await apply.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const applied = await download();
+  expect(applied.source).toBe(source.replace('    subgraph Rack [Rack]\r\n', '').replace('    end\r\n', ''));
+  expect(applied.identity.elements.filter((item: { status: string }) => item.status === 'resolved'))
+    .toEqual(original.identity.elements.filter((item: { binding: { sourceId: string } }) => item.binding.sourceId !== 'Rack'));
+  await openOutline.click();
+  await expect(member).toHaveAttribute('aria-level', '2');
+  await expect(outline.getByRole('treeitem', { name: /Rack/ })).toHaveCount(0);
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await download();
+  expect(restored.source).toBe(source);
+  expect(restored.identity).toEqual(original.identity);
+});
+
 test('groups the complete reviewed outline selection and refuses a mixed selection', async ({ page }, info) => {
   const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  B[Second]\r\n  C[Third]\r\n  A internal@--> B\r\n  B outside@-->|"External"| C\r\n';
   const live = await openProject(page, 'Group outline selection', source);
