@@ -53,9 +53,15 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [cancelled, setCancelled] = useState(false);
   const [view, setView] = useState<"current" | "proposed">("current");
   const active = useRef<AbortController | undefined>(undefined);
-  useEffect(() => () => active.current?.abort(), []);
+  const previewButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => () => {
+    const work = active.current;
+    active.current = undefined;
+    work?.abort();
+  }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
 
   function resetPreview() {
@@ -63,6 +69,17 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
     setPainted(false);
     setView("current");
     setError("");
+    setCancelled(false);
+  }
+
+  function cancelPreview() {
+    const work = active.current;
+    if (!work) return;
+    active.current = undefined;
+    work.abort();
+    setBusy(false);
+    setCancelled(true);
+    requestAnimationFrame(() => { if (!active.current) previewButton.current?.focus(); });
   }
 
   async function prepare() {
@@ -74,9 +91,13 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
     setBusy(true);
     setPainted(false);
     setError("");
+    setCancelled(false);
     setPreview(undefined);
     setView("current");
     try {
+      // Give the pending controls a paint opportunity before Mermaid work.
+      await new Promise<void>(resolve => requestAnimationFrame(() => window.setTimeout(resolve, 0)));
+      work.signal.throwIfAborted();
       const proposal = layout ? await editor.prepareLayout({ id: choice as LayoutAlternativeId, direction }, work.signal)
         : await editor.prepareDesign(choice as DesignRecipeId, scope, work.signal);
       const layoutCandidate = layout ? editor.readLayoutPreview(proposal) : undefined;
@@ -107,8 +128,10 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
     } catch (reason) {
       if (!work.signal.aborted) setError(reason instanceof Error ? reason.message : "This option could not be previewed.");
     } finally {
-      active.current = undefined;
-      if (!work.signal.aborted) setBusy(false);
+      if (active.current === work) {
+        active.current = undefined;
+        setBusy(false);
+      }
     }
   }
 
@@ -134,6 +157,21 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
     return `${summary.count} crossing ${summary.count === 1 ? "candidate" : "candidates"} in checked routes · ${summary.measured} measured · ${summary.unknown} unknown · ${summary.checked.toLocaleString()} pairs checked`
       + (summary.skipped ? ` · ${summary.skipped.toLocaleString()} pairs skipped` : "");
   }
+  function crossingComparison({ current, proposed, crossings }: NonNullable<Preview["evidence"]>) {
+    if (!crossings) return null;
+    const complete = [crossings.current, crossings.proposed].every(item => item.measured > 0 && !item.unknown && !item.skipped);
+    if (!complete || crossings.current.measured !== crossings.proposed.measured) {
+      return "Crossing coverage is incomplete for this comparison.";
+    }
+    if (crossings.current.count === crossings.proposed.count) return "The checked routes have the same crossing candidate count.";
+    if (crossings.proposed.count < crossings.current.count && current.smallest !== null && proposed.smallest !== null
+      && !current.unknown && !proposed.unknown && current.measured === proposed.measured
+      && Number(proposed.smallest.toFixed(1)) < Number(current.smallest.toFixed(1))) {
+      return `The proposed layout has fewer crossing candidates. Its smallest viewed label drops from ${current.smallest.toFixed(1)} to ${proposed.smallest.toFixed(1)} CSS pixels.`;
+    }
+    return null;
+  }
+  const comparisonNote = preview?.evidence && crossingComparison(preview.evidence);
   return (
     <Modal title={layout ? "Compare layouts" : "Explore designs"} wide onClose={onClose}>
       {!layout && <div className="heading-form">
@@ -212,12 +250,15 @@ export default function V3ComparisonDialog({ mode, allowDirection, selection, se
         {preview.evidence.crossings ? <>
           <p>Current · {routeSummary(preview.evidence.crossings.current)}</p>
           <p>Proposed · {routeSummary(preview.evidence.crossings.proposed)}</p>
+          {comparisonNote && <p>{comparisonNote}</p>}
         </> : <p>The route comparison did not produce measurements.</p>}
       </section>}
       {busy && <p role="status">Rendering the {title} {mode}…</p>}
+      {cancelled && <p role="status">Preview cancelled. Your choices are ready to preview again.</p>}
       {error && <p role="alert">{error}</p>}
       <div className="dialog-actions">
-        <button className="button secondary" disabled={busy} onClick={() => void prepare()}>Preview {title}</button>
+        {busy && <button className="button quiet" onClick={cancelPreview}>Cancel preview</button>}
+        <button ref={previewButton} className="button secondary" disabled={busy} onClick={() => void prepare()}>Preview {title}</button>
         <button className="button primary" disabled={!preview || !painted || busy} onClick={apply}>Apply {title}</button>
       </div>
     </Modal>

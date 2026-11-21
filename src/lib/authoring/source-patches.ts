@@ -162,6 +162,11 @@ export function supportsComponentInsertion(source: string) {
   catch { return false; }
 }
 
+export function componentSelectionTopology(source: string) {
+  const parsed = readSubset(source, true);
+  return { nodes: subsetTopology(parsed).nodes, groups: parsed.groups };
+}
+
 export function flowchartSourceLocations(source: string, allowGroups = false) {
   const { nodes, edges, groupDeclarations } = readSubset(source, allowGroups);
   const location = ({ start, end }: RecordSpan) => ({ from: start, to: end });
