@@ -16,8 +16,8 @@ import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-pr
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
 import { interactiveSelectionLimit, projectOutline, type OutlineSourceLocation } from "../lib/authoring/project-outline";
-import { flowchartSubsetTopology, groupContentsDeletionScopes, planGroupCreation, supportedGroupMoveTargets, supportedGroupRemovals,
-  supportedUngroupSourceId, supportsComponentInsertion } from "../lib/authoring/source-patches";
+import { componentSourceIssue, flowchartSubsetTopology, groupContentsDeletionScopes, planGroupCreation, supportedGroupMoveTargets, supportedGroupRemovals,
+  supportedUngroupSourceId } from "../lib/authoring/source-patches";
 import type { ReadyProposal } from "../lib/authoring/proposals";
 import type { WorkspaceCommand } from "../lib/authoring/command-search";
 import type { NativeFlowchartEdit } from "../lib/authoring/project-flowchart";
@@ -263,7 +263,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     return [...counts];
   }, [project?.roles]);
   const ungroupSourceId = useMemo(() => source && !flatFlowchart ? supportedUngroupSourceId(source) : undefined, [source, flatFlowchart]);
-  const componentSourceSupported = useMemo(() => flatFlowchart || (!!source && supportsComponentInsertion(source)), [source, flatFlowchart]);
+  const componentIssue = useMemo(() => source && !flatFlowchart ? componentSourceIssue(source) : undefined, [source, flatFlowchart]);
+  const componentSourceSupported = !!source && !componentIssue;
   const outlineAvailable = !!targetTable?.targets.length;
   const outline = useMemo(() => outlineOpen && project && targetTable ? projectOutline(project, targetTable) : undefined,
     [outlineOpen, project, targetTable]);
@@ -889,7 +890,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setComparisonSelection({ ids: [...outlineSelection], hidden });
           setOutlineOpen(false);
           setComparison("design");
-        } : undefined} onSaveComponent={componentSourceSupported ? setComponentHidden : undefined}
+        } : undefined} onSaveComponent={setComponentHidden} componentIssue={componentIssue}
         onResetDesign={canResetDesign ? hidden => setDesignReset({ selection: new Set(outlineSelection), hidden }) : undefined}
         onStory={!busy && project && project.storyboard.scenes.length < 50 ? hidden => {
           setSavedSceneScope({ ids: [...outlineSelection], hidden });

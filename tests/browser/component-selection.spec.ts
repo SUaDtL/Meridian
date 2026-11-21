@@ -121,3 +121,34 @@ test('extracts reviewed groups and keeps contextual ancestors free of unselected
   await outline.getByRole('button', { name: 'Close dialog' }).click();
   expect(await download(page, live.getByRole('button', { name: 'Download v3 project' }))).toBe(before);
 });
+
+test('links the unsupported reference that blocks component extraction and preserves exact source', async ({ page }) => {
+  const reference = 'click A "https://example.invalid/reference"';
+  const source = `flowchart LR\r\n  A["Worker"]\r\n  B["Queue"]\r\n  ${reference}\r\n  A work@--> B\r\n`;
+  const project = { ...createDocument(), title: 'Unsupported component reference', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+    version: 2, activeId: project.id, documents: [project],
+  })), { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Unsupported component reference' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  await expect(live.getByRole('img', { name: `Diagram preview for ${project.title}` })).toBeVisible();
+  const projectFile = live.getByRole('button', { name: 'Download v3 project' });
+  const before = await download(page, projectFile);
+  await live.getByRole('button', { name: 'Outline', exact: true }).click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('treeitem', { name: /^Worker/ }).click();
+  const save = outline.getByRole('button', { name: 'Save as component' });
+  await expect(save).toBeDisabled();
+  await expect(save).toHaveAccessibleDescription('Component definitions do not include click links or callbacks. Review line 4.');
+  await outline.getByRole('button', { name: 'Open blocking statement in source' }).press('Enter');
+  await expect(live.locator('mark')).toHaveText(reference);
+  await expect(live.locator('mark')).toBeFocused();
+  await live.getByRole('button', { name: 'Return to Outline' }).click();
+  await expect(outline.getByRole('treeitem', { name: /^Worker/ })).toHaveAttribute('aria-selected', 'true');
+  await outline.getByRole('button', { name: 'Close dialog' }).click();
+  expect(await download(page, projectFile)).toBe(before);
+});

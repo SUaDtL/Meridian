@@ -79,7 +79,7 @@ function scanRecords(source: string): RecordSpan[] {
   return records;
 }
 
-function readSubset(source: string, allowGroups = false) {
+function readSubset(source: string, allowGroups = false, unrecognized: (record: RecordSpan) => Error = unsupported) {
   const [first, ...records] = scanRecords(source);
   const direction = first && header.exec(first.text)?.[1];
   if (!direction) throw unsupported();
@@ -119,7 +119,7 @@ function readSubset(source: string, allowGroups = false) {
       parent?.push(name);
       continue;
     }
-    if (parents.length) throw unsupported();
+    if (parents.length) throw unrecognized(record);
     match = edge.exec(record.text);
     if (match) {
       const [, from, edgeId, arrow, token = '', gap, to] = match;
@@ -130,7 +130,7 @@ function readSubset(source: string, allowGroups = false) {
       continue;
     }
     match = indexedStyle.exec(record.text);
-    if (!match) throw unsupported();
+    if (!match) throw unrecognized(record);
     styles.push({ record, indices: match[1] });
   }
 
@@ -165,9 +165,20 @@ export function groupedFlowchartTopology(source: string) {
   return { topology: subsetTopology(subset), groups: subset.groups };
 }
 
-export function supportsComponentInsertion(source: string) {
-  try { readSubset(source, true); return true; }
-  catch { return false; }
+export function componentSourceIssue(source: string) {
+  let location: { from: number; to: number; line: number } | undefined;
+  try {
+    readSubset(source, true, record => {
+      const line = source.slice(0, record.start).split('\n').length;
+      location = { from: record.start, to: record.end, line };
+      if (/^click[ \t]/.test(record.text)) return new Error(`Component definitions do not include click links or callbacks. Review line ${line}.`);
+      if (/^(?:class|classDef|style)[ \t]/.test(record.text)) return new Error(`Component definitions do not include source styling directives. Review line ${line}.`);
+      return new Error(`Meridian cannot verify this statement for a reusable component. Review line ${line}.`);
+    });
+    return undefined;
+  } catch (reason) {
+    return { message: reason instanceof Error ? reason.message : unsupported().message, location };
+  }
 }
 
 export function componentSelectionTopology(source: string) {
