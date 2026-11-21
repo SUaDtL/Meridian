@@ -9,7 +9,7 @@ import V3ComparisonDialog from "./V3ComparisonDialog";
 import V3GroupStoryDialog, { initialGroupStoryDraft } from "./V3GroupStoryDialog";
 import type { ManualSceneSelection } from "./V3SavedScenesDialog";
 import V3StructureEditor from "./V3StructureEditor";
-import V3SourceEditor, { type SourceDraft } from "./V3SourceEditor";
+import type { SourceDraft } from "./V3SourceEditor";
 import DetachComponentDialog from "./DetachComponentDialog";
 import { designResetFields } from "../lib/authoring/design-reset";
 import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-project";
@@ -35,6 +35,7 @@ const AssistExchangeDialog = lazy(() => import("./AssistExchangeDialog"));
 const SavedScenesDialog = lazy(() => import("./V3SavedScenesDialog"));
 const DesignResetDialog = lazy(() => import("./DesignResetDialog"));
 const OrphanReviewDialog = lazy(() => import("./OrphanReviewDialog"));
+const V3SourceEditor = lazy(() => import("./V3SourceEditor"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
@@ -778,18 +779,20 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
             setProject(editor.current!.snapshot());
           }} />
       </Suspense>}
-      {editSource && editor.current && <V3SourceEditor editor={editor.current} savedDraft={sourceDraft} onDraft={setSourceDraft}
-        onClose={() => setEditSource(false)} onApply={proposal => {
-          const current = editor.current!;
-          const result = current.applyStructure(proposal);
-          if (result.status === "applied") {
-            setSourceDraft(undefined);
-            setProject(current.snapshot());
-          }
-          return result.status;
-        }} />}
+      {editSource && editor.current && <Suspense>
+        <V3SourceEditor editor={editor.current} savedDraft={sourceDraft} onDraft={setSourceDraft}
+          onClose={() => setEditSource(false)} onApply={proposal => {
+            const current = editor.current!;
+            const result = current.applyStructure(proposal);
+            if (result.status === "applied") {
+              setSourceDraft(undefined);
+              setProject(current.snapshot());
+            }
+            return result.status;
+          }} />
+      </Suspense>}
       {orphanReviewOpen && project && editor.current && <Suspense fallback={null}>
-        <OrphanReviewDialog editor={editor.current} project={project} onClose={() => setOrphanReviewOpen(false)}
+        <OrphanReviewDialog editor={editor.current} project={project} targets={targetTable ?? undefined} onClose={() => setOrphanReviewOpen(false)}
           onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);
