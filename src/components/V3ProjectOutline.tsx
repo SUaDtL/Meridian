@@ -5,6 +5,15 @@ import Modal from "./Modal";
 
 const pageSize = 80;
 const selectionLimit = 200;
+export type OutlineView = {
+  query: string;
+  relationships: boolean;
+  limit: number;
+  activeId: string;
+  collapsed: ReadonlySet<string>;
+  checkboxSelection: boolean;
+};
+
 type OutlineRow = { item: ProjectOutlineItem; depth: number; branch: boolean; expanded: boolean };
 
 function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolean, query: string, collapsed: ReadonlySet<string>): OutlineRow[] {
@@ -42,14 +51,16 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
   return rows;
 }
 
-export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onFrame, onConnect, onGroup, onBulkText,
-  onDesign, onResetDesign, onSaveComponent, onStory, onDeleteConnections, canUngroup, onUngroup, canReviewGroupDeletion, onReviewGroupDeletion, canMoveInto, onMoveInto, onClose }: {
+export default function V3ProjectOutline({ items, selected, restoredView, onSelection, canRename, onRename, onSource, onFrame, onConnect, onGroup, onBulkText,
+  onDesign, onResetDesign, onSaveComponent, onStory, onDeleteConnections, canUngroup, onUngroup, canReviewGroupDeletion, onReviewGroupDeletion,
+  canMoveInto, onMoveInto, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
+  restoredView?: OutlineView;
   onSelection: Dispatch<SetStateAction<ReadonlySet<string>>>;
   canRename: boolean;
   onRename: (id: string) => void;
-  onSource: (location: OutlineSourceLocation) => void;
+  onSource: (location: OutlineSourceLocation, view: OutlineView) => void;
   onFrame: (ids: readonly string[], close: boolean) => string | undefined;
   onConnect?: () => void;
   onGroup?: (hidden: number) => void;
@@ -68,12 +79,12 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   onClose: () => void;
 }) {
   const id = useId();
-  const [query, setQuery] = useState("");
-  const [relationships, setRelationships] = useState(false);
-  const [limit, setLimit] = useState(pageSize);
-  const [activeId, setActiveId] = useState<string>();
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const [checkboxSelection, setCheckboxSelection] = useState(false);
+  const [query, setQuery] = useState(restoredView?.query ?? "");
+  const [relationships, setRelationships] = useState(restoredView?.relationships ?? false);
+  const [limit, setLimit] = useState(restoredView?.limit ?? pageSize);
+  const [activeId, setActiveId] = useState(restoredView?.activeId);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(restoredView?.collapsed ?? new Set());
+  const [checkboxSelection, setCheckboxSelection] = useState(restoredView?.checkboxSelection ?? false);
   const [refusedCount, setRefusedCount] = useState<number>();
   const [frameError, setFrameError] = useState<string>();
   const list = useRef<HTMLUListElement>(null);
@@ -156,8 +167,10 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
     setLimit(pageSize);
   }
 
+  const initialFocus = restoredView
+    ? restoredView.checkboxSelection ? "[data-outline-active]" : "[data-outline-list]" : "[name='outline-search']";
   return (
-    <Modal title="Diagram outline" wide onClose={onClose} initialFocus="[name='outline-search']">
+    <Modal title="Diagram outline" wide onClose={onClose} initialFocus={initialFocus}>
       <div className="heading-form project-outline">
         <label>Find an element<input name="outline-search" value={query} maxLength={160}
           onChange={event => { setQuery(event.target.value); setLimit(pageSize); setActiveId(undefined); }}
@@ -199,7 +212,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
         </div>
         {onDeleteConnections && relationships && selected.size > 0 && !canDeleteConnections
           && <p>Choose up to {bulkConnectionLimit} connections with verified source IDs to delete together.</p>}
-        <ul ref={list} role={checkboxSelection ? "list" : relationships ? "listbox" : "tree"}
+        <ul ref={list} data-outline-list role={checkboxSelection ? "list" : relationships ? "listbox" : "tree"}
           aria-label={relationships ? "Relationships" : "Diagram elements"}
           aria-activedescendant={!checkboxSelection && active ? `${id}-${active.item.id}` : undefined}
           aria-multiselectable={checkboxSelection ? undefined : true} tabIndex={!checkboxSelection && visible.length ? 0 : undefined}
@@ -219,7 +232,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
               style={{ paddingInlineStart: `${8 + Math.min(depth - 1, 12) * 13}px` }}
               onClick={checkboxSelection ? undefined : event => { list.current?.focus(); select(item.id, event.shiftKey || event.ctrlKey || event.metaKey); }}>
               {checkboxSelection ? <label className="outline-row-checkbox">
-                <input type="checkbox" checked={checked} onFocus={() => setActiveId(item.id)} onChange={() => select(item.id, true)} />
+                <input type="checkbox" checked={checked} data-outline-active={item === active?.item || undefined} onFocus={() => setActiveId(item.id)} onChange={() => select(item.id, true)} />
                 <span>{content}</span>
               </label> : content}
             </li>;
@@ -241,7 +254,10 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           {active.item.kind === "group" && canMoveInto(active.item.id) && <button type="button" className="button quiet"
             onClick={() => onMoveInto(active.item.id)}>Move node into this group</button>}
           <button type="button" className="button secondary" disabled={!active.item.source}
-            onClick={() => { if (active.item.source) onSource(active.item.source); }}>Jump to source</button>
+            onClick={() => {
+              if (active.item.source) onSource(active.item.source, { query, relationships, limit,
+                activeId: active.item.id, collapsed, checkboxSelection });
+            }}>Jump to source</button>
         </div>}
         {active && !active.item.source && <p className="muted-note">Meridian could not verify a unique source span for this element.</p>}
         {active && active.item.provenance.length > 0 && <section aria-label="Imported source">

@@ -17,7 +17,7 @@ test('reviews typed filters and explains excluded rows while preserving source d
   await chart.getByRole('button', { name: 'Add filter' }).click();
   await chart.getByRole('button', { name: 'Review chart' }).click();
   await expect(chart.getByText(/Rows excluded by filters: 1/).filter({ visible: true })).toBeVisible();
-  await expect(chart.getByRole('table', { name: 'Displayed values' }).getByRole('cell', { name: 'South' })).toHaveCount(0);
+  await expect(chart.getByRole('table', { name: 'Displayed values' }).getByRole('rowheader', { name: 'South' })).toHaveCount(0);
   await chart.getByRole('button', { name: 'Source data', exact: true }).click();
   await expect(chart.getByRole('table', { name: 'Source data' }).getByRole('row', { name: 'South Missing Excluded by filter 1' })).toBeVisible();
   await chart.getByRole('button', { name: 'Apply chart changes' }).click();
@@ -31,7 +31,7 @@ test('reviews typed filters and explains excluded rows while preserving source d
   await chart.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
   await chart.getByRole('button', { name: 'Displayed values', exact: true }).click();
-  await expect(chart.getByRole('table', { name: 'Displayed values' }).getByRole('cell', { name: 'South' })).toBeVisible();
+  await expect(chart.getByRole('table', { name: 'Displayed values' }).getByRole('rowheader', { name: 'South' })).toBeVisible();
 });
 
 test('requires explicit filtering above the mark caps and draws every observation at each cap', async ({ page }) => {
