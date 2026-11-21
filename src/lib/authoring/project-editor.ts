@@ -310,7 +310,12 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const request = await readPendingAssist(db, file.requestId);
     const token = await projectBaseToken(base);
     const operation = authorizeAssistEdit(file, request, token);
+    const stored = await readWorkspaceProject(db, base.id);
     signal?.throwIfAborted();
+    if (!stored || stored.document.revision !== token.revision || stored.anchor.stateDigest !== token.stateDigest
+      || closed || current.document !== base) {
+      throw new Error('The saved project changed. Reopen the current project and export a fresh request.');
+    }
     const { document, impact } = await prepareFlowchartCandidate(base, operation, signal);
     if (closed || current.document !== base) throw new Error('The project changed. Export a fresh request.');
     if (document === base) throw new Error('The suggestion makes no change to the current label.');

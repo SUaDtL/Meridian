@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { canonicalDigest } from '../../src/lib/authoring/base-token';
+import { canonicalDigest, projectBaseToken } from '../../src/lib/authoring/base-token';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 import { createScene } from '../../src/lib/storyboard';
 
@@ -539,4 +539,56 @@ test('reviews one assistant group around exact writable nodes and preserves boun
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const restored = JSON.parse(await download(page, backup));
   expect(restored).toEqual({ ...original, revision: applied.revision + 1, updatedAt: restored.updatedAt });
+});
+
+test('rejects a matching proposal file when the saved metadata changed at the same source and revision', async ({ page, context }) => {
+  const title = 'Assistant authored-state guard';
+  const live = await openProject(page, title, 'flowchart LR\n A[Service]\n');
+  const projectFile = live.getByRole('button', { name: 'Download v3 project' });
+  const originalText = await download(page, projectFile);
+  const original = JSON.parse(originalText);
+  const dialog = await openExchange(page, live);
+  await dialog.getByLabel('Instruction').fill('Rename the selected service.');
+  await dialog.getByRole('combobox', { name: 'Service', exact: true }).selectOption('writable');
+  await dialog.getByRole('button', { name: 'Review what will be shared' }).click();
+  const request = JSON.parse(await download(page, dialog.getByRole('button', { name: 'Download request' })));
+  const proposal = {
+    schema: 'meridian-proposal/v1', id: crypto.randomUUID(), documentKind: 'mermaid', origin: 'ai',
+    requestId: request.requestId, requestHash: await canonicalDigest('meridian-assist-request/v1', request), baseToken: request.baseToken,
+    operations: [{ op: 'setNodeLabel', targetId: request.graph.nodes[0].id, label: 'Reviewed rename' }],
+  };
+  const saved = { ...original, subtitle: 'A newer saved subtitle' };
+  const token = await projectBaseToken(saved);
+  expect(token.revision).toBe(request.baseToken.revision);
+  expect(token.contentHash).toBe(request.baseToken.contentHash);
+  expect(token.stateDigest).not.toBe(request.baseToken.stateDigest);
+
+  const other = await context.newPage();
+  try {
+    await other.goto('/');
+    await other.evaluate(({ saved, stateDigest }) => new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('meridian-workspace');
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction('documents', 'readwrite');
+        tx.objectStore('documents').put({ id: saved.id, document: saved, anchor: { stateDigest, storageGeneration: crypto.randomUUID() } });
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onabort = () => { db.close(); reject(tx.error); };
+      };
+    }), { saved, stateDigest: token.stateDigest });
+
+    await dialog.getByRole('button', { name: 'Review a proposal' }).click();
+    await review(dialog, proposal);
+    await expect(dialog.getByRole('alert')).toHaveText('The saved project changed. Reopen the current project and export a fresh request.');
+    await expect(dialog.getByRole('button', { name: 'Apply reviewed rename' })).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'Close dialog' }).click();
+    expect(await download(page, projectFile)).toBe(originalText);
+    await expect(live.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+
+    await other.getByRole('button', { name: 'Manage projects' }).click();
+    await other.getByRole('button', { name: 'Project migration and recovery' }).click();
+    const durable = JSON.parse(await download(other, other.getByRole('button', { name: `Download v3 copy of ${title}` })));
+    expect(durable).toEqual(saved);
+  } finally { await other.close(); }
 });
