@@ -211,28 +211,37 @@ describe('latest-only render scheduling', () => {
     expect(started).toEqual(['foreground', 'later']);
   });
 
-  it('supersedes pending and running previews without allowing a later preview to overtake foreground', async () => {
+  it('serializes three competing previews and installs only the latest foreground result', async () => {
     const held = deferred();
     const started: string[] = [];
+    let owners = 0;
+    let maximumOwners = 0;
     const queue = latestRenderQueue(async (input: string, signal) => {
       started.push(input);
-      if (input === 'active preview') {
-        await held.promise;
-        expect(signal.aborted).toBe(true);
+      maximumOwners = Math.max(maximumOwners, ++owners);
+      try {
+        if (input === 'active preview') {
+          await held.promise;
+          expect(signal.aborted).toBe(true);
+        }
+        return input;
+      } finally {
+        owners--;
       }
-      return input;
     });
     const active = queue.submit('active', 'active preview', undefined, 'preview').catch(error => error.name);
     await Promise.resolve();
     const waiting = queue.submit('waiting', 'waiting preview', undefined, 'preview').catch(error => error.name);
-    const current = queue.submit('current', 'foreground');
+    const older = queue.submit('old revision', 'older foreground').catch(error => error.name);
     const late = queue.submit('late', 'late preview', undefined, 'preview').catch(error => error.name);
+    const current = queue.submit('new revision', 'current foreground');
     queue.cancel('preview');
-    expect(await Promise.all([active, waiting, late])).toEqual(['AbortError', 'AbortError', 'AbortError']);
+    expect(await Promise.all([active, waiting, late, older])).toEqual(Array(4).fill('AbortError'));
     expect(started).toEqual(['active preview']);
     held.release();
-    expect(await current).toBe('foreground');
-    expect(started).toEqual(['active preview', 'foreground']);
+    expect(await current).toBe('current foreground');
+    expect(started).toEqual(['active preview', 'current foreground']);
+    expect(maximumOwners).toBe(1);
   });
 
   it('promotes a matching preview to foreground and protects it from preview cancellation', async () => {
