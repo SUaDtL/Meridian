@@ -279,6 +279,59 @@ test('authors the first overview scene by hand and appends a second reviewed sce
   expect(JSON.parse(await download(page, live, 'Download v3 project')).storyboard.scenes).toEqual(after.storyboard.scenes.slice(0, 1));
 });
 
+test('authors a scene from a selected connection and shows only its endpoints and group containers', async ({ page, browser }) => {
+  const source = 'flowchart LR\n subgraph Outer [Outer group]\n   subgraph Inner [Inner group]\n     A[Start]\n     B[Finish]\n     X[Hidden sibling]\n   end\n end\n C[External]\n A selected@-->|"Reviewed path"| B\n B outside@--> C\n';
+  const project = { ...createDocument(), title: 'Manual selection story', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Manual selection story' }).click();
+  const live = page.getByRole('dialog', { name: 'Manual selection story' });
+  const before = JSON.parse(await download(page, live, 'Download v3 project'));
+  const ids = new Map(before.identity.elements.map((item: { id: string; binding: { sourceId: string } }) => [item.binding.sourceId, item.id]));
+  const outlineButton = live.getByRole('button', { name: 'Outline', exact: true });
+  await outlineButton.click();
+  const outline = page.getByRole('dialog', { name: 'Diagram outline' });
+  await outline.getByRole('button', { name: 'Relationships', exact: true }).click();
+  await outline.getByRole('option', { name: /Reviewed path/ }).click();
+  await outline.getByRole('textbox', { name: 'Find an element' }).fill('External');
+  await outline.getByRole('button', { name: 'Create scene from selection' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit saved scenes' });
+  await expect(dialog.getByRole('region', { name: 'Selected scene scope' })).toContainText('1 selected · 1 hidden in the outline');
+  await dialog.getByRole('textbox', { name: 'Scene title' }).fill('Reviewed connection');
+  await dialog.getByRole('spinbutton', { name: 'Camera padding in diagram units' }).fill('18');
+  await dialog.getByRole('button', { name: 'Preview new scene' }).click();
+  const review = dialog.getByRole('region', { name: 'Proposed scene' });
+  await expect(review).toContainText('Shown · Nodes 2 · Connections 1 · Groups 2');
+  await expect(review).toContainText('Omitted · Nodes 2 · Connections 1 · Groups 0');
+  const target = (id: string) => `[data-element-key="${ids.get(id)}"]`;
+  await expect(review.locator(target('X'))).toHaveAttribute('aria-hidden', 'true');
+  await expect(review.locator(target('Inner'))).toHaveAttribute('aria-hidden', 'false');
+  await dialog.getByRole('button', { name: 'Add reviewed scene' }).click();
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(outlineButton).toBeFocused();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const saved = JSON.parse(await download(page, live, 'Download v3 project'));
+  expect(saved.source).toBe(source);
+  expect(saved.identity).toEqual(before.identity);
+  const scene = saved.storyboard.scenes[0];
+  expect(new Set(scene.visible)).toEqual(new Set(['A', 'B', 'Inner', 'Outer', 'selected'].map(key => ids.get(key))));
+  expect(new Set(scene.camera.keys)).toEqual(new Set(['A', 'B', 'selected'].map(key => ids.get(key))));
+  expect(scene.camera).toMatchObject({ mode: 'elements', padding: 18 });
+  expect(scene.flow).toEqual([]);
+  const html = await download(page, live, 'Download HTML presentation');
+  const context = await browser.newContext({ offline: true, reducedMotion: 'reduce' });
+  try {
+    const offline = await context.newPage();
+    await offline.setContent(html);
+    await expect(offline.locator(target('X'))).toHaveAttribute('aria-hidden', 'true');
+    await expect(offline.locator(target('Inner'))).toHaveAttribute('aria-hidden', 'false');
+  } finally { await context.close(); }
+});
+
 test('resumes a local path draft after reload and reviews it against the newer project revision', async ({ page }) => {
   const source = 'flowchart LR\nA[Start]\nB[Review]\nC[Archive]\nA review@-->|"Send"| B\nB archive@--> C\n';
   const project = { ...createDocument(), title: 'Story draft example', source };

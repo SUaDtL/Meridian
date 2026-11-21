@@ -10,21 +10,24 @@ import StoryPreviewPlayer from "./StoryPreviewPlayer";
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Review = { proposal: ReadyProposal; scene: StoryScene; svg: string; result: NonNullable<ReturnType<Editor["readStoryPreview"]>> };
+export type ManualSceneSelection = { ids: readonly string[]; hidden: number };
 
 function sceneDetails(scene: StoryScene): StorySceneDetails {
   return { title: scene.title, duration: scene.duration, transition: scene.transition,
     easing: scene.easing, reveal: scene.reveal, padding: scene.camera.padding };
 }
 
-export default function V3SavedScenesDialog({ editor, startNew, onApply, onOrderChange, onClose }: {
+export default function V3SavedScenesDialog({ editor, startNew, initialScope, onApply, onOrderChange, onClose }: {
   editor: Editor;
   startNew: boolean;
+  initialScope?: ManualSceneSelection;
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStory"]>;
   onOrderChange: (...args: Parameters<Editor["editStorySceneOrder"]>) => ReturnType<Editor["editStorySceneOrder"]>;
   onClose: () => void;
 }) {
   const [base, setBase] = useState(editor.snapshot);
   const [newScene, setNewScene] = useState(() => startNew ? createScene(base.storyboard.scenes.length) : undefined);
+  const [scope, setScope] = useState(initialScope);
   const [selected, setSelected] = useState<string | undefined>(newScene?.id ?? base.storyboard.scenes[0]?.id);
   const selectedIndex = base.storyboard.scenes.findIndex(item => item.id === selected);
   const creating = !!newScene && selected === newScene.id;
@@ -69,7 +72,7 @@ export default function V3SavedScenesDialog({ editor, startNew, onApply, onOrder
     setReview(undefined);
     setError("");
     try {
-      const proposal = await editor.prepareStoryScene(creating ? null : selected, draft, base, work.signal);
+      const proposal = await editor.prepareStoryScene(creating ? null : selected, draft, base, work.signal, creating ? scope?.ids : undefined);
       const result = editor.readStoryPreview(proposal);
       const edited = creating ? result?.next.storyboard.scenes.at(-1) : result?.next.storyboard.scenes.find(item => item.id === selected);
       if (!edited || !result?.rendered.targetTable) throw new Error("The project changed. Open the current story again.");
@@ -98,6 +101,7 @@ export default function V3SavedScenesDialog({ editor, startNew, onApply, onOrder
       if (creating) {
         setSelected(id);
         setNewScene(undefined);
+        setScope(undefined);
       }
       resetReview();
       setStatus(creating ? "Scene added to the storyboard." : "Scene updated.");
@@ -125,6 +129,7 @@ export default function V3SavedScenesDialog({ editor, startNew, onApply, onOrder
       return remaining;
     });
     setNewScene(undefined);
+    setScope(undefined);
     setSelected(base.storyboard.scenes[0]?.id);
     resetReview();
     requestAnimationFrame(() => add.current?.focus());
@@ -158,9 +163,10 @@ export default function V3SavedScenesDialog({ editor, startNew, onApply, onOrder
     }
   }
 
+  const coverage = review?.result.suggestions[0]?.coverage;
   return <Modal title="Edit saved scenes" wide onClose={onClose} initialFocus={startNew ? "[name='scene-title']" : "[aria-pressed='true']"}>
     <button type="button" className="button secondary" ref={add} disabled={busy || creating || base.storyboard.scenes.length >= 50}
-      onClick={startScene}>{newScene && !creating ? "Resume new overview scene" : "New overview scene"}</button>
+      onClick={startScene}>{newScene && !creating ? scope ? "Resume new scene from selection" : "Resume new overview scene" : "New overview scene"}</button>
     <ol className="project-list" aria-label="Saved scenes">{base.storyboard.scenes.map((item, index) => (
       <li className="project-row" key={item.id}>
         <button type="button" className="button quiet" aria-pressed={item.id === selected} disabled={busy}
@@ -193,7 +199,10 @@ export default function V3SavedScenesDialog({ editor, startNew, onApply, onOrder
     {status && <p role="status">{status}</p>}
     {error && <p role="alert">{error}</p>}
     {scene && draft && !confirmRemoval && <form className="heading-form" onSubmit={event => { event.preventDefault(); void prepare(); }}>
-      {creating && <p>The overview shows the entire diagram. Preview it before adding it to the end of the story.</p>}
+      {creating && (scope ? <section aria-label="Selected scene scope">
+        <p>{scope.ids.length} selected · {scope.hidden} hidden in the outline</p>
+        <p>The scene also shows connection endpoints and the group containers needed for the selected elements.</p>
+      </section> : <p>The overview shows the entire diagram. Preview it before adding it to the end of the story.</p>)}
       <label>Scene title<input ref={titleField} name="scene-title" value={draft.title} maxLength={120} disabled={busy} onChange={event => change({ ...draft, title: event.target.value })} /></label>
       <label>Duration in seconds<input type="number" step="any" min={0.5} max={120} required disabled={busy}
         value={Number.isNaN(draft.duration) ? "" : draft.duration} onChange={event => change({ ...draft, duration: event.target.valueAsNumber })} /></label>
@@ -207,12 +216,16 @@ export default function V3SavedScenesDialog({ editor, startNew, onApply, onOrder
         onChange={event => change({ ...draft, reveal: event.target.value as StoryScene["reveal"] })}>
         <option value="together">Together</option><option value="sequence">In sequence</option>
       </select></label>
-      {scene.camera.mode === "elements" && <label>Camera padding in diagram units
+      {(scene.camera.mode === "elements" || (creating && scope)) && <label>Camera padding in diagram units
         <input type="number" step="any" min={8} max={240} required disabled={busy} value={Number.isNaN(draft.padding) ? "" : draft.padding}
           onChange={event => change({ ...draft, padding: event.target.valueAsNumber })} />
       </label>}
       {busy && <p role="status">Preparing the scene preview…</p>}
       {review && <section aria-label="Proposed scene">
+        {coverage && <>
+          <p>Shown · Nodes {coverage.node.shown} · Connections {coverage.edge.shown} · Groups {coverage.group.shown}</p>
+          <p>Omitted · Nodes {coverage.node.omitted} · Connections {coverage.edge.omitted} · Groups {coverage.group.omitted}</p>
+        </>}
         <StoryPreviewPlayer svg={review.svg} story={previewScenes} table={review.result.rendered.targetTable!}
           accent={getTheme(base.settings.theme).accent} onReady={setReady} />
       </section>}
