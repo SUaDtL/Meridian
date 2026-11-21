@@ -1,3 +1,4 @@
+import { requestIdPattern } from './assist-request-id';
 import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { decodeJson } from './decode-json';
 import { authoringLimits, encodeMermaidLabel, type ConnectionDirection, type Shape } from './flowchart-source';
@@ -11,7 +12,7 @@ import { matchesBundledContract } from './validate-mermaid-project';
 
 const requestDomain = 'meridian-assist-request/v1';
 export const assistFileLimit = 128 * 1024;
-export const requestIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+export { requestIdPattern } from './assist-request-id';
 export const digestPattern = /^[a-f0-9]{64}$/;
 const day = 24 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
