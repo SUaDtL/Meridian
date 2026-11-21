@@ -36,12 +36,12 @@ test('keeps an invalid source draft, previews binding-preserving changes, and re
   await expect(detail.locator('..')).not.toHaveAttribute('open');
   await editor.getByRole('button', { name: 'Go to line 2' }).click();
   await expect(input).toBeFocused();
-  expect(await input.evaluate((field: HTMLTextAreaElement) => field.value.slice(field.selectionStart, field.selectionEnd))).toBe(' A["unclosed');
+  expect(await input.evaluate(() => window.getSelection()?.toString())).toBe(' A["unclosed');
   await expect(editor.getByRole('button', { name: 'Apply source' })).toBeDisabled();
   await editor.getByRole('button', { name: 'Close', exact: true }).click();
   expect(await download(page, live)).toEqual(original);
   await open();
-  await expect(input).toHaveValue(invalid);
+  await expect.poll(() => input.innerText()).toBe(invalid);
   await input.fill('flowchart LR\n A@{ img: "https://example.invalid/shape.png" }\n');
   await editor.getByRole('button', { name: 'Preview source' }).click();
   await expect(editor.getByRole('alert')).toContainText('Resource restriction');
@@ -75,4 +75,50 @@ test('keeps an invalid source draft, previews binding-preserving changes, and re
   expect(restored.source).toBe(source);
   expect(restored.identity).toEqual(original.identity);
   expect(restored.design).toEqual(original.design);
+});
+
+test('offers proven endpoint completion and keeps draft history separate from accepted changes', async ({ page }) => {
+  const source = 'flowchart LR\n  alpha[Client]\n  beta[Worker]\n';
+  const project = { ...createDocument(), title: 'Source completion', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Source completion' }).click();
+  const live = page.getByRole('dialog', { name: 'Source completion' });
+  await live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const input = editor.getByRole('textbox', { name: 'Mermaid source' });
+  await expect(input).toBeFocused();
+  const suggestions = editor.getByRole('listbox');
+  for (const blocked of ['  %% alpha ready@--> be', '  gamma["alpha ready@--> be', '  unknown ready@--> be']) {
+    await input.fill(source + blocked);
+    await input.press('Control+End');
+    await input.press('Control+Space');
+    await expect(suggestions).toHaveCount(0);
+  }
+  await input.fill(source + '  alpha ready@--> be');
+  await input.press('Control+End');
+  await input.press('Control+Space');
+  await expect(suggestions.getByRole('option', { name: /beta.*Worker/ })).toBeVisible();
+  await input.press('Escape');
+  await expect(editor).toBeVisible();
+  await expect(suggestions).toHaveCount(0);
+  await input.press('Control+Space');
+  await expect(suggestions.getByRole('option', { name: /beta.*Worker/ })).toBeVisible();
+  await suggestions.getByRole('option', { name: /beta.*Worker/ }).click();
+  await expect(input).toContainText('alpha ready@--> beta');
+  await input.press('Control+z');
+  await expect(input).toContainText('alpha ready@--> be');
+  await expect(input).not.toContainText('alpha ready@--> beta');
+  await input.press('Control+y');
+  await expect(input).toContainText('alpha ready@--> beta');
+  await editor.getByRole('button', { name: 'Preview source' }).click();
+  await expect(editor.getByRole('region', { name: 'Proposed source edit' })).toContainText('2 existing bindings preserved · 1 new binding');
+  await editor.getByRole('button', { name: 'Apply source' }).click();
+  expect((await download(page, live)).source).toBe(source + '  alpha ready@--> beta');
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  expect((await download(page, live)).source).toBe(source);
 });
