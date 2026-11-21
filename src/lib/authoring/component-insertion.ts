@@ -12,7 +12,8 @@ export async function prepareComponentInsertion(
   base: MermaidProjectV3, definition: ComponentDefinition, values: Readonly<Record<string, string | number>>,
   assignments: ReadonlyMap<string, PortAssignment>, signal?: AbortSignal,
 ) {
-  if (base.componentInstances.length >= 100) throw new Error('This project already has 100 component instances.');
+  const proposedInstances = base.componentInstances.length + 1;
+  if (proposedInstances > 100) throw new Error(`The project would contain ${proposedInstances} component instances. The limit is 100.`);
   const component = structuredClone(validateComponentDefinition(definition));
   const ports = component.ports;
   if (assignments.size !== ports.length || ports.some(port => !assignments.has(port.id))) {

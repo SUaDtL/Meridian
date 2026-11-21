@@ -473,3 +473,51 @@ test('requires an explicit new attachment when another tab reuses its Mermaid so
     expect(restored).toEqual({ ...changed, revision: renamed.revision + 2, updatedAt: restored.updatedAt });
   } finally { await second.close(); }
 });
+
+test('refuses an expansion beyond 100 instances before altering the saved project', async ({ page }) => {
+  const base = JSON.parse(await readFile(new URL('../../src/lib/authoring/fixtures/example-project.json', import.meta.url), 'utf8'));
+  const title = 'Component instance capacity';
+  const records = Array.from({ length: 100 }, (_, index) => ({
+    id: crypto.randomUUID(), elementKind: 'node', binding: { type: 'source-id', sourceId: `Existing${index + 1}` }, status: 'resolved',
+  }));
+  const project = {
+    ...base, title,
+    source: 'flowchart LR\n' + records.map((record, index) => ` ${record.binding.sourceId}[Existing ${index + 1}]\n`).join(''),
+    identity: { ...base.identity, elements: records, orphans: [] },
+    roles: [], storyboard: { ...base.storyboard, scenes: [] },
+    componentInstances: records.map(record => ({ id: crypto.randomUUID(), definitionId: crypto.randomUUID(),
+      definitionVersion: '1.0.0', definitionHash: 'a'.repeat(64), bindings: [{ localId: 'node', elementId: record.id }] })),
+  };
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  const library = page.getByRole('dialog', { name: 'Project migration and recovery' });
+  await library.getByLabel('Import v3 project file').setInputFiles({
+    name: 'instance-capacity.meridian.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await library.getByRole('button', { name: `Open v3 project ${title}` }).click();
+  const live = page.getByRole('dialog', { name: title, exact: true });
+  await expect(live.getByRole('img', { name: `Diagram preview for ${title}` })).toBeVisible();
+  async function download() {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing project at the component limit.');
+    return readFile(path, 'utf8');
+  }
+  const before = await download();
+  expect(JSON.parse(before).componentInstances).toHaveLength(100);
+  await live.getByRole('button', { name: 'Commands' }).click();
+  const command = page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox');
+  await command.fill('Insert component');
+  await command.press('Enter');
+  const insert = page.getByRole('dialog', { name: 'Insert component' });
+  await insert.getByRole('button', { name: /API, queue, and worker/ }).click();
+  await insert.getByRole('group', { name: 'Request input' }).getByRole('combobox', { name: 'Attachment target' }).selectOption({ label: 'Leave unconnected' });
+  await insert.getByRole('group', { name: 'Worker result' }).getByRole('combobox', { name: 'Attachment target' }).selectOption({ label: 'Leave unconnected' });
+  await insert.getByRole('button', { name: 'Preview component' }).click();
+  await expect(insert.getByRole('alert')).toHaveText('The project would contain 101 component instances. The limit is 100.');
+  await expect(insert.getByRole('button', { name: 'Insert reviewed component' })).toHaveCount(0);
+  await insert.getByRole('button', { name: 'Close dialog' }).click();
+  expect(await download()).toBe(before);
+  await expect(live.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+});
