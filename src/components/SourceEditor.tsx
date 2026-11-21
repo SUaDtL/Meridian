@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import CodeMirror, { ExternalChange } from '@uiw/react-codemirror';
+import CodeMirror, { EditorState, ExternalChange, Transaction } from '@uiw/react-codemirror';
 import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { EditorView, type ViewUpdate } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
@@ -51,52 +51,68 @@ function syncSource(view: EditorView, source: string) {
   if (!insert.eq(view.state.doc)) {
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert },
-      annotations: ExternalChange.of(true),
+      annotations: [ExternalChange.of(true), Transaction.addToHistory.of(false)],
     });
   }
 }
 
-interface SourceEditorProps {
+type SourceEditorProps = {
   source: string;
   onChange: (source: string, group?: string) => void;
+  focusRequest?: number;
+} & ({
   onUndo: () => void;
   onRedo: () => void;
-  focusRequest?: number;
-}
+  draft?: never;
+} | {
+  draft: { readOnly: boolean; maxLength: number; onReady: (view: EditorView) => void };
+  onUndo?: never;
+  onRedo?: never;
+});
 
-function SourceEditor({ source, onChange, onUndo, onRedo, focusRequest = 0 }: SourceEditorProps) {
-  const actions = useRef({ onChange, onUndo, onRedo });
-  actions.current = { onChange, onUndo, onRedo };
+const draftSetup = { ...basicSetup, history: true, historyKeymap: true };
+const draftAttributes = EditorView.contentAttributes.of({
+  'aria-label': 'Mermaid source',
+  'aria-multiline': 'true',
+  'autocapitalize': 'off',
+  'spellcheck': 'false',
+});
+
+function SourceEditor({ source, onChange, onUndo, onRedo, focusRequest = 0, draft }: SourceEditorProps) {
+  const actions = useRef({ onChange, onUndo, onRedo, onReady: draft?.onReady });
+  actions.current = { onChange, onUndo, onRedo, onReady: draft?.onReady };
   const editor = useRef<EditorView | null>(null);
   const initialSource = useRef(source);
   const latestSource = useRef(source);
   latestSource.current = source;
+  const isDraft = draft !== undefined;
   const requestedFocus = useRef(focusRequest);
   requestedFocus.current = focusRequest;
   const receiveEditor = useCallback((view: EditorView) => {
     editor.current = view;
     syncSource(view, latestSource.current);
+    actions.current.onReady?.(view);
     if (requestedFocus.current) view.focus();
   }, []);
   useLayoutEffect(() => {
     // Apply Undo/Redo without the wrapper's typing delay so a following
     // keystroke always starts from the accepted project's source.
-    if (editor.current) syncSource(editor.current, source);
-  }, [source]);
+    if (!isDraft && editor.current) syncSource(editor.current, source);
+  }, [isDraft, source]);
   useEffect(() => { if (focusRequest) editor.current?.focus(); }, [focusRequest]);
   const editorExtensions = useMemo(() => [...extensions, EditorView.domEventHandlers({
     keydown(event, view) {
       const key = event.key.toLowerCase();
       if (view.composing || event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey)
         || (key !== 'z' && key !== 'y')) return false;
-      if (key === 'y' || event.shiftKey) actions.current.onRedo();
-      else actions.current.onUndo();
+      if (key === 'y' || event.shiftKey) actions.current.onRedo?.();
+      else actions.current.onUndo?.();
       return true;
     },
     beforeinput(event, view) {
       if (view.composing || event.isComposing) return false;
-      if (event.inputType === 'historyRedo') actions.current.onRedo();
-      else if (event.inputType === 'historyUndo') actions.current.onUndo();
+      if (event.inputType === 'historyRedo') actions.current.onRedo?.();
+      else if (event.inputType === 'historyUndo') actions.current.onUndo?.();
       else return false;
       return true;
     },
@@ -113,8 +129,15 @@ function SourceEditor({ source, onChange, onUndo, onRedo, focusRequest = 0 }: So
     }
     actions.current.onChange(value, group);
   }, []);
-  return <CodeMirror value={initialSource.current} height="100%" theme={editorTheme} extensions={editorExtensions} onChange={handleChange} onCreateEditor={receiveEditor}
-    aria-label="Mermaid source code" basicSetup={basicSetup} />;
+  const maxLength = draft?.maxLength;
+  const draftExtensions = useMemo(() => maxLength === undefined ? undefined : [
+    ...extensions,
+    draftAttributes,
+    EditorState.changeFilter.of(transaction => transaction.newDoc.length <= Math.max(maxLength, transaction.startState.doc.length)),
+  ], [maxLength]);
+  return <CodeMirror value={initialSource.current} height="100%" theme={editorTheme} extensions={draftExtensions ?? editorExtensions}
+    onChange={handleChange} onCreateEditor={receiveEditor} readOnly={draft?.readOnly}
+    aria-label={draft ? undefined : "Mermaid source code"} basicSetup={draft ? draftSetup : basicSetup} />;
 }
 
 export default memo(SourceEditor);

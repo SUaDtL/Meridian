@@ -960,3 +960,11 @@
   padding: .65rem .8rem;
   overflow-wrap: anywhere;
 }
+
+.v3-source-draft {
+  height: clamp(11rem, 32svh, 24rem);
+  min-width: 0;
+  border: 1px solid #405255;
+  border-radius: 6px;
+  background: #142127;
+}
