@@ -610,7 +610,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setGroupMembers({ ids: [...outlineSelection], hidden });
           setEditFlowchart("addGroup");
         } : undefined}
-        onDesign={flatFlowchart ? hidden => {
+        onDesign={componentSourceSupported ? hidden => {
           setComparisonSelection({ ids: [...outlineSelection], hidden });
           setOutlineOpen(false);
           setComparison("design");
@@ -670,6 +670,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return status;
         }} />}
       {comparison && currentFrame && editor.current && <V3ComparisonDialog mode={comparison} allowDirection={flatFlowchart}
+        allowScopedDesign={componentSourceSupported}
         editor={editor.current} currentUrl={currentFrame.url}
         currentSize={currentFrame.geometry} selection={comparisonSelection} selectedRoleCounts={selectedRoleCounts} onClose={() => {
           setComparisonSelection(undefined);
