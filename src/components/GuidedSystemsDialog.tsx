@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { shapeDelimiters } from "../lib/authoring/flowchart-source";
 import { prepareGuidedFlowchart } from "../lib/authoring/guided-flowchart";
+import type { GuidedSystemsAttachment } from "../lib/authoring/guided-systems-insertion";
+import type { MermaidProjectV3 } from "../lib/authoring/mermaid-project";
+import type { ReadyProposal } from "../lib/authoring/proposals";
+import type { RenderResult } from "../types";
 import { systemRoles } from "../lib/authoring/relationship-table";
 import { normalizeSystemsDraft, type SystemConnection, type SystemRow, type SystemsDraft } from "../lib/authoring/systems-draft";
 import { emptySystemsSession, type SystemsSession } from "../lib/authoring/systems-session";
@@ -15,12 +19,28 @@ const shapes = Object.keys(shapeDelimiters) as SystemRow["shape"][];
 const roles = { neutral: "Neutral", service: "Service", database: "Database", queue: "Queue", external: "External system", person: "Person" };
 const directions = { forward: "One-way", both: "Both ways", none: "No arrows" };
 const batch = 20;
-type Review = Awaited<ReturnType<typeof prepareGuidedFlowchart>> & { url: string };
-
-export default function GuidedSystemsDialog({ session, onSession, onBack, onClose, onCreated }: {
+type Review = { document: MermaidProjectV3; rendered: RenderResult; url: string; proposal?: ReadyProposal };
+type AttachmentDraft = Omit<GuidedSystemsAttachment, "direction"> & { direction: GuidedSystemsAttachment["direction"] | "" };
+type ExistingTarget = {
+  title: string;
+  nodes: readonly { id: string; label: string }[];
+  attachment: AttachmentDraft;
+  onAttachment: (attachment: AttachmentDraft) => void;
+  prepare: (values: SystemsDraft, attachment: GuidedSystemsAttachment | undefined, signal: AbortSignal) =>
+    Promise<{ document: MermaidProjectV3; rendered: RenderResult; proposal: ReadyProposal }>;
+  apply: (proposal: ReadyProposal, signal: AbortSignal) => Promise<"applied" | "stale">;
+  onCompleted: (draftRetained: boolean) => void;
+};
+type SharedProps = {
   session: SystemsSession; onSession: Dispatch<SetStateAction<SystemsSession>>;
-  onBack: () => void; onClose: () => void; onCreated: (id: string, draftRetained: boolean) => void;
-}) {
+  onBack: () => void; onClose: () => void;
+};
+type Props = SharedProps & (
+  | { target?: never; onCreated: (id: string, draftRetained: boolean) => void }
+  | { target: ExistingTarget; onCreated?: never }
+);
+
+export default function GuidedSystemsDialog({ session, onSession, onBack, onClose, onCreated, target }: Props) {
   const { values, checkpoint, dirty } = session;
   const [stage, setStage] = useState<"systems" | "connections">("systems");
   const [saved, setSaved] = useState<SystemsCheckpoint[]>([]);
@@ -88,11 +108,18 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
   function reviewDiagram() {
     void run("Rendering the proposed diagram", async signal => {
       const input = normalizeSystemsDraft(values);
-      const result = await prepareGuidedFlowchart(input.title.trim() || "Untitled systems diagram", {
-        direction: input.direction,
-        nodes: input.nodes.map(item => ({ key: item.id, label: item.label, shape: item.shape, role: item.role })),
-        edges: input.edges.map(item => ({ from: item.sourceId, to: item.targetId, label: item.label, direction: item.direction })),
-      }, signal);
+      const attachment = target?.attachment;
+      if (attachment?.existingElementId && (!attachment.draftNodeId || !attachment.direction)) {
+        throw new Error("Choose the draft node and direction for the attachment.");
+      }
+      const port = attachment?.existingElementId && attachment.direction ? { ...attachment, direction: attachment.direction } : undefined;
+      const result = target
+        ? await target.prepare(input, port, signal)
+        : await prepareGuidedFlowchart(input.title.trim() || "Untitled systems diagram", {
+            direction: input.direction,
+            nodes: input.nodes.map(item => ({ key: item.id, label: item.label, shape: item.shape, role: item.role })),
+            edges: input.edges.map(item => ({ from: item.sourceId, to: item.targetId, label: item.label, direction: item.direction })),
+          }, signal);
       const { svg } = buildExportFrame(result.rendered, result.document);
       signal.throwIfAborted();
       setPainted(false);
@@ -103,16 +130,32 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
   function create() {
     if (!review || !painted) return;
     void run("Saving project", async signal => {
-      let retained = false;
-      await withDatabase(async db => {
-        signal.throwIfAborted();
-        await writeWorkspaceProject(db, review.document, null);
-        if (checkpoint) {
-          try { await discardGuidedCheckpoint(db, checkpoint); }
-          catch { retained = true; }
+      if (target) {
+        if (!review.proposal || await target.apply(review.proposal, signal) !== "applied") {
+          setReview(undefined);
+          throw new Error("The saved project changed. Your systems and attachment are still in this draft. Preview again against the current project.");
         }
-      });
-      onCreated(review.document.id, retained);
+      }
+      let retained = false;
+      if (!target || checkpoint) {
+        try {
+          await withDatabase(async db => {
+            if (!target) {
+              signal.throwIfAborted();
+              await writeWorkspaceProject(db, review.document, null);
+            }
+            if (checkpoint) {
+              try { await discardGuidedCheckpoint(db, checkpoint); }
+              catch { retained = true; }
+            }
+          });
+        } catch (reason) {
+          if (!target) throw reason;
+          retained = true;
+        }
+      }
+      if (target) target.onCompleted(retained);
+      else onCreated(review.document.id, retained);
     });
   }
 
@@ -125,12 +168,14 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
   const validStage = values.nodes.length > 0 && values.nodes.every(item => item.label.trim());
   return <Modal title="Build a systems diagram" wide busy={busy.startsWith("Saving") || busy === "Discarding draft"} onClose={onClose}>
     <div className="heading-form">
+      {target && <p>Insert systems into {target.title}.</p>}
       {!review && stage === "systems" && <>
-        <button type="button" className="button quiet" disabled={!!busy} onClick={onBack}>Back to relationship tables</button>
+        <button type="button" className="button quiet" disabled={!!busy} onClick={onBack}>{target ? "Back to project" : "Back to relationship tables"}</button>
         {!!saved.length && <ul className="project-list" aria-label="Saved systems drafts">
           {saved.map(record => <li className="project-row" key={record.id}>
             <button className="project-open" disabled={!!busy} onClick={() => {
               onSession({ values: resumeSystemsDraft(record), checkpoint: record, dirty: false });
+              target?.onAttachment({ existingElementId: "", draftNodeId: "", direction: "" });
               setRecoveryExport(undefined);
               setNodeStart(0);
               setEdgeStart(0);
@@ -143,11 +188,13 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
             })}>Discard draft</button>
           </li>)}
         </ul>}
-        <label>Project title<input maxLength={120} value={values.title} disabled={!!busy} onChange={event => change({ title: event.target.value })} /></label>
-        <label>Layout direction<select value={values.direction} disabled={!!busy}
-          onChange={event => change({ direction: event.target.value === "TB" ? "TB" : "LR" })}>
-          <option value="LR">Left to right</option><option value="TB">Top to bottom</option>
-        </select></label>
+        {!target && <>
+          <label>Project title<input maxLength={120} value={values.title} disabled={!!busy} onChange={event => change({ title: event.target.value })} /></label>
+          <label>Layout direction<select value={values.direction} disabled={!!busy}
+            onChange={event => change({ direction: event.target.value === "TB" ? "TB" : "LR" })}>
+            <option value="LR">Left to right</option><option value="TB">Top to bottom</option>
+          </select></label>
+        </>}
         {values.nodes.slice(nodeStart, nodeStart + batch).map((item, index) => <fieldset key={item.id} className="guided-process-fieldset heading-form" disabled={!!busy}>
           <legend>System {nodeStart + index + 1}</legend>
           <label>Label<input value={item.label} maxLength={400} onChange={event => editNode(item.id, { label: event.target.value })} /></label>
@@ -191,6 +238,26 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
           }}>Remove relationship</button>
         </fieldset>)}
         <PageControls count={values.edges.length} first={edgeStart} change={setEdgeStart} label="relationships" />
+        {target && <fieldset><legend>Attachment to this project</legend>
+          <p>Choose the attachment for this project after opening a saved systems draft.</p>
+          <label>Existing node<select value={target.attachment.existingElementId} disabled={!!busy}
+            onChange={event => target.onAttachment({ ...target.attachment, existingElementId: event.target.value })}>
+            <option value="">Leave separate</option>
+            {target.nodes.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select></label>
+          {target.attachment.existingElementId && <>
+            <label>Draft node<select value={target.attachment.draftNodeId} disabled={!!busy}
+              onChange={event => target.onAttachment({ ...target.attachment, draftNodeId: event.target.value })}>
+              <option value="">Choose a draft node</option>
+              {[...nodeLabels].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select></label>
+            <label>Attachment direction<select value={target.attachment.direction} disabled={!!busy}
+              onChange={event => target.onAttachment({ ...target.attachment, direction: event.target.value as AttachmentDraft["direction"] })}>
+              <option value="">Choose the direction</option><option value="from-existing">Existing node to draft node</option>
+              <option value="to-existing">Draft node to existing node</option>
+            </select></label>
+          </>}
+        </fieldset>}
         <div className="dialog-actions">
           <button className="button quiet" disabled={!!busy} onClick={() => setStage("systems")}>Back to systems</button>
           <button className="button secondary" disabled={!!busy || values.edges.length >= 400} onClick={() => {
@@ -202,7 +269,12 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
         </div>
       </>}
       {review && <section className="migration-preview" aria-label="Proposed systems diagram">
-        <p>Create a separate project with {values.nodes.length} systems and {values.edges.length} relationships.</p>
+        <p>{target ? `Insert into ${review.document.title}` : "Create a separate project"} with {values.nodes.length} systems and {values.edges.length} relationships.</p>
+        {target?.attachment.existingElementId && <p>Attachment{" "}
+          {target.attachment.direction === "from-existing"
+            ? `${target.nodes.find(item => item.id === target.attachment.existingElementId)?.label} → ${nodeLabels.get(target.attachment.draftNodeId)}`
+            : `${nodeLabels.get(target.attachment.draftNodeId)} → ${target.nodes.find(item => item.id === target.attachment.existingElementId)?.label}`}
+        </p>}
         <img src={review.url} alt="Proposed systems diagram" onLoad={() => setPainted(true)} onError={() => setError("The proposed diagram could not be displayed.")} />
         {!!values.edges.length && <details><summary>Review relationships</summary>
           <ul>{values.edges.map(item => <li key={item.id}>
@@ -212,7 +284,7 @@ export default function GuidedSystemsDialog({ session, onSession, onBack, onClos
         </details>}
         <div className="dialog-actions">
           <button className="button quiet" disabled={!!busy} onClick={() => setReview(undefined)}>Back to relationships</button>
-          <button className="button primary" disabled={!!busy || !painted} onClick={create}>Create systems project</button>
+          <button className="button primary" disabled={!!busy || !painted} onClick={create}>{target ? "Insert reviewed systems" : "Create systems project"}</button>
         </div>
       </section>}
       {busy && <p role="status">{busy}…</p>}

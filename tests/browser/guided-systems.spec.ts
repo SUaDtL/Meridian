@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 
 async function openSystems(page: Page) {
   await page.getByRole('button', { name: 'Build with guidance' }).click();
@@ -97,4 +98,86 @@ test('exports a normalized unsaved systems draft without creating a project', as
   } });
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.getByRole('region', { name: 'Continue working' })).toHaveCount(0);
+});
+
+test('keeps reviewed systems and their attachment when another tab changes the insertion target', async ({ page }) => {
+  const source = '\uFEFFflowchart LR\r\n  A[Intake]\r\n  B[Archive]\r\n  A original@--> B\r\n';
+  const project = { ...createDocument(), title: 'Guided insertion target', source };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+    version: 2, activeId: project.id, documents: [project],
+  })), { key: STORAGE_KEY, project });
+  async function openTarget(tab: Page, prepare: boolean) {
+    await tab.goto('/');
+    await tab.getByRole('button', { name: 'Manage projects' }).click();
+    await tab.getByRole('button', { name: 'Project migration and recovery' }).click();
+    if (prepare) await tab.getByRole('button', { name: 'Prepare v3 copies' }).click();
+    await tab.getByRole('button', { name: 'Open v3 project Guided insertion target' }).click();
+    const live = tab.getByRole('dialog', { name: project.title, exact: true });
+    await expect(live.getByRole('img', { name: /Diagram preview for/ })).toBeVisible();
+    return live;
+  }
+
+  const original = await openTarget(page, true);
+  const before = await downloadProject(page, original);
+  await original.getByRole('button', { name: 'Insert systems diagram', exact: true }).click();
+  const wizard = page.getByRole('dialog', { name: 'Build a systems diagram' });
+  await wizard.getByRole('button', { name: 'Add system', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Add system', exact: true }).click();
+  const gateway = wizard.getByRole('group', { name: 'System 1' });
+  await gateway.getByRole('textbox', { name: 'Label' }).fill('Gateway');
+  await gateway.getByRole('combobox', { name: 'Role' }).selectOption('service');
+  const queue = wizard.getByRole('group', { name: 'System 2' });
+  await queue.getByRole('textbox', { name: 'Label' }).fill('Work queue');
+  await queue.getByRole('combobox', { name: 'Role' }).selectOption('queue');
+  await wizard.getByRole('button', { name: 'Review relationships' }).click();
+  await wizard.getByRole('button', { name: 'Add relationship' }).click();
+  const relationship = wizard.getByRole('group', { name: 'Relationship 1' });
+  await relationship.getByRole('combobox', { name: 'From' }).selectOption({ label: 'Gateway (1)' });
+  await relationship.getByRole('combobox', { name: 'To' }).selectOption({ label: 'Work queue (2)' });
+  await relationship.getByRole('textbox', { name: 'Relationship label' }).fill('Queues work');
+  const attach = wizard.getByRole('group', { name: 'Attachment to this project' });
+  await attach.getByRole('combobox', { name: 'Existing node' }).selectOption({ label: 'Intake (A)' });
+  await attach.getByRole('combobox', { name: 'Draft node' }).selectOption({ label: 'Gateway (1)' });
+  await attach.getByRole('combobox', { name: 'Attachment direction' }).selectOption('from-existing');
+  const preview = wizard.getByRole('button', { name: 'Preview systems diagram' });
+  const apply = wizard.getByRole('button', { name: 'Insert reviewed systems' });
+  await preview.click();
+  await expect(wizard.getByText('Attachment Intake (A) → Gateway (1)', { exact: true })).toBeVisible();
+  await expect(apply).toBeEnabled();
+
+  const second = await page.context().newPage();
+  try {
+    const otherEditor = await openTarget(second, false);
+    await otherEditor.getByRole('button', { name: 'Edit heading' }).click();
+    const heading = second.getByRole('dialog', { name: 'Edit heading' });
+    await heading.getByRole('textbox', { name: 'Title', exact: true }).fill('Updated insertion target');
+    await heading.getByRole('button', { name: 'Apply heading' }).click();
+    const updated = second.getByRole('dialog', { name: 'Updated insertion target', exact: true });
+    await expect(updated.getByText('Saved in this browser.')).toBeVisible();
+    const changed = await downloadProject(second, updated);
+    expect(changed.source).toBe(source);
+
+    await apply.click();
+    await expect(wizard.getByRole('alert')).toContainText('The saved project changed.');
+    await expect(attach.getByRole('combobox', { name: 'Attachment direction' })).toHaveValue('from-existing');
+    await expect(attach.getByRole('combobox', { name: 'Existing node' }).locator('option:checked')).toHaveText('Intake (A)');
+    await expect(relationship.getByRole('textbox', { name: 'Relationship label' })).toHaveValue('Queues work');
+    expect(await downloadProject(second, updated)).toEqual(changed);
+
+    await preview.click();
+    await expect(wizard.getByText(/Insert into Updated insertion target with 2 systems/)).toBeVisible();
+    await apply.click();
+    const live = page.getByRole('dialog', { name: 'Updated insertion target', exact: true });
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const accepted = await downloadProject(page, live);
+    expect(accepted.source).toBe(source + '  m_n1["Gateway"]\r\n  m_n2["Work queue"]\r\n'
+      + '  m_n1 m_e1@-->|"Queues work"| m_n2\r\n  A m_e2@--> m_n1\r\n');
+    expect(accepted.identity.elements.slice(0, before.identity.elements.length)).toEqual(before.identity.elements);
+    expect(accepted.roles.map((item: { role: string }) => item.role)).toEqual(['service', 'queue']);
+    expect(accepted.componentInstances).toEqual(before.componentInstances);
+    await live.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const restored = await downloadProject(page, live);
+    expect(restored).toEqual({ ...changed, revision: accepted.revision + 1, updatedAt: restored.updatedAt });
+  } finally { await second.close(); }
 });

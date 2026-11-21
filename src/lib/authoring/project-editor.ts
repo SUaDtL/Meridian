@@ -1,7 +1,7 @@
 import type { StoryScene } from '../../types/storyboard';
 import { createProjectSaveQueue, type ProjectSaveState } from '../persistence/project-save-queue';
 import { readPendingAssist } from '../persistence/pending-assist';
-import { readWorkspaceProject, writeWorkspaceProject, type SavedAnchor } from '../persistence/workspace-db';
+import { readWorkspaceProject, StorageConflict, writeWorkspaceProject, type SavedAnchor } from '../persistence/workspace-db';
 import { serializeProject } from '../storage';
 import { createScene } from '../storyboard';
 import { authorizeAssistEdit, parseAssistSuggestion, type PendingAssistRequest } from './assist-exchange';
@@ -13,6 +13,7 @@ import { buildContrastCandidate, measureTargetContrast, type ContrastKind } from
 import { buildDesignRecipeCandidate, buildScopedDesignRecipe, readDesignRecipe, verifyPresentationRoleShapes, verifyScopedDesign, type DesignRecipeId, type DesignScope } from './design-recipes';
 import { buildDesignReset, measuredResetValues, type DesignReset } from './design-reset';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
+import type { GuidedSystemsAttachment } from './guided-systems-insertion';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
 import { prepareManualSource } from './manual-source';
 import type { MermaidProjectV3 } from './mermaid-project';
@@ -25,6 +26,7 @@ import { buildAnnotationRemap } from './remap-annotation';
 import type { ElementRemovalImpact } from './retire-elements';
 import { SourceDiagnosticError } from './source-diagnostics';
 import { resolveManualStoryScope } from './story-targets';
+import type { SystemsDraft } from './systems-draft';
 import { validateMermaidProject } from './validate-mermaid-project';
 
 const historyByteLimit = 8 * 1024 * 1024;
@@ -63,6 +65,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     base: MermaidProjectV3; next: MermaidProjectV3; definition: { id: string; version: string; hash: string };
   }>();
   const structure = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3; elementId?: string; impact?: ElementRemovalImpact }>();
+  const guidedInsertions = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
   const suggestions = new WeakMap<ReadyProposal, {
     base: MermaidProjectV3; next: MermaidProjectV3; request: PendingAssistRequest;
   }>();
@@ -93,7 +96,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   const bulkText = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
   const designResets = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
   let closed = false;
-  let savingSuggestion = false;
+  let savingPreparedChange = false;
 
   function prepareHeading(envelope: unknown) {
     return headingLane.prepare({ document: current.document, revision: current.document.revision }, envelope);
@@ -209,6 +212,47 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return !closed && change.base === current.document ? commit(change.next) : 'stale';
   }
 
+  async function prepareGuidedSystems(values: SystemsDraft, attachment?: GuidedSystemsAttachment, signal?: AbortSignal) {
+    const base = current.document;
+    if (closed) throw new Error('The project is closed.');
+    const input = structuredClone(values);
+    const port = attachment && { ...attachment };
+    const { prepareGuidedSystemsInsertion } = await import('./guided-systems-insertion');
+    const document = freezeSnapshot(await prepareGuidedSystemsInsertion(base, input, port, signal));
+    const rendered = await renderMermaidProject(document, signal);
+    signal?.throwIfAborted();
+    if (!rendered.targetTable || closed || current.document !== base) {
+      throw new Error('The project changed or the inserted systems could not be verified.');
+    }
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    guidedInsertions.set(proposal, { base, next: document });
+    return { proposal, document, rendered: rendered.result };
+  }
+
+  async function applyGuidedSystems(proposal: ReadyProposal, signal?: AbortSignal) {
+    const change = guidedInsertions.get(proposal);
+    if (closed || savingPreparedChange || !change || change.base !== current.document) return 'stale';
+    const next = historyEntry(change.next);
+    if (current.bytes + next.bytes > historyByteLimit) throw new Error('The insertion exceeds the Undo history budget.');
+    savingPreparedChange = true;
+    try {
+      await queue.flush();
+      signal?.throwIfAborted();
+      const saved = queue.state();
+      if (closed || change.base !== current.document) return 'stale';
+      if (saved.phase !== 'saved' || !saved.anchor) throw new Error('Save the current project before inserting systems.');
+      const anchor = await writeWorkspaceProject(db, change.next, saved.anchor);
+      advanceHistory(next, anchor);
+      guidedInsertions.delete(proposal);
+      return 'applied';
+    } catch (reason) {
+      if (reason instanceof StorageConflict) return 'stale';
+      throw reason;
+    } finally {
+      savingPreparedChange = false;
+    }
+  }
+
   function detachComponentInstance(instanceId: string, expected: MermaidProjectV3) {
     const base = current.document;
     if (closed || base !== expected) return 'stale';
@@ -250,12 +294,12 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   async function applyAssistSuggestion(proposal: ReadyProposal) {
     const change = suggestions.get(proposal);
-    if (closed || savingSuggestion || !change || change.base !== current.document) {
+    if (closed || savingPreparedChange || !change || change.base !== current.document) {
       throw new Error('The project changed. Export a fresh request.');
     }
     const next = historyEntry(change.next);
     if (current.bytes + next.bytes > historyByteLimit) throw new Error('The suggestion exceeds the Undo history budget.');
-    savingSuggestion = true;
+    savingPreparedChange = true;
     try {
       await queue.flush();
       const saved = queue.state();
@@ -266,7 +310,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       advanceHistory(next, anchor);
       suggestions.delete(proposal);
     } finally {
-      savingSuggestion = false;
+      savingPreparedChange = false;
     }
   }
 
@@ -563,7 +607,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   }
 
   function commit(document: MermaidProjectV3) {
-    if (savingSuggestion) return 'invalid';
+    if (savingPreparedChange) return 'invalid';
     if (document === current.document) return 'unchanged';
     const next = historyEntry(document);
     if (current.bytes + next.bytes > historyByteLimit) return 'history-limit';
@@ -587,7 +631,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   function restore(from: typeof past, to: typeof past) {
     const previous = from.at(-1);
-    if (closed || savingSuggestion || !previous) return false;
+    if (closed || savingPreparedChange || !previous) return false;
     const document = Object.freeze({ ...previous.document, revision: current.document.revision + 1, updatedAt: new Date().toISOString() });
     validateMermaidProject(document);
     to.push(current);
@@ -610,6 +654,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     applyStructure,
     prepareInsertion,
     applyInsertion,
+    prepareGuidedSystems,
+    applyGuidedSystems,
     prepareAssistSuggestion,
     applyAssistSuggestion,
     detachComponentInstance,
