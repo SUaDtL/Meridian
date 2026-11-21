@@ -61,7 +61,7 @@ test('reviews a connection deletion, preserves retired scene references, and res
   expect(restored.design).toEqual(original.design);
 });
 
-test('names both incident connections when deleting a node and keeps the retained scene references', async ({ page }) => {
+test('reviews incident deletion and keeps a recreated source ID separate from its retired scene and style', async ({ page }) => {
   const source = 'flowchart LR\nA[First]\nB[Middle]\nC[Last]\nA incoming@-->|"Enter"| B\nA kept@--> C\nB outgoing@-->|"Leave"| C\nlinkStyle 0,1,2 stroke:#123456\n';
   const middle = 'node:B';
   const incoming = 'edge:id:incoming';
@@ -102,6 +102,37 @@ test('names both incident connections when deleting a node and keeps the retaine
   }
   expect(removed.identity.elements).toContainEqual(expect.objectContaining({ id: ids.get('kept'), status: 'resolved' }));
   expect(removed.storyboard.scenes[0].camera.keys).toEqual([ids.get('C')]);
+
+  await live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  const sourceEditor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const recreatedSource = removed.source + 'B[Recreated system]\n';
+  await sourceEditor.getByRole('textbox', { name: 'Mermaid source' }).fill(recreatedSource);
+  await sourceEditor.getByRole('button', { name: 'Preview source' }).click();
+  await expect(sourceEditor.getByRole('region', { name: 'Proposed source edit' })).toContainText('3 existing bindings preserved · 1 new binding');
+  await sourceEditor.getByRole('button', { name: 'Apply source' }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const recreated = await downloadProject(page, live);
+  const sameSourceId = recreated.identity.elements.filter((item: { binding: { sourceId: string } }) => item.binding.sourceId === 'B');
+  expect(sameSourceId).toHaveLength(2);
+  expect(sameSourceId).toContainEqual(expect.objectContaining({ id: ids.get('B'), status: 'retired' }));
+  const current = sameSourceId.find((item: { status: string }) => item.status === 'resolved');
+  expect(current.id).not.toBe(ids.get('B'));
+  expect(recreated.source).toBe(recreatedSource);
+  expect(recreated.storyboard).toEqual(removed.storyboard);
+  expect(recreated.design).toEqual(removed.design);
+  expect(recreated.identity.orphans).toEqual(removed.identity.orphans);
+  expect(recreated.design.elements[current.id]).toBeUndefined();
+  await live.getByRole('button', { name: 'Review unresolved annotations' }).click();
+  const unresolved = page.getByRole('dialog', { name: 'Unresolved annotations' });
+  const oldNode = unresolved.getByRole('listitem').filter({ has: page.getByRole('checkbox', { name: 'node:B', exact: true }) });
+  await expect(oldNode).toContainText('Appearance settings · Scene references in Middle scene');
+  await unresolved.getByRole('button', { name: 'Close dialog' }).click();
+
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const beforeRecreation = await downloadProject(page, live);
+  expect(beforeRecreation).toEqual({ ...removed, revision: recreated.revision + 1, updatedAt: beforeRecreation.updatedAt });
+
   await live.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const restored = await downloadProject(page, live);
