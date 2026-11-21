@@ -48,6 +48,18 @@ function text(value: unknown, label: string, limit = 200): string {
   return value;
 }
 
+export function verifyOpenApiOperationFact(fact: OpenApiOperation) {
+  const path = text(fact.path, 'path', 400);
+  if (!path.startsWith('/') || !methods.includes(fact.method) || fact.pointer !== `/paths/${pointerToken(path)}/${fact.method}`) {
+    throw new Error('An OpenAPI operation has an unavailable source location.');
+  }
+  if (fact.key !== `${fact.method.toUpperCase()} ${path}`) text(fact.key, 'operation ID');
+  for (const tag of fact.tags) text(tag, 'tag');
+  if (fact.tags.length > 100 || new Set(fact.tags).size !== fact.tags.length) {
+    throw new Error('An OpenAPI operation has too many or repeated tags.');
+  }
+}
+
 function enforceInputBudget(root: unknown, limit: number, countKeys: boolean) {
   function verifyText(value: string) {
     if (surrogate.test(value) || [...value].length > maxText) {

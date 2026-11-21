@@ -5,6 +5,7 @@ import { unresolvedOpenApiReasons, type OpenApiSchemaFacts } from '../authoring/
 import schema from '../authoring/schemas/engineering-draft.schema.json';
 import { matchesBundledContract } from '../authoring/validate-mermaid-project';
 import { draftBytes, draftWeek, listGuidedCheckpoints, maxDraftBytes, sameCheckpoint, saveGuidedCheckpoint } from './guided-drafts';
+import { readOpenApiOperationCheckpoint, type OpenApiOperationCheckpoint } from './openapi-operation-drafts';
 
 const adapterVersion = '1.0.0';
 const componentPointer = /^\/components\/schemas\/([A-Za-z0-9_.-]{1,200})$/;
@@ -53,9 +54,14 @@ function buildRecord({ facts, selection, title, includeUnresolved }: ScopeState,
     id, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + draftWeek).toISOString(), payload };
 }
 
-export type OpenApiCheckpoint = ReturnType<typeof buildRecord>;
+type OpenApiSchemaCheckpoint = ReturnType<typeof buildRecord>;
+export type OpenApiCheckpoint = OpenApiSchemaCheckpoint | OpenApiOperationCheckpoint;
 
-export function restoreOpenApiScope({ payload }: OpenApiCheckpoint): ScopeState {
+export function isOpenApiOperationCheckpoint(checkpoint: OpenApiCheckpoint): checkpoint is OpenApiOperationCheckpoint {
+  return 'openApiOperations' in checkpoint.payload;
+}
+
+export function restoreOpenApiScope({ payload }: OpenApiSchemaCheckpoint): ScopeState {
   const files = new Set(payload.virtualPaths.map(validateVirtualPath));
   if (!files.size || files.size !== payload.virtualPaths.length) throw new Error('Saved schema facts need distinct virtual paths.');
   const view: OpenApiSchemaFacts = { schemas: [], references: [], unresolved: [], files: [...files], omitted: 0 };
@@ -97,9 +103,9 @@ export function restoreOpenApiScope({ payload }: OpenApiCheckpoint): ScopeState 
     title: payload.title, selection, includeUnresolved: payload.unresolvedPolicy === 'placeholders' };
 }
 
-function readCheckpoint(value: unknown) {
+function readSchemaCheckpoint(value: unknown) {
   try {
-    const record = value as OpenApiCheckpoint;
+    const record = value as OpenApiSchemaCheckpoint;
     if (record?.feature !== 'engineering-facts' || record.payload?.adapter !== 'openapi' || !matchesBundledContract(record.payload, schema)
       || draftBytes(record) > maxDraftBytes) return undefined;
     const expected = buildRecord(restoreOpenApiScope(record), record.id, Date.parse(record.createdAt));
@@ -110,10 +116,10 @@ function readCheckpoint(value: unknown) {
 }
 
 export function listOpenApiCheckpoints(db: IDBDatabase) {
-  return listGuidedCheckpoints(db, readCheckpoint);
+  return listGuidedCheckpoints<OpenApiCheckpoint>(db, value => readOpenApiOperationCheckpoint(value) ?? readSchemaCheckpoint(value));
 }
 
-export function saveOpenApiCheckpoint(db: IDBDatabase, state: ScopeState, previous?: OpenApiCheckpoint) {
+export function saveOpenApiCheckpoint(db: IDBDatabase, state: ScopeState, previous?: OpenApiSchemaCheckpoint) {
   const now = Date.now();
   const next = buildRecord(state, previous?.id ?? crypto.randomUUID(), now);
   return saveGuidedCheckpoint(db, next, previous, now);
