@@ -61,5 +61,6 @@ test('keeps a mobile source draft while moving through the four workspace panels
   await page.screenshot({ path: info.outputPath('v3-workspace-mobile.png') });
   await button('Build').press('Enter');
   await edit.click();
-  await expect(input).toHaveValue(draft);
+  await expect.poll(() => input.evaluate(element => element instanceof HTMLTextAreaElement
+    ? element.value : (element as HTMLElement).innerText)).toBe(draft);
 });
