@@ -8,6 +8,49 @@ async function download(page: Page, button: Locator) {
   return readFile(path, 'utf8');
 }
 
+test('discloses coincident scatter points across series and excludes clipped positions from the plot count', async ({ page, browser }, info) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Chart values' }).click();
+  const chart = page.getByRole('dialog', { name: 'Chart values' });
+  await chart.getByLabel('Chart data file').setInputFiles({
+    name: 'scattered.csv', mimeType: 'text/csv', buffer: Buffer.from('X,Y,Series\n1,2,Red\n1,2,Blue\n1,2,Blue\n2,3,Red\n9,9,Red\n9,9,Blue\n'),
+  });
+  await chart.getByRole('button', { name: 'Read data' }).click();
+  for (const field of ['X', 'Y']) await chart.getByRole('group', { name: field, exact: true }).getByLabel('Type').selectOption('number');
+  await chart.getByRole('button', { name: 'Confirm columns' }).click();
+  await chart.getByLabel('Title', { exact: true }).fill('Shared positions');
+  await chart.getByLabel('Chart type').selectOption('scatter');
+  await chart.getByLabel('Y field').selectOption({ label: 'Y' });
+  await chart.getByLabel('Series field').selectOption({ label: 'Series' });
+  await chart.getByLabel('Set a custom X range').check();
+  await chart.getByLabel('X minimum').fill('0');
+  await chart.getByLabel('X maximum').fill('3');
+  await chart.getByRole('button', { name: 'Review chart' }).click();
+  const summary = '3 points share 1 position in the plot.';
+  const preview = chart.getByRole('img', { name: 'Shared positions' });
+  await expect(preview).toHaveAccessibleDescription(/3 points share 1 position in the plot\./);
+  await expect(preview.locator('circle')).toHaveCount(6);
+  await expect(preview.getByText('2 outside range · 3 overlapping points')).toBeVisible();
+  const displayed = chart.getByRole('table', { name: 'Displayed values' });
+  await expect(displayed.getByRole('cell', { name: '3 overlapping points', exact: true })).toHaveCount(3);
+  await expect(displayed.getByRole('cell', { name: 'Outside range · 2 overlapping points', exact: true })).toHaveCount(2);
+  await page.screenshot({ path: info.outputPath('scatter-overlap-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: info.outputPath('scatter-overlap-mobile.png') });
+  await chart.getByRole('button', { name: 'Create chart project' }).click();
+  const html = await download(page, chart.getByRole('button', { name: 'Download accessible HTML' }));
+  const offline = await browser.newContext({ offline: true });
+  try {
+    const exportPage = await offline.newPage();
+    await exportPage.setContent(html);
+    await expect(exportPage.getByRole('paragraph').filter({ hasText: summary })).toBeVisible();
+    const table = exportPage.getByRole('table', { name: 'Displayed values' });
+    await expect(table.getByRole('cell', { name: '3 overlapping points', exact: true })).toHaveCount(3);
+    await expect(table.getByRole('cell', { name: 'Outside range · 2 overlapping points', exact: true })).toHaveCount(2);
+  } finally { await offline.close(); }
+});
+
 test('confirms typed file data, reviews an exact aggregate, saves, reopens, and exports accessible HTML', async ({ page }, info) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Build with guidance' }).click();

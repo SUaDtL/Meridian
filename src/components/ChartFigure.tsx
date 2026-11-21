@@ -54,6 +54,7 @@ export function describeChart(project: ChartProject, values: ChartProjection) {
     values.counts.excludedMissing ? `Rows excluded for missing values: ${values.counts.excludedMissing}.` : "",
     values.counts.outside ? `Observations outside the chart range: ${values.counts.outside}.` : "",
     values.counts.nullY ? `Rows with missing Y values: ${values.counts.nullY}.` : "",
+    values.counts.overlappingPoints ? `${countLabel(values.counts.overlappingPoints, "point")} share ${countLabel(values.counts.overlapPositions, "position")} in the plot.` : "",
     values.observations.some(point => point.y?.approximate || point.numericX?.approximate) ? "Some displayed values are rounded. The exact fractions are available in the displayed values table." : "",
   ];
   return { xText, yText, description: [...parts.filter(Boolean), spec.description].filter(Boolean).join(" ") };
@@ -83,6 +84,7 @@ export default function ChartFigure({ project, values, svgRef }: { project: Char
   const { xText, yText, description } = describeChart(project, values);
   const truncated = isBar && values.yDomain && (Number(values.yDomain[0]) > 0 || Number(values.yDomain[1]) < 0);
   const rangeNote = [truncated ? "Truncated Y axis" : "", values.counts.outside ? `${values.counts.outside} outside range` : ""].filter(Boolean).join(" · ");
+  const plotNote = [rangeNote, values.counts.overlappingPoints ? `${values.counts.overlappingPoints} overlapping points` : ""].filter(Boolean).join(" · ");
   const xNumber = (point: Observation) => point.numericX ? geometricNumber(point.numericX) : Date.parse(String(point.x));
   const yNumber = (point: Observation) => point.y ? geometricNumber(point.y) : 0;
   const endpoint = (value: string) => isTime ? Date.parse(value) : Number(value);
@@ -156,7 +158,7 @@ export default function ChartFigure({ project, values, svgRef }: { project: Char
           <text x={x + 12} y={y - 2} fontSize="10">{truncate(chartCategory(key), 12)}</text></g>;
       })}
     </>}
-    {rangeNote && <text x={padding} y={height - 13} fontSize="11" fill={theme.text}>{rangeNote}</text>}
+    {plotNote && <text x={padding} y={height - 13} fontSize="11" fill={theme.text}>{plotNote}</text>}
     {frame.showBrand && <text x={right} y={height - 13} textAnchor="end" fontSize="11" fill={theme.muted}>Meridian</text>}
   </svg>;
 }
