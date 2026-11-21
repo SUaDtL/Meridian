@@ -26,6 +26,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
   const [writableEdges, setWritableEdges] = useState(new Set<string>());
   const [edgeOperation, setEdgeOperation] = useState<AssistConnectionOperation>("setEdgeLabel");
   const [allowNodeRemoval, setAllowNodeRemoval] = useState(false);
+  const [allowNodeAddition, setAllowNodeAddition] = useState(false);
   const [allowConnectionAddition, setAllowConnectionAddition] = useState(false);
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(batchSize);
@@ -61,7 +62,9 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
     void run("Preparing request", async signal => {
       const edgeStyles = new Map(elements.flatMap(item => item.kind === "edge" && item.appearance?.lineStyle
         ? [[item.key, item.appearance.lineStyle] as const] : []));
-      const result = await buildAssistRequest(project, table, edgeLabels, edgeStyles, selected, instruction, writableEdges, edgeOperation, allowNodeRemoval, allowConnectionAddition);
+      const result = await buildAssistRequest(project, table, edgeLabels, edgeStyles, selected, instruction, writableEdges, edgeOperation, {
+        removeNode: allowNodeRemoval, addEdge: allowConnectionAddition, addNode: allowNodeAddition,
+      });
       signal.throwIfAborted();
       if (editor.snapshot() !== project) throw new Error("The project changed. Close this dialog and review the current diagram.");
       setRequest(result);
@@ -154,6 +157,10 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
           }} />
           Allow one new solid connection
         </label>
+        <label className="check-label">
+          <input type="checkbox" checked={allowNodeAddition} disabled={!!busy} onChange={event => setAllowNodeAddition(event.target.checked)} />
+          Allow one new standalone node
+        </label>
         <ul className="project-list">
           {visible.slice(0, limit).map(node => <li className="project-row" key={node.id}>
             <label>{node.label}
@@ -190,7 +197,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
           Allow removal of one writable node and all its writable incident connections
         </label>
         <div className="dialog-actions">
-          <button className="button primary" type="submit" disabled={!!busy || (!writable && !writableEdges.size) || !instruction.trim()}>Review what will be shared</button>
+          <button className="button primary" type="submit" disabled={!!busy || (!writable && !writableEdges.size && !allowNodeAddition) || !instruction.trim()}>Review what will be shared</button>
         </div>
       </form> : <form className="heading-form" onSubmit={event => { event.preventDefault(); reviewSuggestion(); }}>
         <label>Assistant proposal file<input type="file" accept=".json,application/json" disabled={!!busy}
@@ -201,10 +208,12 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
     {request && <section className="heading-form" aria-label="What will be shared">
       <h3>What will be shared</h3>
       <p>Instruction</p><blockquote>{request.request.instruction}</blockquote>
-      <p>{request.request.allowedOperations.includes("removeEdge") ? "A proposal may remove one connection marked for removal below."
-        : "A proposal may change one label on an element marked writable below."}</p>
-      {request.request.allowedOperations.includes("removeEdge") && request.request.allowedOperations.includes("setNodeLabel") &&
-        <p>It may also rename one writable node as its single change.</p>}
+      {request.request.allowedOperations.includes("removeEdge") &&
+        <p>A proposal may remove one connection marked for removal below.</p>}
+      {(request.request.allowedOperations.includes("setNodeLabel") || request.request.allowedOperations.includes("setEdgeLabel")) &&
+        <p>A proposal may change one label on an element marked writable below.</p>}
+      {request.request.allowedOperations.includes("addNode") &&
+        <p>A proposal may add one standalone node with a label and shape.</p>}
       {request.removableNodes.length > 0 && <>
         <p>As its single change, the proposal may remove one of these nodes and all its incident connections.</p>
         <ul aria-label="Nodes eligible for removal">{request.removableNodes.map(node => <li key={node.id}>{node.label}</li>)}</ul>
@@ -233,6 +242,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
       {candidate.op === "setNodeLabel" ? <p>Rename {labels.get(candidate.targetId)} to {candidate.label}.</p>
         : candidate.op === "removeEdge" ? <p>Remove {connectionName(candidate.targetId)}
           {edgeLabels.get(candidate.targetId) && ` · ${edgeLabels.get(candidate.targetId)}`}.</p>
+        : candidate.op === "addNode" ? <p>Add {candidate.label} as a standalone {candidate.shape === "rect" ? "rectangle" : candidate.shape} node.</p>
         : candidate.op === "addEdge" ? <p>Connect {labels.get(candidate.sourceId)}
           {candidate.direction === "both" ? " ↔ " : candidate.direction === "forward" ? " → " : " — "}
           {labels.get(candidate.targetId)}{candidate.label && ` · ${candidate.label}`} · solid</p>
@@ -252,6 +262,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
       </section>}
       <img src={candidate.url} alt={candidate.op === "setNodeLabel" ? "Diagram preview with proposed node label"
         : candidate.op === "removeEdge" ? "Diagram preview after proposed connection removal"
+        : candidate.op === "addNode" ? "Diagram preview with proposed new node"
         : candidate.op === "addEdge" ? "Diagram preview with proposed new connection"
         : candidate.op === "removeNode" ? "Diagram preview after proposed node removal" : "Diagram preview with proposed connection label"}
         onLoad={() => setPainted(true)}
@@ -261,6 +272,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
         <button className="button primary" disabled={!painted || !!busy} onClick={apply}>
           {candidate.op === "setNodeLabel" ? "Apply reviewed rename"
             : candidate.op === "removeEdge" ? "Apply reviewed connection removal"
+            : candidate.op === "addNode" ? "Apply reviewed new node"
             : candidate.op === "addEdge" ? "Apply reviewed new connection"
             : candidate.op === "removeNode" ? "Apply reviewed node removal" : "Apply reviewed connection label"}
         </button>
