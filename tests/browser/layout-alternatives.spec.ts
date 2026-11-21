@@ -76,3 +76,53 @@ test('compares measured layouts and undoes an exact direction patch with the cho
   expect(restored.source).toBe(source);
   expect(restored.settings).toEqual(original.settings);
 });
+
+test('shows the tradeoff when a real layout removes crossings and shrinks the smallest viewed label', async ({ page }) => {
+  const source = `flowchart LR
+ A[A much longer diagnostic dependency]
+ B[B]
+ C[C]
+ D[D]
+ E[E]
+ F[F]
+ G[G]
+ A e0@--> E
+ B e1@--> C
+ B e2@--> E
+ B e3@--> F
+ B e4@--> G
+ C e5@--> D
+ C e6@--> G
+ D e7@--> F
+ D e8@--> G
+`;
+  const project = { ...createDocument(), title: 'Layout readability tradeoff', source };
+  Object.assign(project.settings, { layout: 'dagre', spacing: 'compact', curve: 'linear' });
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({
+    version: 2, activeId: project.id, documents: [project],
+  })), { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Layout readability tradeoff' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Layout readability tradeoff' })).toBeVisible();
+  const before = await downloadProject(page, live);
+  await live.getByRole('button', { name: 'Compare layouts', exact: true }).click();
+  const review = page.getByRole('dialog', { name: 'Compare layouts' });
+  await review.getByRole('button', { name: 'Preview Balanced', exact: true }).click();
+  const routes = review.getByRole('region', { name: 'Connection crossings' });
+  await expect(routes).toContainText('Current · 2 crossing candidates in checked routes · 9 measured · 0 unknown');
+  await expect(routes).toContainText('Proposed · 0 crossing candidates in checked routes · 9 measured · 0 unknown');
+  const labels = review.getByRole('region', { name: 'Viewed label sizes' });
+  const current = await labels.getByText(/^Current · [\d.]+ CSS pixels for the smallest measured label · 7 measured · 0 unknown$/).textContent();
+  const proposed = await labels.getByText(/^Proposed · [\d.]+ CSS pixels for the smallest measured label · 7 measured · 0 unknown$/).textContent();
+  const currentSize = current?.match(/([\d.]+) CSS pixels/)?.[1];
+  const proposedSize = proposed?.match(/([\d.]+) CSS pixels/)?.[1];
+  expect(Number(proposedSize)).toBeLessThan(Number(currentSize));
+  await expect(routes).toContainText(`The proposed layout has fewer crossing candidates. Its smallest viewed label drops from ${currentSize} to ${proposedSize} CSS pixels.`);
+  await expect(routes.getByText(/best layout|no issues/i)).toHaveCount(0);
+  await review.getByRole('button', { name: 'Close dialog' }).click();
+  expect(await downloadProject(page, live)).toEqual(before);
+});
