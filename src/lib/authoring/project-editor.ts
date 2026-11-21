@@ -21,6 +21,7 @@ import { prepareFlowchartCandidate, type NativeFlowchartEdit } from './project-f
 import { renderMermaidProject, verifiedTopology } from './project-render';
 import { createHeadingProposalLane, type ReadyProposal } from './proposals';
 import type { ViewingProfile } from './readability';
+import { buildAnnotationRemap } from './remap-annotation';
 import type { ElementRemovalImpact } from './retire-elements';
 import { SourceDiagnosticError } from './source-diagnostics';
 import { resolveManualStoryScope } from './story-targets';
@@ -139,6 +140,28 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
     structure.set(proposal, { base, next });
     return proposal;
+  }
+
+  async function prepareOrphanRemap(orphanId: string, targetId: string, expected: MermaidProjectV3, signal?: AbortSignal) {
+    const base = current.document;
+    if (closed || base !== expected) throw new Error('This project changed. Review the current annotations again.');
+    const rendered = await renderMermaidProject(base, signal);
+    signal?.throwIfAborted();
+    const table = rendered.targetTable;
+    const target = table?.targets.find(item => item.id === targetId);
+    const element = rendered.result.elements?.find(item => item.key === targetId);
+    if (!table || !target || !element) throw new Error('Choose a measured element in the current diagram.');
+    const { next, orphan } = buildAnnotationRemap(base, orphanId, target, element.capabilities);
+    const preview = await renderMermaidProject(next, signal);
+    signal?.throwIfAborted();
+    if (closed || current.document !== base) throw new Error('This project changed. Review the current annotations again.');
+    if (!preview.targetTable || verifiedTopology(preview.targetTable) !== verifiedTopology(table)) {
+      throw new Error('The proposed annotation could not be verified against the current diagram.');
+    }
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    const document = freezeSnapshot(next);
+    structure.set(proposal, { base, next: document });
+    return { proposal, document, preview: preview.result, target, orphan };
   }
 
   function applyStructure(proposal: ReadyProposal) {
@@ -575,6 +598,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     applyHeading,
     prepareStructure,
     prepareOrphanCleanup,
+    prepareOrphanRemap,
     prepareSource,
     readStructurePreview,
     readStructureImpact,
