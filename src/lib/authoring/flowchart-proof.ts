@@ -104,7 +104,8 @@ function expectedEdit(graph: SemanticGraph, intent: Exclude<SourceIntent, { op: 
     }
     case 'moveToGroup':
       return { ...graph, groups: graph.groups.map(group => group.id === intent.groupId
-        ? { ...group, members: [...group.members, sourceId].sort() } : group) };
+        ? { ...group, members: [...group.members, sourceId].sort() }
+        : group.members.includes(sourceId) ? { ...group, members: group.members.filter(id => id !== sourceId) } : group) };
     case 'removeEdge': return { ...graph, edges: graph.edges.filter(edge => edge.id !== sourceId) };
     case 'removeEdges': {
       const removed = new Set(intent.sourceIds);
@@ -221,9 +222,8 @@ export async function proveFlowchartEdit(
   const plan = planSourceEdit(document.source, intent);
   const patched = applySourcePatches(document.source, plan.patches);
   const source = plan.afterGroupRemoval ? applySourcePatches(patched, plan.afterGroupRemoval) : patched;
-  const groupId = intent.op === 'removeGroupContents' ? intent.sourceId
-    : intent.op === 'moveToGroup' ? intent.groupId : undefined;
-  const canReadGroups = intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel' || intent.op === 'removeGroup';
+  const groupId = intent.op === 'removeGroupContents' ? intent.sourceId : undefined;
+  const canReadGroups = intent.op === 'setNodeLabel' || intent.op === 'setEdgeLabel' || intent.op === 'removeGroup' || intent.op === 'moveToGroup';
   const groupedSource = canReadGroups ? groupedFlowchartTopology(document.source) : undefined;
   const sourceTopology = groupedSource?.topology ?? flowchartSubsetTopology(plan.flatSource ?? document.source);
   const groupedEdit = !!groupedSource?.groups.size;

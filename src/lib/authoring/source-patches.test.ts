@@ -35,6 +35,16 @@ it('moves the exact standalone line and omits members and shared source lines', 
   expect(() => planMoveToGroup(source, 'C', 'Team')).toThrow('own source line');
 });
 
+it('moves a declaration between nested groups while preserving its comment and refusing an empty old group', () => {
+  const declaration = '      B[Worker] %% Move this authored note\r\n';
+  const source = '\uFEFFflowchart LR\r\n  subgraph Fleet [Fleet]\r\n    subgraph Rack [Rack]\r\n      A[Service]\r\n    end\r\n'
+    + '    subgraph Pool [Pool]\r\n' + declaration + '      C[Neighbor]\r\n    end\r\n  end\r\n  B current@--> A\r\n';
+  expect(supportedGroupMoves(source, 'Rack')).toEqual(['B', 'C']);
+  const move = planMoveToGroup(source, 'B', 'Rack');
+  expect(applySourcePatches(source, move.patches)).toBe(source.replace(declaration, '').replace('    end\r\n', declaration + '    end\r\n'));
+  expect(() => planMoveToGroup(source, 'A', 'Pool')).toThrow('keep at least one member');
+});
+
 it('requires the full group deletion footprint and leaves all unidentified connections untouched', () => {
   const source = 'flowchart LR\n subgraph Team [Team]\n A[First]\n B[Second]\n end\n C[Outside]\n A inside@--> B\n B crossing@--> C\n';
   expect(() => planGroupContentsRemoval(source, 'Team', ['A'], ['inside'])).toThrow('every current group member');
