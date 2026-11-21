@@ -1,3 +1,5 @@
+export type RenderPriority = 'foreground' | 'preview';
+
 export function renderAborted(): Error {
   const error = new Error('A newer diagram replaced this render.');
   error.name = 'AbortError';
@@ -17,15 +19,16 @@ interface Listener<T> {
 interface Request<Input, Output> {
   key: string;
   input: Input;
+  priority: RenderPriority;
   controller: AbortController;
   listeners: Set<Listener<Output>>;
 }
 
 /**
  * Mermaid owns a global configuration and cannot run two layouts concurrently.
- * Keep at most one running task and the newest waiting request. Aborting a
- * running Mermaid call stops its remaining work at the next async boundary;
- * the next task still waits for the call to settle before changing its config.
+ * Keep at most one running task and the newest eligible waiting request.
+ * Foreground work supersedes optional previews. An active layout still owns
+ * Mermaid until its next async boundary or completion.
  */
 export function latestRenderQueue<Input, Output>(execute: (input: Input, signal: AbortSignal) => Promise<Output>) {
   let active: Request<Input, Output> | undefined;
@@ -65,19 +68,31 @@ export function latestRenderQueue<Input, Output>(execute: (input: Input, signal:
     });
   };
 
-  const cancel = () => {
-    if (waiting) { reject(waiting); waiting = undefined; }
-    if (active) reject(active);
+  const cancel = (priority: RenderPriority = 'foreground') => {
+    if (waiting && (priority === 'foreground' || waiting.priority === 'preview')) {
+      reject(waiting);
+      waiting = undefined;
+    }
+    if (active && (priority === 'foreground' || active.priority === 'preview')) reject(active);
   };
 
-  const submit = (key: string, input: Input, signal?: AbortSignal): Promise<Output> => {
+  const submit = (key: string, input: Input, signal?: AbortSignal, priority: RenderPriority = 'foreground'): Promise<Output> => {
     if (signal?.aborted) return Promise.reject(renderAborted());
     let request = waiting?.key === key && !waiting.controller.signal.aborted ? waiting
       : active?.key === key && !active.controller.signal.aborted ? active : undefined;
-    if (!request) {
+    if (request) {
+      if (priority === 'foreground') {
+        request.priority = 'foreground';
+        if (request === active && waiting?.priority === 'preview') {
+          reject(waiting);
+          waiting = undefined;
+        }
+      }
+    } else {
+      if (priority === 'preview' && waiting?.priority === 'foreground') return Promise.reject(renderAborted());
       if (waiting) { reject(waiting); waiting = undefined; }
-      if (active) reject(active);
-      request = { key, input, controller: new AbortController(), listeners: new Set() };
+      if (active && (priority === 'foreground' || active.priority === 'preview')) reject(active);
+      request = { key, input, priority, controller: new AbortController(), listeners: new Set() };
       if (active) waiting = request;
     }
     const target = request;

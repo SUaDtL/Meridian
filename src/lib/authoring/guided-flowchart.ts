@@ -13,7 +13,7 @@ export async function prepareGuidedFlowchart(title: string, input: GuidedFlowcha
   const groups = input.groups ?? [];
   const generated = writeFlowchart(input);
   const candidate = { ...createDocument(), title, source: generated.source };
-  const rendered = await renderDiagram(candidate.source, candidate.settings, candidate.nodeAccents, candidate.design, { signal });
+  const rendered = await renderDiagram(candidate.source, candidate.settings, candidate.nodeAccents, candidate.design, { signal, priority: 'preview' });
   const model = flowchartModelFor(rendered);
   const expectedGroups = new Set(generated.groupIds.values());
   const endpoints = new Map([...generated.nodeIds, ...generated.groupIds]);

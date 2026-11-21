@@ -161,7 +161,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
       const proposal = await editor.prepareStructure(edit, controller.signal);
       const candidate = editor.readStructurePreview(proposal);
       if (!candidate) throw new Error("The project changed. Prepare the preview again.");
-      const rendered = await renderMermaidProject(candidate, controller.signal);
+      const rendered = await renderMermaidProject(candidate, controller.signal, "preview");
       controller.signal.throwIfAborted();
       if (!rendered.targetTable) throw new Error("The preview could not verify the diagram targets.");
       const svg = buildExportFrame(rendered.result, candidate).svg;

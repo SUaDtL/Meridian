@@ -2,6 +2,7 @@ import type { RenderResult } from '../../types';
 import type { DesignState, ElementKind, ElementStyle, RenderElement } from '../../types/design';
 import { flowEdgeDirection, type FlowModel } from '../design';
 import { flowchartModelFor, renderDiagram, renderFingerprint } from '../render';
+import type { RenderPriority } from '../render-queue';
 import { canonicalDigest, canonicalJson, projectBaseToken, type BaseToken } from './base-token';
 import { sourceBindingKey } from './identities';
 import { observeFlowchartIdentities, type ObservedIdentity } from './identity-observation';
@@ -41,7 +42,7 @@ function hasBounds(bounds: RenderElement['bounds']): bounds is RenderTarget['bou
 }
 
 /** Bind resolved UUIDs and presentation styles to the measured render of an accepted snapshot. */
-export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: AbortSignal): Promise<{
+export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: AbortSignal, priority: RenderPriority = 'foreground'): Promise<{
   result: RenderResult;
   targetTable: RenderTargetTable | null;
   flowDirection?: string;
@@ -72,7 +73,7 @@ export async function renderMermaidProject(snapshot: MermaidProjectV3, signal?: 
   }
 
   const result = await renderDiagram(snapshot.source, snapshot.settings, {}, overrides, {
-    signal,
+    signal, priority,
     projection: {
       key: projectionKey,
       async resolve(model) {
