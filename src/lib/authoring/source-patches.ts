@@ -155,6 +155,11 @@ export function flowchartSubsetTopology(source: string) {
   return subsetTopology(readSubset(source));
 }
 
+export function groupedFlowchartTopology(source: string) {
+  const subset = readSubset(source, true);
+  return { topology: subsetTopology(subset), groups: subset.groups };
+}
+
 export function supportsComponentInsertion(source: string) {
   try { readSubset(source, true); return true; }
   catch { return false; }
@@ -409,7 +414,7 @@ export function planMoveToGroup(source: string, sourceId: string, groupId: strin
 
 /** Plan an exact label replacement for the explicit-declaration spike. The caller still needs the Mermaid oracle. */
 export function planNodeLabel(source: string, nodeId: string, label: string): SourcePatch[] {
-  const span = readSubset(source).nodes.get(nodeId);
+  const span = readSubset(source, true).nodes.get(nodeId);
   if (!span) throw unsupported();
   const replacement = encodeMermaidLabel(label);
   const literal = span.text.startsWith('"') ? span.text.slice(1, -1) : span.text;
@@ -419,7 +424,7 @@ export function planNodeLabel(source: string, nodeId: string, label: string): So
 
 /** Replace only the label token associated with the exact explicit edge ID. */
 export function planEdgeLabel(source: string, edgeId: string, label: string): SourcePatch[] {
-  const item = edgeId && readSubset(source).edges.find(edge => edge.id === edgeId);
+  const item = edgeId && readSubset(source, true).edges.find(edge => edge.id === edgeId);
   if (!item) throw new Error('Choose a connection with an explicit source ID.');
   const encoded = label ? `|${encodeMermaidLabel(label)}|` : '';
   return item.label.text === encoded ? [] : [replace(item.label, encoded)];
