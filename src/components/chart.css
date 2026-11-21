@@ -13,6 +13,27 @@
   gap: 1rem;
 }
 
+.chart-mapping-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 1rem;
+  align-items: start;
+}
+.chart-mapping-workspace [hidden] { display: none; }
+.chart-mapping-form { min-width: 0; }
+.chart-mapping-controls { display: grid; gap: .65rem; min-width: 0; border: 0; margin: 0; padding: 0; }
+.chart-mapping-preview { position: sticky; top: 0; min-width: 0; border: 1px solid var(--border); border-radius: .7rem; padding: .8rem; }
+.chart-mapping-preview h4 { margin: 0 0 .65rem; }
+.chart-mapping-preview p { margin: .65rem 0; overflow-wrap: anywhere; }
+.chart-mapping-tabs { display: flex; gap: .4rem; }
+.chart-mapping-tabs button { min-height: 44px; }
+.chart-mapping-tabs [aria-selected="true"] { text-decoration: underline; text-underline-offset: .3em; }
+
+@media (max-width: 800px) {
+  .chart-mapping-workspace { grid-template-columns: minmax(0, 1fr); }
+  .chart-mapping-preview { position: static; }
+}
+
 .chart-columns fieldset {
   display: grid;
   align-content: start;

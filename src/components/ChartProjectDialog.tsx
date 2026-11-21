@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from "react";
 import Modal from "./Modal";
 import ChartFigure, { describeChart } from "./ChartFigure";
 import ChartDataTable, { chartHtml } from "./ChartDataTable";
@@ -24,10 +24,12 @@ type ChartEditor = Awaited<ReturnType<typeof openChartProjectEditor>>;
 type Stage = "choose" | "columns" | "mapping" | "review" | "workspace";
 type Pending = { label: string; run: (signal: AbortSignal, extended: boolean) => Promise<void> };
 type Mark = ChartSpec["mark"];
+type MappingView = "mapping" | "preview";
 const fieldTypes: FieldType[] = ["string", "number", "date", "datetime", "boolean"];
 const defaultLocale: NumberLocale = { decimal: "period", grouping: "none" };
 const byteCount = new Intl.NumberFormat();
 const defaultFrame: ChartProject["frame"] = { theme: "porcelain", frame: "auto", padding: 32, showTitle: true, showBrand: true };
+const compactMappingQuery = "(max-width: 800px)";
 const category = (field: ChartField) => field.type === "string" || field.type === "date" || field.type === "boolean";
 const xFields = (dataset: ChartDataset, mark: Mark) => dataset.fields.filter(field =>
   mark === "bar" ? category(field) : field.type === "number" || (mark === "line" && (field.type === "date" || field.type === "datetime")));
@@ -83,6 +85,13 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
   const [editProposal, setEditProposal] = useState<ReadyProposal>();
   const [saveState, setSaveState] = useState<ProjectSaveState>();
   const [acceptTruncatedAxis, setAcceptTruncatedAxis] = useState(false);
+  const [compactMapping, setCompactMapping] = useState(() => window.matchMedia(compactMappingQuery).matches);
+  const [mappingView, setMappingView] = useState<MappingView>("mapping");
+  const mappingId = useId();
+  const mappingDraft = useMemo(() => ({ dataset, spec, frame, title, subtitle, acceptTruncatedAxis }),
+    [dataset, spec, frame, title, subtitle, acceptTruncatedAxis]);
+  const [mappingPreview, setMappingPreview] = useState<{ draft: typeof mappingDraft; value: Accepted }>();
+  const currentPreview = mappingPreview?.draft === mappingDraft ? mappingPreview.value : undefined;
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -94,6 +103,13 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
   const svg = useRef<SVGSVGElement>(null);
   const stepFocus = useRef(false);
 
+  useEffect(() => {
+    const media = window.matchMedia(compactMappingQuery);
+    const update = () => setCompactMapping(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   useEffect(() => () => {
     active.current?.abort();
     chartSession.current?.editor.dispose();
@@ -176,11 +192,13 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       setSpec(mapping(typed.dataset, "bar"));
       setCheckpoint(undefined);
       setRaw(undefined);
+      setMappingPreview(undefined);
+      setMappingView("mapping");
       setStage("mapping");
     } });
   }
 
-  function review() {
+  function review(inMapping = false) {
     if (!dataset || !spec) return;
     void perform({ label: "Checking the chart preview", async run(signal) {
       let yDomain: string[] | null = null;
@@ -200,15 +218,20 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       }
       const edit = { title: title.trim() || "Untitled chart", subtitle, chartSpec: { ...spec, xDomain, yDomain }, frame };
       const session = chartSession.current;
+      let value: Accepted;
       if (session && editingBase.current) {
         const prepared = await session.editor.prepare(edit, editingBase.current);
         signal.throwIfAborted();
-        setEditProposal(prepared.proposal);
-        setCandidate(prepared.next);
+        if (!inMapping) setEditProposal(prepared.proposal);
+        value = prepared.next;
       } else {
-        setCandidate(validateChartProject({ schema: "meridian-chart/v1", documentKind: "chart",
-          id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString(), dataset, ...edit }));
+        value = validateChartProject({ schema: "meridian-chart/v1", documentKind: "chart",
+          id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString(), dataset, ...edit });
       }
+      if (inMapping) { setMappingPreview({ draft: mappingDraft, value }); return; }
+      setMappingPreview(undefined);
+      setMappingView("mapping");
+      setCandidate(value);
       setStage("review");
     } });
   }
@@ -333,6 +356,8 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     setSubtitle(current.subtitle);
     setFrame(current.frame);
     setAcceptTruncatedAxis(current.chartSpec.yDomain !== null);
+    setMappingPreview(undefined);
+    setMappingView("mapping");
     setStage("mapping");
   }
 
@@ -415,6 +440,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
   }
 
   const editing = !!editingBase.current;
+  const canPreview = !!spec?.xField && (!!spec.yField || spec.aggregation === "countRows");
   const blocked = ["Saving the chart", "Saving the chart draft", "Discarding the chart draft", "Checking the chart project", "Applying chart changes", "Saving before closing"].includes(busy);
   const heading = { choose: "Choose data", columns: "Confirm columns", mapping: "Map chart", review: "Review chart", workspace: candidate?.project.title ?? "Chart" }[stage];
   const changeColumn = (index: number, change: Partial<ColumnConfirmation>) => setColumns(previous =>
@@ -498,7 +524,25 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
         <button className="button primary" disabled={!!busy || excludedColumns.size === columns.length}>Confirm columns</button>
       </div>
     </form>}
-    {stage === "mapping" && dataset && spec && <form className="heading-form" onSubmit={event => { event.preventDefault(); review(); }}>
+    {stage === "mapping" && dataset && spec && <div className="chart-mapping-workspace">
+      {compactMapping && <div className="chart-mapping-tabs" role="tablist" aria-label="Chart mapping views" onKeyDown={event => {
+        const view = event.key === "Home" ? "mapping" : event.key === "End" ? "preview"
+          : ["ArrowLeft", "ArrowRight"].includes(event.key) ? (mappingView === "mapping" ? "preview" : "mapping") : null;
+        if (!view || busy) return;
+        event.preventDefault();
+        setMappingView(view);
+        event.currentTarget.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)?.focus();
+      }}>
+        {(["mapping", "preview"] as const).map(view => <button key={view} type="button" className="button quiet"
+          id={`${mappingId}-tab-${view}`} data-view={view} role="tab" aria-selected={mappingView === view}
+          tabIndex={mappingView === view ? 0 : -1} aria-controls={`${mappingId}-panel-${view}`} disabled={!!busy}
+          onClick={() => setMappingView(view)}>{view === "mapping" ? "Mapping" : "Preview"}</button>)}
+      </div>}
+      <div className="chart-mapping-form" id={`${mappingId}-panel-mapping`}
+        role={compactMapping ? "tabpanel" : undefined} aria-labelledby={compactMapping ? `${mappingId}-tab-mapping` : undefined}
+        hidden={compactMapping && mappingView !== "mapping"}>
+      <form className="heading-form" onSubmit={event => { event.preventDefault(); review(); }}>
+      <fieldset className="chart-mapping-controls" disabled={!!busy}>
       <ConversionSummary dataset={dataset} counts={conversions} />
       {!conversions && !editing && columns.some(column => column.invalidToNull) && <p>
         The restored draft uses the reviewed missing-value rules. Original conversion counts are available during file import.
@@ -584,9 +628,27 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
           <button className="button quiet" type="button" disabled={!!busy} onClick={() => { setStage("choose"); resetNotice(); }}>Choose different data</button>
           <button className="button secondary" type="button" disabled={!!busy} onClick={saveDraft}>Save data draft</button>
         </>}
-        <button className="button primary" disabled={!!busy || !spec.xField || (!spec.yField && spec.aggregation !== "countRows")}>Review chart</button>
+        <button className="button primary" disabled={!canPreview}>Review chart</button>
       </div>
-    </form>}
+      </fieldset>
+      </form>
+      </div>
+      <section className="chart-mapping-preview" id={`${mappingId}-panel-preview`}
+        role={compactMapping ? "tabpanel" : undefined} aria-labelledby={compactMapping ? `${mappingId}-tab-preview` : undefined}
+        hidden={compactMapping && mappingView !== "preview"} aria-label={compactMapping ? undefined : "Chart preview"}
+        aria-busy={busy === "Checking the chart preview"}>
+        <h4>Chart preview</h4>
+        {currentPreview ? <><ChartFigure project={currentPreview.project} values={currentPreview.projection} />
+          <p>{describeChart(currentPreview.project, currentPreview.projection).description}</p></>
+          : <p className="muted-note">{mappingPreview ? "The mapping changed. Update the preview to see the current chart." : "Check the current mapping to draw a preview."}</p>}
+        <div className="dialog-actions">
+          <button type="button" className="button secondary" disabled={!!busy || !canPreview}
+            onClick={() => review(true)}>Update preview</button>
+          {compactMapping && currentPreview && <button type="button" className="button primary" disabled={!!busy}
+            onClick={() => review()}>Review chart</button>}
+        </div>
+      </section>
+    </div>}
     {(stage === "review" || stage === "workspace") && candidate && <>
       <ConversionSummary dataset={candidate.project.dataset} counts={conversions} />
       {datasetBytes !== undefined && <section aria-label="Chart storage">

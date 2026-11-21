@@ -141,6 +141,66 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
   await expect(page.getByRole('paragraph').filter({ hasText: /Bar chart of Requests/ })).toBeVisible();
 });
 
+test.describe(() => {
+  test.use({ hasTouch: true });
+
+  test('previews the current mapping beside desktop fields and in a keyboard-operable mobile tab', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Build with guidance' }).click();
+    await page.getByRole('button', { name: 'Chart values' }).click();
+    const chart = page.getByRole('dialog', { name: 'Chart values' });
+    await chart.getByLabel('Chart data file').setInputFiles({
+      name: 'requests.csv', mimeType: 'text/csv', buffer: Buffer.from('Team,Requests\nNorth,0.1\nNorth,0.2\nNorth,\nSouth,0.5\n'),
+    });
+    await chart.getByRole('button', { name: 'Read data' }).click();
+    const requests = chart.getByRole('group', { name: 'Requests', exact: true });
+    await requests.getByLabel('Type').selectOption('number');
+    await requests.getByLabel('Unit').fill('requests');
+    await requests.getByLabel('Treat empty fields as missing').check();
+    await chart.getByRole('button', { name: 'Confirm columns' }).click();
+    const title = chart.getByLabel('Title', { exact: true });
+    await title.fill('Requests by team');
+    await chart.getByLabel('Aggregation').selectOption('sum');
+    const preview = chart.getByRole('region', { name: 'Chart preview' });
+    await preview.getByRole('button', { name: 'Update preview' }).click();
+    const original = preview.getByRole('img', { name: 'Requests by team' });
+    await expect(original).toHaveAccessibleDescription(/Requests \(requests\) by Team.*Aggregation is sum/);
+    const [formPosition, previewPosition] = await Promise.all([title.boundingBox(), preview.boundingBox()]);
+    expect(previewPosition!.x).toBeGreaterThan(formPosition!.x + formPosition!.width);
+    await expect(chart.getByRole('button', { name: 'Create chart project' })).toHaveCount(0);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const tabs = chart.getByRole('tablist', { name: 'Chart mapping views' });
+    const mappingTab = tabs.getByRole('tab', { name: 'Mapping' });
+    const previewTab = tabs.getByRole('tab', { name: 'Preview' });
+    await expect(mappingTab).toHaveAttribute('aria-selected', 'true');
+    await mappingTab.press('ArrowRight');
+    await expect(previewTab).toBeFocused();
+    const mobilePreview = chart.getByRole('tabpanel', { name: 'Preview' });
+    await expect(mobilePreview.getByRole('img', { name: 'Requests by team' })).toBeVisible();
+    await expect(title).not.toBeVisible();
+    await previewTab.press('Home');
+    await title.fill('Reviewed requests');
+    await chart.getByLabel('Set a custom Y range').check();
+    await chart.getByLabel('Y minimum').fill('0');
+    await chart.getByLabel('Y maximum').fill('0.4');
+    await previewTab.tap();
+    await expect(mobilePreview).toContainText('The mapping changed.');
+    await expect(mobilePreview.getByRole('img')).toHaveCount(0);
+    await mobilePreview.getByRole('button', { name: 'Update preview' }).tap();
+    await expect(mobilePreview.getByRole('img', { name: 'Reviewed requests' })).toBeVisible();
+    await mappingTab.tap();
+    await expect(chart.getByLabel('Y maximum')).toHaveValue('0.4');
+    await previewTab.tap();
+    await mobilePreview.getByRole('button', { name: 'Review chart' }).tap();
+    const values = chart.getByRole('table', { name: 'Displayed values' });
+    await expect(values.getByRole('row', { name: 'North 0.3 3 2 Included' })).toBeVisible();
+    await expect(values.getByRole('row', { name: 'South 0.5 1 1 Outside range' })).toBeVisible();
+    await chart.getByRole('button', { name: 'Create chart project' }).tap();
+    await expect(chart.getByText('Chart saved in this browser.')).toBeVisible();
+  });
+});
+
 test('reviews a clipped chart range, applies a frame change, and restores exact mapping with Undo', async ({ page }) => {
   const fixture = await readFile(new URL('../../src/lib/authoring/fixtures/example-chart.json', import.meta.url));
   await page.goto('/');
