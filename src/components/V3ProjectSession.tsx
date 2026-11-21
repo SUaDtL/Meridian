@@ -10,6 +10,7 @@ import V3GroupStoryDialog, { initialGroupStoryDraft } from "./V3GroupStoryDialog
 import V3StructureEditor from "./V3StructureEditor";
 import V3SourceEditor, { type SourceDraft } from "./V3SourceEditor";
 import DetachComponentDialog from "./DetachComponentDialog";
+import { designResetFields } from "../lib/authoring/design-reset";
 import type { MermaidProjectV3, SemanticRole } from "../lib/authoring/mermaid-project";
 import { openStoredProjectEditor } from "../lib/authoring/project-editor";
 import { renderMermaidProject } from "../lib/authoring/project-render";
@@ -29,6 +30,7 @@ const SaveComponentDialog = lazy(() => import("./SaveComponentDialog"));
 const ComponentProjectDialog = lazy(() => import("./ComponentProjectDialog"));
 const AssistExchangeDialog = lazy(() => import("./AssistExchangeDialog"));
 const SavedScenesDialog = lazy(() => import("./V3SavedScenesDialog"));
+const DesignResetDialog = lazy(() => import("./DesignResetDialog"));
 
 type Editor = Awaited<ReturnType<typeof openStoredProjectEditor>>;
 type Frame = { document: MermaidProjectV3; rendered: Awaited<ReturnType<typeof renderMermaidProject>>; geometry: FrameGeometry; url: string };
@@ -55,6 +57,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [componentHidden, setComponentHidden] = useState<number>();
   const [bulkTextHidden, setBulkTextHidden] = useState<number>();
+  const [designReset, setDesignReset] = useState<{ selection: ReadonlySet<string>; hidden: number }>();
   const [deleteConnections, setDeleteConnections] = useState<{ ids: string[]; hidden: number }>();
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
@@ -191,6 +194,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const outlineAvailable = !!targetTable?.targets.length;
   const outline = useMemo(() => outlineOpen && project && targetTable ? projectOutline(project, targetTable) : undefined,
     [outlineOpen, project, targetTable]);
+  const resetFields = outline && project ? designResetFields(project, outlineSelection) : undefined;
+  const canResetDesign = !busy && (resetFields?.hasRecipes || !!resetFields?.fields.length);
   const highlighted = highlight?.source === source ? highlight : undefined;
   const readabilityTargets = useMemo(() => {
     if (!readabilityOpen || !currentFrame || !targetTable) return undefined;
@@ -434,6 +439,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           setOutlineOpen(false);
           setComparison("design");
         } : undefined} onSaveComponent={flatFlowchart ? setComponentHidden : undefined}
+        onResetDesign={canResetDesign ? hidden => setDesignReset({ selection: new Set(outlineSelection), hidden }) : undefined}
         onDeleteConnections={flatFlowchart && !editingUnavailable ? hidden => {
           setDeleteConnections({ ids: [...outlineSelection], hidden });
           setEditFlowchart("removeEdges");
@@ -453,6 +459,18 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           }
           return status;
         }} />}
+      {designReset && targetTable && editor.current && <Suspense>
+        <DesignResetDialog editor={editor.current} token={targetTable.baseToken} selection={designReset.selection} hidden={designReset.hidden}
+          onClose={() => setDesignReset(undefined)} onApply={proposal => {
+            const current = editor.current!;
+            const status = current.applyDesignReset(proposal);
+            if (status === "applied") {
+              setOutlineOpen(false);
+              setProject(current.snapshot());
+            }
+            return status;
+          }} />
+      </Suspense>}
       {readabilityTargets && currentFrame && targetTable && editor.current && <ReadabilityDialog frame={currentFrame.geometry} targets={readabilityTargets}
         token={targetTable.baseToken} editor={editor.current} canvas={canvasProfile}
         dismissed={dismissedReadability} onDismissed={setDismissedReadability}

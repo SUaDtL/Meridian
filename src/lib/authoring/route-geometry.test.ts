@@ -32,6 +32,6 @@ test('counts proper crossings and leaves route joins and unsupported paths out o
 
 test('bounds the complete sweep and reports exactly how many pairs were skipped', () => {
   const result = analyzeCrossings(Array.from({ length: 500 }, (_, index) => edge(String(index), [0, index], [100, index])));
-  expect(result.evidence).toEqual({ checked: 100_000, skipped: 24_750, findingsOmitted: false });
+  expect(result.evidence).toEqual({ checked: 100_000, skipped: 24_750, count: 0, findingsOmitted: false });
   expect(result.findings).toEqual([]);
 });

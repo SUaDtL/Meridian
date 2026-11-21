@@ -10,6 +10,7 @@ import type { ComponentDefinition } from './component-definition';
 import type { PortAssignment } from './component-insertion';
 import { buildContrastCandidate, measureTargetContrast } from './contrast-fix';
 import { buildDesignRecipeCandidate, buildScopedDesignRecipe, readDesignRecipe, verifyScopedDesign, type DesignRecipeId, type DesignScope } from './design-recipes';
+import { buildDesignReset, measuredResetValues, type DesignReset } from './design-reset';
 import { suggestGroupScenes, type GroupStoryOptions } from './group-story';
 import { buildLayoutCandidate, readLayoutAlternative, type LayoutIntent } from './layout-alternatives';
 import { prepareManualSource } from './manual-source';
@@ -85,6 +86,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     base: MermaidProjectV3; next: MermaidProjectV3; color: string; label: string; beforeRatio: number; afterRatio: number; threshold: number; svg: string;
   }>();
   const bulkText = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
+  const designResets = new WeakMap<ReadyProposal, { base: MermaidProjectV3; next: MermaidProjectV3 }>();
   let closed = false;
   let savingSuggestion = false;
 
@@ -254,6 +256,34 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     if (closed || !change) return 'invalid';
     if (change.base !== current.document || change.dependency !== canonicalJson(readDesignRecipe(change.candidate.recipe.id))) return 'stale';
     return commit(change.candidate.document);
+  }
+
+  async function prepareDesignReset(selected: ReadonlySet<string>, reset: DesignReset, expected: BaseToken, signal?: AbortSignal) {
+    if (closed || !selected.size || selected.size > 1_500) throw new Error('Select up to 1,500 verified diagram elements.');
+    const base = current.document;
+    const selection = new Set(selected);
+    const intent = { ...reset };
+    const accepted = await renderMermaidProject(base, signal);
+    if (!accepted.targetTable || !sameBaseToken(expected, accepted.targetTable.baseToken) || closed || current.document !== base) {
+      throw new Error('The diagram changed. Review the current selection.');
+    }
+    const candidate = buildDesignReset(base, accepted, selection, intent);
+    const next = freezeSnapshot(candidate.document);
+    const rendered = await renderMermaidProject(next, signal);
+    signal?.throwIfAborted();
+    if (!rendered.targetTable || verifiedTopology(accepted.targetTable) !== verifiedTopology(rendered.targetTable)) {
+      throw new Error('The reset could not be verified against the diagram topology and labels.');
+    }
+    if (closed || current.document !== base) throw new Error('The diagram changed. Review the current selection.');
+    const proposal: ReadyProposal = Object.freeze({ id: crypto.randomUUID(), state: 'ready' });
+    designResets.set(proposal, { base, next });
+    return { proposal, next, rendered, changes: measuredResetValues(candidate.changes, rendered) };
+  }
+
+  function applyDesignReset(proposal: ReadyProposal) {
+    const change = designResets.get(proposal);
+    if (closed || !change) return 'invalid';
+    return change.base === current.document ? commit(change.next) : 'stale';
   }
 
   async function prepareBulkText(selected: ReadonlySet<string>, color: string, expected: BaseToken, signal?: AbortSignal) {
@@ -509,6 +539,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     prepareDesign,
     readDesignPreview,
     applyDesign,
+    prepareDesignReset,
+    applyDesignReset,
     prepareLayout,
     prepareContrast,
     prepareBulkText,

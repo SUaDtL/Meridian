@@ -40,30 +40,46 @@ export async function prepareOpenApiProject(title: string, facts: OpenApiFacts, 
   return renderFacts(title, 'openapi-operations', { direction: 'LR', nodes, edges }, nodeOrigins, edgeOrigins, signal);
 }
 
-export function openApiSchemaScope(facts: OpenApiFacts, selection: ReadonlyMap<string, OpenApiSchemaChoice>) {
+export function openApiSchemaScope(facts: OpenApiFacts, selection: ReadonlyMap<string, OpenApiSchemaChoice>, includeUnresolved: boolean) {
   if (!facts.schemaView) throw new Error('Read OpenAPI schema facts before choosing a schema scope.');
-  return {
-    schemas: facts.schemaView.schemas.filter(schema => selection.has(schema.key)),
-    references: facts.schemaView.references.filter(reference => selection.has(reference.from) && selection.has(reference.to)),
-  };
+  const schemas = facts.schemaView.schemas.filter(schema => selection.has(schema.key));
+  const references = facts.schemaView.references.filter(reference => selection.has(reference.from) && selection.has(reference.to));
+  const unresolved = facts.schemaView.unresolved.filter(reference => selection.has(reference.from));
+  const placeholderCount = includeUnresolved ? unresolved.length : 0;
+  return { schemas, references, unresolved, placeholderCount, nodeCount: schemas.length + placeholderCount, edgeCount: references.length + placeholderCount };
 }
 
-export async function prepareOpenApiSchemaProject(title: string, facts: OpenApiFacts, choices: ReadonlyMap<string, OpenApiSchemaChoice>, signal: AbortSignal) {
-  const { schemas, references } = openApiSchemaScope(facts, choices);
+export async function prepareOpenApiSchemaProject(title: string, facts: OpenApiFacts, choices: ReadonlyMap<string, OpenApiSchemaChoice>,
+  includeUnresolved: boolean, signal: AbortSignal) {
+  const { schemas, references, unresolved, nodeCount, edgeCount } = openApiSchemaScope(facts, choices, includeUnresolved);
   if (!schemas.length || schemas.length !== choices.size) throw new Error('Select one or more available schemas.');
-  const nodes = schemas.map(schema => ({ key: schema.key, label: choices.get(schema.key)!.label }));
-  const edges = references.map(reference => ({ from: reference.from, to: reference.to, label: 'Declared schema reference' }));
-  const nodeOrigins = new Map(schemas.map(({ key, virtualPath, pointer }) => [key, { virtualPath, pointer, relationship: 'Declared OpenAPI schema' }]));
-  const edgeOrigins = references.map(({ virtualPath, pointer }) => ({ virtualPath, pointer, relationship: 'Declared OpenAPI schema reference' }));
+  requireScopeLimits(nodeCount, edgeCount);
+  const nodes: Graph['nodes'][number][] = schemas.map(schema => ({ key: schema.key, label: choices.get(schema.key)!.label }));
+  const edges: Graph['edges'][number][] = references.map(reference => ({ from: reference.from, to: reference.to, label: 'Declared schema reference' }));
+  const nodeOrigins = new Map<string, Origin>(schemas.map(({ key, virtualPath, pointer }) =>
+    [key, { virtualPath, pointer, relationship: 'Declared OpenAPI schema' }]));
+  const edgeOrigins: Origin[] = references.map(({ virtualPath, pointer }) => ({ virtualPath, pointer, relationship: 'Declared OpenAPI schema reference' }));
+  if (includeUnresolved) for (const [index, item] of unresolved.entries()) {
+    const key = `unresolved-${index + 1}`;
+    const origin = { virtualPath: item.virtualPath, pointer: item.pointer, relationship: `Unresolved OpenAPI reference · ${item.reason}` };
+    nodes.push({ key, label: 'Unresolved schema reference' });
+    edges.push({ from: item.from, to: key, label: 'Unresolved' });
+    nodeOrigins.set(key, origin);
+    edgeOrigins.push(origin);
+  }
   return renderFacts(title, 'openapi-schemas', { direction: 'LR', nodes, edges }, nodeOrigins, edgeOrigins, signal);
+}
+
+function requireScopeLimits(nodes: number, edges: number) {
+  if (nodes > openApiNodeLimit || edges > 200) {
+    throw new Error(`This selection would create ${nodes} nodes and ${edges} connections. Review a scope of up to 100 nodes and 200 connections.`);
+  }
 }
 
 async function renderFacts(title: string, adapter: string, graph: Graph,
   nodeOrigins: ReadonlyMap<string, Origin>, edgeOrigins: readonly Origin[], signal: AbortSignal) {
   const { nodes, edges } = graph;
-  if (nodes.length > openApiNodeLimit || edges.length > 200) {
-    throw new Error(`This selection would create ${nodes.length} nodes and ${edges.length} connections. Review a scope of up to 100 nodes and 200 connections.`);
-  }
+  requireScopeLimits(nodes.length, edges.length);
   const prepared = await prepareGuidedFlowchart(title, graph, signal);
   signal.throwIfAborted();
   const provenance: MermaidProjectV3['provenance'] = [];

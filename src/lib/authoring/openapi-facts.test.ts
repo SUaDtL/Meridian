@@ -105,7 +105,10 @@ it('extracts direct schema references, preserves cycles, and omits unsupported r
       { from: key('Account'), to: key('Customer'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Account/properties/customer~1id/$ref' },
       { from: key('Customer'), to: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Customer/allOf/0/$ref' },
     ],
-    unresolved: 2, omitted: 1,
+    unresolved: [
+      { from: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Account/properties/missing/$ref', reason: 'Unsupported reference form' },
+      { from: key('Account'), virtualPath: 'api/spec.json', pointer: '/components/schemas/Account/properties/dynamic/$dynamicRef', reason: 'Unsupported dynamic or recursive reference' },
+    ], omitted: 1,
   });
   expect(JSON.stringify(schemaView)).not.toMatch(/example.invalid|private|examples/);
 });
@@ -132,8 +135,10 @@ it('resolves distinct supplied virtual paths without fetching or collapsing thei
     [first.virtualPath, facts.schemas[0].key, facts.schemas[1].key],
     [second.virtualPath, facts.schemas[1].key, facts.schemas[0].key],
   ]);
-  expect(facts.unresolved).toBe(3);
-  expect(JSON.stringify(facts)).not.toMatch(/private=|unavailable|meridian-import\.invalid/);
+  expect(facts.unresolved.map(item => item.reason)).toEqual([
+    'Target component unavailable in supplied files', 'Unsupported reference form', 'Unsupported reference form',
+  ]);
+  expect(JSON.stringify(facts)).not.toMatch(/private=|unavailable\.json|meridian-import\.invalid/);
   expect(() => readOpenApiSchemaFiles([first, { ...second, virtualPath: first.virtualPath }], readRestrictedOpenApiYaml)).toThrow(/distinct virtual path/);
 });
 
