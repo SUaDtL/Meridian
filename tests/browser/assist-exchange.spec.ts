@@ -38,9 +38,9 @@ async function openExchange(page: Page, live: Locator) {
   return dialog;
 }
 
-async function review(dialog: Locator, value: object) {
+async function review(dialog: Locator, value: object | string) {
   await dialog.getByLabel('Assistant proposal file').setInputFiles({
-    name: 'return.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)),
+    name: 'return.json', mimeType: 'application/json', buffer: Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)),
   });
   await dialog.getByRole('button', { name: 'Preview unverified suggestion' }).click();
 }
@@ -94,13 +94,35 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
     requestId: request.requestId, requestHash, baseToken: request.baseToken,
     operations: [{ op: 'setNodeLabel', targetId: writable.id, label: 'Reviewed label' }],
   };
+  await page.evaluate(() => {
+    const html = document.documentElement;
+    let jobs = 0;
+    html.dataset.proposalRenderJobs = '0';
+    new MutationObserver(records => {
+      for (const record of records) for (const node of record.addedNodes) {
+        if (node instanceof Element && node.hasAttribute('data-meridian-render')) jobs++;
+      }
+      html.dataset.proposalRenderJobs = String(jobs);
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  const renderJobs = page.locator('html');
+  await review(dialog, JSON.stringify(proposal).replace('"targetId":', `"targetId":"${writable.id}","targetId":`));
+  await expect(dialog.getByRole('alert')).toContainText('repeated object key');
+  await review(dialog, { ...proposal, state: 'ready', impact: 'pre-approved' });
+  await expect(dialog.getByRole('alert')).toContainText('one supported edit or a reviewed node and connection');
+  await review(dialog, { ...proposal, operations: [{ ...proposal.operations[0], displayMode: 'hidden' }] });
+  await expect(dialog.getByRole('alert')).toContainText('one supported edit or a reviewed node and connection');
+  await review(dialog, { ...proposal, operations: [proposal.operations[0], { ...proposal.operations[0], label: 'Conflicting label' }] });
+  await expect(dialog.getByRole('alert')).toContainText('A connected node needs a reviewed new node');
   await review(dialog, { ...proposal, origin: 'canvas' });
   await expect(dialog.getByRole('alert')).toContainText('one supported edit or a reviewed node and connection');
   await review(dialog, { ...proposal, operations: [{ ...proposal.operations[0], targetId: contextOnly.id }] });
   await expect(dialog.getByRole('alert')).toContainText('outside the request’s writable scope');
   await review(dialog, { ...proposal, baseToken: { ...proposal.baseToken, stateDigest: 'a'.repeat(64) } });
   await expect(dialog.getByRole('alert')).toContainText('does not match a live request');
+  await expect(renderJobs).toHaveAttribute('data-proposal-render-jobs', '0');
   await review(dialog, proposal);
+  await expect(renderJobs).not.toHaveAttribute('data-proposal-render-jobs', '0');
   await expect(dialog.getByRole('img', { name: 'Diagram preview with proposed node label' })).toBeVisible();
   await expect(dialog.getByRole('region', { name: 'Unverified suggestion' })).toContainText('Rename First to Reviewed label.');
   await expectWorkspaceOmits(page, ['Use a short literal label on the writable node.', 'Reviewed label']);
