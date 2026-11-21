@@ -333,6 +333,52 @@ test('previews and commits Add, Rename and Connect through the live v3 workspace
   expect(undone.revision).toBe(4);
 });
 
+test('Escape cancels delayed structural validation before blur can commit a rename', async ({ page }) => {
+  await seedWorkspace(page);
+  const list = await openReview(page);
+  await list.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await list.getByRole('button', { name: 'Open v3 project Migration example' }).click();
+  const original = await download(page, 'Download v3 project');
+
+  await page.evaluate(() => {
+    const digest = crypto.subtle.digest;
+    const gate = new Promise<void>(resolve => window.addEventListener('release-rename-validation', () => resolve(), { once: true }));
+    crypto.subtle.digest = async function (algorithm, data) {
+      const input = new TextDecoder().decode(data);
+      if (!input.startsWith('meridian-source/v1\0') || !input.includes('Delayed label')) {
+        return digest.call(this, algorithm, data);
+      }
+      document.documentElement.dataset.renameValidation = 'held';
+      await gate;
+      const output = await digest.call(this, algorithm, data);
+      document.documentElement.dataset.renameValidation = 'released';
+      return output;
+    };
+  });
+
+  await page.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit flowchart', exact: true });
+  await dialog.getByRole('combobox', { name: 'Operation' }).selectOption('setNodeLabel');
+  await dialog.getByRole('combobox', { name: 'Node to rename' }).selectOption({ label: 'Original (A)' });
+  await dialog.getByRole('textbox', { name: 'Node label' }).fill('Delayed label');
+  await dialog.getByRole('button', { name: 'Preview change' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-rename-validation', 'held');
+  await expect(dialog.getByRole('button', { name: 'Apply change' })).toBeDisabled();
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: 'Download v3 project' }).focus();
+  await page.evaluate(() => window.dispatchEvent(new Event('release-rename-validation')));
+  await expect(page.locator('html')).toHaveAttribute('data-rename-validation', 'released');
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  expect(await download(page, 'Download v3 project')).toBe(original);
+  await page.reload();
+  const reopened = await openReview(page);
+  await reopened.getByRole('button', { name: 'Open v3 project Migration example' }).click();
+  expect(await download(page, 'Download v3 project')).toBe(original);
+});
+
 test('reopens the last durable revision when a tab closes before its project write commits', async ({ page, context }) => {
   const { original } = await seedWorkspace(page);
   const migration = await openReview(page);

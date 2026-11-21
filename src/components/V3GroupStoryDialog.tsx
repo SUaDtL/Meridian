@@ -137,30 +137,29 @@ export default function V3GroupStoryDialog({ editor, db, table, draft, onDraft, 
 
   async function apply() {
     if (!prepared || !previewReady || writing.current) return;
-    if (draft.destination === "duplicate") {
-      writing.current = true;
-      setDraftWriting(true);
-      setError("");
-      try {
+    writing.current = true;
+    setDraftWriting(true);
+    setError("");
+    try {
+      if (draft.destination === "duplicate") {
         const id = await editor.saveStoryCopy(prepared.proposal);
         if (checkpoint) await discardGuidedCheckpoint(db, checkpoint).catch(() => undefined);
         onOpenCopy(id);
-      } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "The story copy could not be saved.");
-      } finally {
-        writing.current = false;
-        setDraftWriting(false);
+      } else {
+        const status = await onApply(prepared.proposal);
+        if (status === "applied") {
+          if (checkpoint) void discardGuidedCheckpoint(db, checkpoint).catch(() => undefined);
+          onClose();
+        } else {
+          setPrepared(undefined);
+          setError(status === "stale" ? "The saved project changed. Reopen it before reviewing the story again." : "The scene changes could not be applied with Undo.");
+        }
       }
-      return;
-    }
-    const status = onApply(prepared.proposal);
-    if (status === "applied") {
-      if (checkpoint) void discardGuidedCheckpoint(db, checkpoint).catch(() => undefined);
-      onClose();
-    }
-    else {
-      setPrepared(undefined);
-      setError(status === "stale" ? "The project changed. Prepare the story preview again." : "The scene changes could not be applied with Undo.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The story could not be saved.");
+    } finally {
+      writing.current = false;
+      setDraftWriting(false);
     }
   }
 

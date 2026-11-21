@@ -11,6 +11,20 @@ async function download(page: Page, live: Locator, button: string) {
   return readFile(path, 'utf8');
 }
 
+async function cameraBox(view: Locator) {
+  const value = await view.getAttribute('viewBox');
+  return value?.trim().split(/\s+/).map(Number) ?? [];
+}
+
+async function expectSameCamera(view: Locator, expected: number[]) {
+  expect(expected).toHaveLength(4);
+  // Screen-to-SVG transforms can round differently after a resize or in an offline player.
+  await expect.poll(async () => {
+    const actual = await cameraBox(view);
+    return actual.length === 4 && actual.every((value, index) => Math.abs(value - expected[index]) < 0.001);
+  }).toBe(true);
+}
+
 test('appends and edits ordinary group scenes, then exports the same settled visibility', async ({ page, browser }, info) => {
   const source = 'flowchart LR\n subgraph Outer [Outer group]\n   A[Start]\n   subgraph Inner [Inner group]\n     B[Selected input]\n     D[Selected output]\n   end\n   C[Finish]\n end\n E[External]\n A main@--> C\n B local@--> D\n A boundary@--> E\n';
   const existing = { ...createScene(), title: 'Manual overview' };
@@ -60,12 +74,11 @@ test('appends and edits ordinary group scenes, then exports the same settled vis
   await expect(status).toHaveText('Scene 2 of 2 · Outer group');
   await expect(preview.locator(hidden)).toHaveAttribute('aria-hidden', 'false');
   await expect(player).toHaveAttribute('data-story-preview', 'true');
-  const studioCamera = await player.getAttribute('viewBox');
-  expect(studioCamera).toBeTruthy();
+  const studioCamera = await cameraBox(player);
   await preview.getByRole('button', { name: 'Play story' }).press('Enter');
   await expect(player).toHaveAttribute('data-story-playing', 'true');
   await expect(player).toHaveAttribute('data-story-preview', 'false');
-  await expect(player).toHaveAttribute('viewBox', studioCamera!);
+  await expectSameCamera(player, studioCamera);
   await expect(preview.locator(hidden)).toHaveCSS('opacity', '1');
   await expect(preview.locator(flow)).toHaveCSS('display', 'none');
   await preview.getByRole('button', { name: 'Pause story' }).press('Enter');
@@ -128,12 +141,11 @@ test('appends and edits ordinary group scenes, then exports the same settled vis
     await expect(presentation.locator(shown)).toHaveAttribute('aria-hidden', 'false');
     await expect(presentation.locator(ancestor)).toHaveAttribute('aria-hidden', 'false');
     const portable = presentation.locator('main > svg');
-    const portableCamera = await portable.getAttribute('viewBox');
-    expect(portableCamera).toBeTruthy();
+    const portableCamera = await cameraBox(portable);
     await presentation.getByRole('button', { name: 'Play presentation', exact: true }).click();
     await expect(portable).toHaveAttribute('data-story-playing', 'true');
     await expect(portable).toHaveAttribute('data-story-preview', 'false');
-    await expect(portable).toHaveAttribute('viewBox', portableCamera!);
+    await expectSameCamera(portable, portableCamera);
     await expect(presentation.locator(shown)).toHaveCSS('opacity', '1');
     await expect(presentation.locator(flow)).toHaveCSS('display', 'none');
   } finally { await offline.close(); }
@@ -148,7 +160,7 @@ test('appends and edits ordinary group scenes, then exports the same settled vis
   expect(restored.storyboard).toEqual(original.storyboard);
 });
 
-test('follows explicitly chosen connections to a loop and keeps unrelated group content hidden', async ({ page }) => {
+test('follows a reviewed loop and preserves exact nested path visibility offline', async ({ page, browser }) => {
   const source = 'flowchart LR\n subgraph Outer [Outer group]\n   subgraph Inner [Inner group]\n     A[Start]\n     B[Review]\n     X[Unselected sibling]\n   end\n end\n C[Finish]\n A send@-->|"Send"| B\n B finish@-->|"Finish"| C\n C repeat@-->|"Revisit"| A\n';
   const project = { ...createDocument(), title: 'Path story example', source };
   await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
@@ -178,8 +190,15 @@ test('follows explicitly chosen connections to a loop and keeps unrelated group 
   const coverage = dialog.getByRole('list', { name: 'Suggested scene coverage' });
   await expect(coverage).toContainText('Loop returns to Start');
   await expect(coverage).toContainText('3 nodes, 3 connections, and 2 groups shown.');
-  await expect(dialog.locator(`[data-element-key="${bindings.get('X')}"]`)).toHaveAttribute('aria-hidden', 'true');
-  await expect(dialog.locator(`[data-element-key="${bindings.get('Inner')}"]`)).toHaveAttribute('aria-hidden', 'false');
+  async function verifyVisibility(root: Page | Locator) {
+    for (const id of ['A', 'B', 'C', 'Outer', 'Inner', 'send', 'finish', 'repeat']) {
+      await expect(root.locator(`[data-element-key="${bindings.get(id)}"]`)).toHaveAttribute('aria-hidden', 'false');
+    }
+    await expect(root.locator(`[data-element-key="${bindings.get('X')}"]`)).toHaveAttribute('aria-hidden', 'true');
+  }
+  await verifyVisibility(dialog);
+  const viewBox = dialog.getByRole('region', { name: 'Story preview' }).locator('[data-meridian-export]');
+  const camera = await cameraBox(viewBox);
   await dialog.getByRole('button', { name: 'Append suggested scenes' }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
   const saved = JSON.parse(await download(page, live, 'Download v3 project'));
@@ -188,6 +207,15 @@ test('follows explicitly chosen connections to a loop and keeps unrelated group 
   expect(saved.storyboard.scenes.at(-1)).toMatchObject({
     title: 'Loop returns to Start', flow: [bindings.get('send'), bindings.get('finish'), bindings.get('repeat')],
   });
+  const html = await download(page, live, 'Download HTML presentation');
+  const offline = await browser.newContext({ offline: true });
+  try {
+    const presentation = await offline.newPage();
+    await presentation.setContent(html);
+    await presentation.getByLabel('Choose scene', { exact: true }).selectOption(String(saved.storyboard.scenes.length - 1));
+    await verifyVisibility(presentation);
+    await expectSameCamera(presentation.locator('main > svg'), camera);
+  } finally { await offline.close(); }
 });
 
 test('moves saved scenes by keyboard, reviews deletion, and restores the exact scenes with Undo', async ({ page, browser }) => {
@@ -638,9 +666,8 @@ test('plays a migrated directional storyboard with the same cameras and flow in 
 
     await checkFirst(studio);
     await checkFirst(portable);
-    const firstCamera = await studio.getAttribute('viewBox');
-    expect(firstCamera).toBeTruthy();
-    await expect(portable).toHaveAttribute('viewBox', firstCamera!);
+    const firstCamera = await cameraBox(studio);
+    await expectSameCamera(portable, firstCamera);
     await dialog.getByRole('button', { name: 'Play story' }).press('Enter');
     await portablePage.getByRole('button', { name: 'Play presentation' }).click();
     for (const drawing of [studio, portable]) {
@@ -660,10 +687,64 @@ test('plays a migrated directional storyboard with the same cameras and flow in 
       await expect(flow(drawing, 'feedback').last()).toBeVisible();
       await expect(flow(drawing, 'plain')).toHaveCount(0);
     }
-    const secondCamera = await studio.getAttribute('viewBox');
-    expect(secondCamera).toBeTruthy();
+    const secondCamera = await cameraBox(studio);
     expect(secondCamera).not.toBe(firstCamera);
-    await expect(portable).toHaveAttribute('viewBox', secondCamera!);
+    await expectSameCamera(portable, secondCamera);
     expect(external).toEqual([]);
   } finally { await offline.close(); }
+});
+
+test('rejects a settled path story when another tab removes a reviewed target', async ({ page, context }) => {
+  const project = { ...createDocument(), title: 'Path target across tabs', source: 'flowchart LR\n A[Start]\n B[Finish]\n A route@--> B\n' };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+
+  async function open(tab: Page, prepare = false) {
+    await tab.goto('/');
+    await tab.getByRole('button', { name: 'Manage projects' }).click();
+    await tab.getByRole('button', { name: 'Project migration and recovery' }).click();
+    if (prepare) await tab.getByRole('button', { name: 'Prepare v3 copies' }).click();
+    await tab.getByRole('button', { name: `Open v3 project ${project.title}` }).click();
+    const live = tab.getByRole('dialog', { name: project.title, exact: true });
+    await expect(live.getByRole('img', { name: `Diagram preview for ${project.title}` })).toBeVisible();
+    return live;
+  }
+
+  const live = await open(page, true);
+  const original = await download(page, live, 'Download v3 project');
+  await live.getByRole('button', { name: 'Suggest scenes', exact: true }).click();
+  const story = page.getByRole('dialog', { name: 'Suggest scenes' });
+  await story.getByLabel('Scene strategy').selectOption('path');
+  await story.getByLabel('Start node').selectOption({ label: 'Start (A)' });
+  const connection = story.getByLabel('Next connection from Start');
+  const route = connection.getByRole('option', { name: /Start → Finish/ });
+  await expect(route).toHaveCount(1);
+  await connection.selectOption(await route.getAttribute('value') ?? '');
+  await story.getByRole('button', { name: 'Add connection to path' }).click();
+  await story.getByRole('button', { name: 'Preview 1 scene' }).click();
+  const apply = story.getByRole('button', { name: 'Append suggested scenes' });
+  await expect(apply).toBeEnabled();
+
+  const peer = await context.newPage();
+  try {
+    const other = await open(peer);
+    await other.getByRole('button', { name: 'Edit flowchart', exact: true }).click();
+    const edit = peer.getByRole('dialog', { name: 'Edit flowchart' });
+    await edit.getByRole('combobox', { name: 'Operation' }).selectOption('removeNode');
+    await edit.getByRole('combobox', { name: 'Node to delete' }).selectOption({ label: 'Finish (B)' });
+    await edit.getByRole('button', { name: 'Preview change' }).click();
+    await edit.getByRole('button', { name: 'Apply change' }).click();
+    await expect(other.getByText('Saved in this browser.')).toBeVisible();
+    const saved = await download(peer, other, 'Download v3 project');
+    expect(JSON.parse(saved).source).not.toContain('Finish');
+
+    await apply.click();
+    await expect(story.getByRole('alert')).toHaveText('The saved project changed. Reopen it before reviewing the story again.');
+    await expect(apply).toHaveCount(0);
+    await story.getByRole('button', { name: 'Close dialog' }).click();
+    await expect(story).toHaveCount(0);
+    expect(await download(page, live, 'Download v3 project')).toBe(original);
+    await expect(live.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+    expect(await download(peer, other, 'Download v3 project')).toBe(saved);
+  } finally { await peer.close(); }
 });
