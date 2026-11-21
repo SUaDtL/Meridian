@@ -59,6 +59,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [bulkTextHidden, setBulkTextHidden] = useState<number>();
   const [designReset, setDesignReset] = useState<{ selection: ReadonlySet<string>; hidden: number; field?: RolePaintField }>();
   const [deleteConnections, setDeleteConnections] = useState<{ ids: string[]; hidden: number }>();
+  const [groupMembers, setGroupMembers] = useState<{ ids: string[]; hidden: number }>();
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [outlineSelection, setOutlineSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [editTarget, setEditTarget] = useState<string>();
@@ -448,6 +449,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         canRename={!editingUnavailable} onClose={() => setOutlineOpen(false)}
         onRename={renameFromOutline} onSource={jumpToSource} onBulkText={setBulkTextHidden}
         onConnect={!editingUnavailable && selectedSource ? openConnection : undefined}
+        onGroup={!editingUnavailable ? hidden => {
+          setGroupMembers({ ids: [...outlineSelection], hidden });
+          setEditFlowchart("addGroup");
+        } : undefined}
         onDesign={flatFlowchart ? hidden => {
           setComparisonSelection({ ids: [...outlineSelection], hidden });
           setOutlineOpen(false);
@@ -573,8 +578,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         }} />}
       {editFlowchart && editor.current && (
         <V3StructureEditor editor={editor.current} nodes={nodes} edges={edges} group={removableGroup} initialOperation={editFlowchart} initialTarget={editTarget}
-          deleteConnections={deleteConnections}
-          onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); }}
+          deleteConnections={deleteConnections} groupMembers={groupMembers}
+          onClose={() => { setEditFlowchart(undefined); setEditTarget(undefined); setDeleteConnections(undefined); setGroupMembers(undefined); }}
           onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);

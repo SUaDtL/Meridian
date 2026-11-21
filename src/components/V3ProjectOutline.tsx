@@ -42,7 +42,7 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
   return rows;
 }
 
-export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onConnect, onBulkText,
+export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onConnect, onGroup, onBulkText,
   onDesign, onResetDesign, onSaveComponent,
   onDeleteConnections, onClose }: {
   items: ProjectOutlineItem[];
@@ -52,6 +52,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   onRename: (id: string) => void;
   onSource: (location: OutlineSourceLocation) => void;
   onConnect?: () => void;
+  onGroup?: (hidden: number) => void;
   onBulkText: (hidden: number) => void;
   onDesign?: (hidden: number) => void;
   onResetDesign?: (hidden: number) => void;
@@ -73,8 +74,8 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   const visible = rows.slice(0, limit);
   const active = visible.find(row => row.item.id === activeId) ?? visible[0];
   const hidden = selected.size - visible.filter(row => selected.has(row.item.id)).length;
-  const canSaveComponent = selected.size > 0 && selected.size <= 100
-    && items.filter(item => item.kind === "node" && selected.has(item.id)).length === selected.size;
+  const selectedNodes = selected.size > 0 && items.filter(item => item.kind === "node" && selected.has(item.id)).length === selected.size;
+  const canSaveComponent = selectedNodes && selected.size <= 100;
   const canDeleteConnections = selected.size > 0 && selected.size <= bulkConnectionLimit
     && items.filter(item => item.kind === "edge" && item.source && selected.has(item.id)).length === selected.size;
 
@@ -164,6 +165,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           <button type="button" className="button secondary" aria-pressed={checkboxSelection}
             onClick={() => setCheckboxSelection(current => !current)}>Select multiple</button>
           {onConnect && <button type="button" className="button secondary" onClick={onConnect}>Connect from selected node</button>}
+          {onGroup && selectedNodes && <button type="button" className="button secondary" onClick={() => onGroup(hidden)}>Group selected nodes</button>}
           <button type="button" className="button quiet" disabled={!visible.length}
             onClick={() => updateSelection(new Set([...selected, ...visible.map(row => row.item.id)]))}>Select visible results</button>
           <button type="button" className="button quiet" disabled={!items.length}

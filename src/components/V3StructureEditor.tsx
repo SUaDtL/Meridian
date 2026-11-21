@@ -20,7 +20,8 @@ const emptyBranches = (): DecisionBranch[] => [
   { label: "", destination: { kind: "existing", id: "" } },
 ];
 
-export default function V3StructureEditor({ editor, nodes, edges, group, initialOperation = "addNode", initialTarget = "", deleteConnections, onApply, onClose }: {
+export default function V3StructureEditor({ editor, nodes, edges, group, initialOperation = "addNode", initialTarget = "",
+  deleteConnections, groupMembers, onApply, onClose }: {
   editor: Editor;
   nodes: NodeChoice[];
   edges: EdgeChoice[];
@@ -28,6 +29,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
   initialOperation?: Operation;
   initialTarget?: string;
   deleteConnections?: { ids: string[]; hidden: number };
+  groupMembers?: { ids: string[]; hidden: number };
   onApply: (proposal: ReadyProposal) => ReturnType<Editor["applyStructure"]>["status"];
   onClose: () => void;
 }) {
@@ -42,7 +44,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
   const [approvedDuplicate, setApprovedDuplicate] = useState("");
   const [from, setFrom] = useState(initialOperation === "addEdge" ? initialTarget : "");
   const [to, setTo] = useState(initialOperation === "removeGroup" ? group?.id ?? "" : initialOperation === "addEdge" ? "" : initialTarget);
-  const [members, setMembers] = useState<ReadonlySet<string>>(new Set());
+  const [members, setMembers] = useState<ReadonlySet<string>>(() => new Set(groupMembers?.ids));
   const [branches, setBranches] = useState(emptyBranches);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,6 +55,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
   const removingEdges = operation === "removeEdges";
   const selectedEdges = deleteConnections?.ids.map(id => edges.find(edge => edge.id === id && edge.explicit));
   const grouping = operation === "addGroup";
+  const selectedMembers = groupMembers?.ids.map(id => nodes.find(node => node.id === id));
   const ungrouping = operation === "removeGroup";
   const incident = removingNode && to ? edges.filter(edge => edge.sourceId === to || edge.targetId === to) : [];
   const unidentified = incident.filter(edge => !edge.explicit);
@@ -127,7 +130,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
     : operation === "addDecision" ? !!label.trim() && branches.every(branch => branch.label.trim() && (
       branch.destination.kind === "existing" ? !!branch.destination.id : !!branch.destination.label.trim()))
     : operation === "setNodeLabel" ? !!label && !!to
-    : operation === "addGroup" ? !!label && members.size > 0
+    : operation === "addGroup" ? !!label && members.size > 0 && (!selectedMembers || selectedMembers.every(Boolean))
     : operation === "removeGroup" ? !!to
     : (operation === "removeEdge" || operation === "setEdgeLabel") ? !!to
     : removingEdges ? !!selectedEdges?.length && selectedEdges.every(Boolean)
@@ -139,7 +142,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
     <Modal title="Edit flowchart" wide onClose={onClose}>
       <form className="heading-form" onSubmit={event => { event.preventDefault(); if (canPreview) void prepare(); }}>
         <label>Operation
-          <select value={operation} disabled={busy} onChange={event => {
+          <select value={operation} disabled={busy || !!groupMembers} onChange={event => {
             setOperation(event.target.value as Operation);
             setLabel("");
             setEdgeLabel("");
@@ -239,7 +242,12 @@ export default function V3StructureEditor({ editor, nodes, edges, group, initial
           {duplicateKey && <label className="check-label"><input type="checkbox" checked={approvedDuplicate === duplicateKey} disabled={busy}
             onChange={event => { setApprovedDuplicate(event.target.checked ? duplicateKey : ""); resetPreview(); }} /> Add another identical connection</label>}
         </>}
-        {grouping && <fieldset className="guided-process-fieldset" disabled={busy}>
+        {grouping && groupMembers && <section aria-label="Selected group members">
+          <p>{groupMembers.ids.length} selected · {groupMembers.hidden} hidden in the outline</p>
+          <ul>{selectedMembers?.map((node, index) => <li key={groupMembers.ids[index]}>{node?.label || "Node unavailable"}</li>)}</ul>
+          <p>Meridian groups consecutive node declarations. Close this review to change the selection.</p>
+        </section>}
+        {grouping && !groupMembers && <fieldset className="guided-process-fieldset" disabled={busy}>
           <legend>Group members</legend>
           <p>Choose consecutive node declarations. Ungroup returns the nodes to the top level.</p>
           {nodes.map(node => <label key={node.id} className="check-label">
