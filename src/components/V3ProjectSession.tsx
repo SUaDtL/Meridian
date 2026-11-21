@@ -958,10 +958,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           return status;
         }} />}
       {storyOpen && targetTable && editor.current && connection.current && <V3GroupStoryDialog editor={editor.current} db={connection.current} table={targetTable}
-        draft={storyDraft} onDraft={setStoryDraft} onOpenCopy={onOpenCopy} onClose={() => setStoryOpen(false)} onApply={proposal => {
+        draft={storyDraft} onDraft={setStoryDraft} onOpenCopy={onOpenCopy} onClose={() => setStoryOpen(false)} onApply={async proposal => {
           const current = editor.current!;
-          const status = current.applyStory(proposal);
-          if (status === "applied") {
+          const status = await current.applyStory(proposal);
+          if (status === "applied" && editor.current === current) {
             setProject(current.snapshot());
             setStoryDraft(initialGroupStoryDraft);
           }
@@ -982,10 +982,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           const status = current.editStorySceneOrder(...args);
           if (status === "applied") setProject(current.snapshot());
           return status;
-        }} onApply={proposal => {
+        }} onApply={async proposal => {
           const current = editor.current!;
-          const status = current.applyStory(proposal);
-          if (status === "applied") setProject(current.snapshot());
+          const status = await current.applyStory(proposal);
+          if (status === "applied" && editor.current === current) setProject(current.snapshot());
           return status;
         }} />
       </Suspense>}

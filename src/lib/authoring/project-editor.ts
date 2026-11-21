@@ -209,7 +209,7 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
       throw new Error('The saved definition changed. Select the current definition and preview again.');
     }
     const guard = bundled ? undefined : { kind: 'component' as const, ...change.definition };
-    const status = await commitInsertion(change, signal, guard);
+    const status = await commitPreparedChange(change, signal, guard);
     if (status === 'applied') insertions.delete(proposal);
     return status;
   }
@@ -260,23 +260,23 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
   }
 
   async function applyGuidedInsertion(proposal: ReadyProposal, signal?: AbortSignal) {
-    const status = await commitInsertion(guidedInsertions.get(proposal), signal);
+    const status = await commitPreparedChange(guidedInsertions.get(proposal), signal);
     if (status === 'applied') guidedInsertions.delete(proposal);
     return status;
   }
 
-  async function commitInsertion(change: { base: MermaidProjectV3; next: MermaidProjectV3 } | undefined,
+  async function commitPreparedChange(change: { base: MermaidProjectV3; next: MermaidProjectV3 } | undefined,
     signal?: AbortSignal, guard?: WorkspaceWriteGuard) {
     if (closed || savingPreparedChange || !change || change.base !== current.document) return 'stale';
     const next = historyEntry(change.next);
-    if (current.bytes + next.bytes > historyByteLimit) throw new Error('The insertion exceeds the Undo history budget.');
+    if (current.bytes + next.bytes > historyByteLimit) throw new Error('The reviewed change exceeds the Undo history budget.');
     savingPreparedChange = true;
     try {
       await queue.flush();
       signal?.throwIfAborted();
       const saved = queue.state();
       if (closed || change.base !== current.document) return 'stale';
-      if (saved.phase !== 'saved' || !saved.anchor) throw new Error('Save the current project before inserting your diagram.');
+      if (saved.phase !== 'saved' || !saved.anchor) throw new Error('Save the current project before applying this change.');
       const anchor = await writeWorkspaceProject(db, change.next, saved.anchor, guard);
       advanceHistory(next, anchor);
       return 'applied';
@@ -605,10 +605,12 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return proposal;
   }
 
-  function applyStory(proposal: ReadyProposal) {
+  async function applyStory(proposal: ReadyProposal) {
     const change = stories.get(proposal);
     if (closed || !change || change.destination === 'duplicate') return 'invalid';
-    return change.base === current.document ? commit(change.next) : 'stale';
+    const status = await commitPreparedChange(change);
+    if (status === 'applied') stories.delete(proposal);
+    return status;
   }
 
   function editStorySceneOrder(sceneId: string, action: StorySceneOrderEdit, base: MermaidProjectV3) {
