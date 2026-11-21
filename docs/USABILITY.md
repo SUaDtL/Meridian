@@ -48,4 +48,29 @@ Rendering now separates frame updates, decoration, and Mermaid layout. Latest-on
 
 The production browser suite covers these workflows using isolated projects, so validation does not modify a user's real browser workspace. Existing six-theme and ten-example pixel comparisons remain in place. Local unit/build/integrity checks and the GitHub browser workflow are separate evidence; a local browser launch failure is never reported as a passed browser test.
 
-Automated UI coverage uses pinned Chromium. Physical touch hardware, screen-reader behavior, and Safari/Firefox still need device-specific validation. Loading-byte reductions and eliminated render work are measurable; a universal maximum frame rate or load-time guarantee is not.
+Automated UI coverage uses pinned Chromium. Physical touch hardware, screen-reader behavior, and Safari/Firefox still need device-specific validation. Loading-byte reductions and eliminated render work are measurable. Frame rate and load time depend on the device and document.
+
+## Manual acceptance sessions
+
+Record the Meridian build SHA, device model, OS, browser, screen reader version, input method, viewport and zoom for each run. Start with a clean browser profile and a fresh copy of the fixture for each comparison. Use a desktop screen reader and a phone screen reader with touch. Also run keyboard-only, touch without dragging, 200% zoom, forced colors or the platform high-contrast setting, and reduced motion. Record the action, control or announcement where each error occurred and how the participant recovered.
+
+| Task | Expected evidence |
+| --- | --- |
+| Create a five-step process, branch to Approve or Reject and join at End | Both routes reach End. Any proposed cross-branch connection is noticed and reviewed. Reorder, branch and join with keyboard and tap controls. |
+| Rename and connect two nodes with the same visible label | The author can distinguish endpoints, identify a deliberately wrong endpoint, return from the review dialog and keep the intended selection. |
+| Filter a bulk selection, fix low contrast and compare two layouts | Hidden selections are discoverable and the retained scope is correct. The author can explain the tradeoff between fewer crossings and smaller viewed labels. |
+| Insert a component through a named port and generate a group story | The chosen port, scene visibility and path are understood. Playback settles with reduced motion and the focus return is logical. |
+| Recover a stale preview and export the accepted project | A second tab edits the document after preview. The author notices the refusal, keeps the review inputs, rebuilds the preview, and reopens the accepted local export. |
+| Read a chart in studio and downloaded HTML with the network disabled | The author identifies the two axes, units, one value and its aggregation from the chart and displayed-values table. Source data is a separate view. |
+
+For the chart task, import the CSV below. Confirm Requests as a number, set its unit to requests, and enable **Treat empty fields as missing**. Choose a bar chart with Team on the category axis and Requests on the value axis. Aggregate duplicate categories with Sum and set the Y domain to 0–0.4. Ask the author to find North, explain the contribution of the missing value, and identify that South is outside the domain. North is 0.3 requests from two present values across three source rows. South remains in the displayed-values table with its exclusion status.
+
+```csv
+Team,Requests
+North,0.1
+North,0.2
+North,
+South,0.5
+```
+
+Recruit 8–12 consenting participants across Mermaid novices, occasional technical authors and experienced authors, including people who use accessibility features. Counterbalance equivalent archived-app and current-build tasks and preserve each task’s start conditions. For each attempt record completion, topology correctness, wrong-endpoint detection, recovery, abandonment, confidence and elapsed time. Keep observations deidentified. Run the assistant file-flow comparison on the approved pilot separately and include file handling, sign-in and stale recovery in the timing.
