@@ -66,6 +66,71 @@ test('inserts a reviewed component and attachment as one source-preserving proje
   expect(undone).toEqual({ ...original, revision: inserted.revision + 1, updatedAt: undone.updatedAt });
 });
 
+test('inserts the same grouped component twice while keeping every current source binding distinct', async ({ page }) => {
+  const source = 'flowchart LR\n  subgraph m_g1 [Existing area]\n    A[Intake]\n  end\n  B[Finish]\n  A current@--> B\n';
+  const project = { ...createDocument(), title: 'Insert nested components', source };
+  const definition: ComponentDefinition = {
+    schema: 'meridian-component/v1', family: 'flowchart', id: crypto.randomUUID(), version: '1.0.0',
+    name: 'Nested work unit', description: '', tags: [], provenance: { author: '', source: '', license: '', licenseText: '' },
+    fragment: {
+      nodes: [{ id: 'work', label: 'Worker', shape: 'rect', role: 'service' }],
+      edges: [],
+      groups: [
+        { id: 'outer', label: 'Component area', members: ['inner'], parentId: null },
+        { id: 'inner', label: 'Worker area', members: ['work'], parentId: 'outer' },
+      ],
+    },
+    ports: [{ id: 'request', nodeId: 'work', label: 'Incoming work', direction: 'in' }], parameters: [], labelBindings: [],
+  };
+  await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
+    { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Insert nested components' }).click();
+  const live = page.getByRole('dialog', { name: project.title });
+  async function download() {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing grouped insertion project download.');
+    return JSON.parse(await readFile(path, 'utf8'));
+  }
+  const original = await download();
+  async function insert(first: boolean) {
+    await live.getByRole('button', { name: 'Outline', exact: true }).waitFor();
+    await live.getByRole('button', { name: 'Commands', exact: true }).click();
+    const search = page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox');
+    await search.fill('Insert component');
+    await search.press('Enter');
+    const component = page.getByRole('dialog', { name: 'Insert component' });
+    if (first) {
+      await component.getByLabel('Import a component definition or library').setInputFiles({
+        name: 'nested.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(definition)),
+      });
+    } else await component.getByRole('button', { name: /^Nested work unit/ }).click();
+    await component.getByRole('combobox', { name: 'Attachment target' }).selectOption({ label: 'Intake (A)' });
+    await component.getByRole('button', { name: 'Preview component' }).click();
+    await expect(component.getByText(/1 node · 0 internal connections · 2 groups/)).toBeVisible();
+    await component.getByRole('button', { name: 'Insert reviewed component' }).click();
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    return download();
+  }
+  const first = await insert(true);
+  const twice = await insert(false);
+  expect(first.source).toBe(source + '  subgraph m_g2 ["Component area"]\n    subgraph m_g3 ["Worker area"]\n      m_n1["Worker"]\n    end\n  end\n  A m_e1@--> m_n1\n');
+  expect(twice.source).toBe(first.source + '  subgraph m_g4 ["Component area"]\n    subgraph m_g5 ["Worker area"]\n      m_n2["Worker"]\n    end\n  end\n  A m_e2@--> m_n2\n');
+  expect(twice.identity.elements.slice(0, first.identity.elements.length)).toEqual(first.identity.elements);
+  const [one, two] = twice.componentInstances;
+  expect(one).toEqual(first.componentInstances[0]);
+  expect(new Set([...one.bindings, ...two.bindings].map(item => item.elementId)).size).toBe(6);
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const restored = await download();
+  expect(restored).toEqual({ ...first, revision: twice.revision + 1, updatedAt: restored.updatedAt });
+  expect(first.identity.elements.slice(0, original.identity.elements.length)).toEqual(original.identity.elements);
+});
+
 test('resumes component parameters and distinguishes unanswered, unconnected, and directed ports', async ({ page }) => {
   const source = 'flowchart LR\n  In[Intake]\n  End[Finish]\n  In first@--> End\n';
   const project = { ...createDocument(), title: 'Draft insertion', source };

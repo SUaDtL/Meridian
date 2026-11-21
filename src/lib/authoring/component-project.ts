@@ -29,21 +29,21 @@ export function materializeComponent(definition: ComponentDefinition, values: Re
     encodeMermaidLabel(next);
     return { key: id, label: next, role, shape };
   });
-  return { nodes, edges: component.fragment.edges.map(edge => ({ from: edge.sourceId, to: edge.targetId, label: edge.label, direction: edge.direction })) };
+  const groups = component.fragment.groups.map(group => ({ key: group.id, label: group.label, members: group.members }));
+  const edges = component.fragment.edges.map(edge => ({ from: edge.sourceId, to: edge.targetId, label: edge.label, direction: edge.direction }));
+  return { nodes, edges, groups };
 }
 
 export async function buildComponentProject(definition: ComponentDefinition, values: Readonly<Record<string, string | number>>, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const component = structuredClone(validateComponentDefinition(definition));
-  if (component.fragment.groups.length) {
-    throw new Error('Component creation currently supports ungrouped fragments.');
-  }
   const graph = materializeComponent(component, values);
   const definitionHash = await canonicalDigest('meridian-component/v1', [component]);
   const { document, rendered, generated } = await prepareGuidedFlowchart(component.name || 'Untitled component', { direction: 'LR', ...graph }, signal);
   signal?.throwIfAborted();
   const ids = new Map(document.identity.elements.map(record => [record.binding.sourceId, record.id]));
-  const sourceIds = [...generated.nodeIds, ...component.fragment.edges.map((edge, index): [string, string] => [edge.id, generated.edgeIds[index]])];
+  const sourceIds = [...generated.nodeIds, ...component.fragment.edges.map((edge, index): [string, string] => [edge.id, generated.edgeIds[index]]),
+    ...generated.groupIds];
   const bindings = sourceIds.map(([localId, sourceId]) => {
     const elementId = ids.get(sourceId);
     if (!elementId) throw new Error('The preview could not bind every component element.');

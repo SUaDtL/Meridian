@@ -20,6 +20,7 @@ type Preview = Awaited<ReturnType<typeof buildComponentProject>> & { url: string
 type Insertion = { editor: Awaited<ReturnType<typeof openStoredProjectEditor>>; nodes: readonly { id: string; label: string }[]; onApplied: () => void };
 type DraftAttachment = { targetId: string; direction: "in" | "out" | null } | null;
 type ImportConflict = { saved: ComponentDefinition; incoming: ComponentDefinition };
+const count = (value: number, label: string) => `${value} ${label}${value === 1 ? "" : "s"}`;
 const differenceLabels = {
   name: "Name", description: "Description", tags: "Tags", provenance: "Provenance and license",
   fragment: "Nodes, connections, and groups", parameters: "Parameters", labelBindings: "Label bindings", ports: "Attachment points",
@@ -438,7 +439,8 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
         <ul className="project-list">{choices.map((component, index) => <li key={`${component.id}-${index}`} className="project-row">
           <button id={`component-${component.id}-${component.version}`} className="project-open" disabled={!!busy} onClick={() => select(component)}>
             <span><strong>{component.name}</strong><small>{component.description}</small>
-              <small>{component.fragment.nodes.length} nodes · {component.fragment.edges.length} connections</small></span>
+              <small>{count(component.fragment.nodes.length, "node")} · {count(component.fragment.edges.length, "connection")}
+                {!!component.fragment.groups.length && ` · ${count(component.fragment.groups.length, "group")}`}</small></span>
           </button>
           {library.includes(component) && <button id={`remove-component-${component.id}-${component.version}`} className="button quiet" disabled={!!busy}
             aria-label={`Remove ${component.name} version ${component.version} ${component.id.slice(0, 8)}`}
@@ -509,7 +511,8 @@ export default function ComponentProjectDialog({ onCreated, insertion, onBack, o
       </div>}
       {preview && <div className="migration-preview">
         <h3>Review {definition?.name}</h3>
-        <p>{preview.graph.nodes.length} nodes · {preview.graph.edges.length} internal connections · {insertion ? "Current project" : "New project"}</p>
+        <p>{count(preview.graph.nodes.length, "node")} · {count(preview.graph.edges.length, "internal connection")}
+          {!!preview.graph.groups.length && ` · ${count(preview.graph.groups.length, "group")}`} · {insertion ? "Current project" : "New project"}</p>
         {insertion && <p>{preview.attachments ?? 0} {preview.attachments === 1 ? "attachment" : "attachments"} to existing nodes</p>}
         {insertion && definition && <ul aria-label="Reviewed attachments">
           {definition.ports.map(port => {

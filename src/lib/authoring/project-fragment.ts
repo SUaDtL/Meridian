@@ -16,7 +16,8 @@ export async function prepareProjectFragment(base: MermaidProjectV3, fragment: F
   signal?.throwIfAborted();
   const byId = new Map(elements.map(item => [item.id, item]));
   const added = elements.filter(item => !priorIds.has(item.id));
-  if (added.length !== resolved.nodes.length + resolved.edges.length || base.identity.elements.some(item => byId.get(item.id) !== item)) {
+  if (added.length !== resolved.nodes.length + resolved.edges.length + resolved.groups.length
+    || base.identity.elements.some(item => byId.get(item.id) !== item)) {
     throw new Error('The insertion could not retain all existing source bindings.');
   }
   const bySourceId = new Map(added.map(item => [item.binding.sourceId, item.id]));

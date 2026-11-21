@@ -96,6 +96,51 @@ test('previews a typed component, stores only instance bindings, and preserves t
   expect(restored).toEqual({ ...renamed, revision: detached.revision + 1, updatedAt: restored.updatedAt });
 });
 
+test('creates a component project with nested verified containment and durable group identities', async ({ page, browser }, info) => {
+  const definition = {
+    ...serviceComponent, id: crypto.randomUUID(), name: 'Nested service component', ports: [],
+    fragment: { ...serviceComponent.fragment, groups: [
+      { id: 'outer', label: 'Service boundary', members: ['api', 'inner'], parentId: null },
+      { id: 'inner', label: 'Queue boundary', members: ['queue'], parentId: 'outer' },
+    ] },
+  };
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Browse components' }).click();
+  const shelf = page.getByRole('dialog', { name: 'Components' });
+  await shelf.getByLabel('Import a component definition').setInputFiles({
+    name: 'nested.meridian-component.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(definition)),
+  });
+  await shelf.getByRole('button', { name: 'Preview component' }).click();
+  await expect(shelf.getByRole('img', { name: 'Proposed component diagram' })).toBeVisible();
+  await page.screenshot({ path: info.outputPath('grouped-component-review.png') });
+  await shelf.getByRole('button', { name: 'Create component project' }).click();
+  const live = page.getByRole('dialog', { name: 'Nested service component' });
+  await expect(live.getByRole('img', { name: 'Diagram preview for Nested service component' })).toBeVisible();
+  async function download(name: string) {
+    const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name, exact: true }).click()]);
+    const path = await file.path();
+    if (!path) throw new Error('Missing grouped component project download.');
+    return readFile(path, 'utf8');
+  }
+  const saved = JSON.parse(await download('Download v3 project'));
+  expect(saved.source).toContain('subgraph m_g1 ["Service boundary"]\n    m_n1["API"]\n    subgraph m_g2 ["Queue boundary"]\n      m_n2[("Work queue")]\n    end\n  end');
+  const groups = saved.identity.elements.filter((item: { elementKind: string }) => item.elementKind === 'group');
+  expect(groups).toHaveLength(2);
+  for (const [local, source] of [['outer', 'm_g1'], ['inner', 'm_g2']]) {
+    const element = groups.find((item: { binding: { sourceId: string } }) => item.binding.sourceId === source);
+    expect(saved.componentInstances[0].bindings).toContainEqual({ localId: local, elementId: element.id });
+  }
+  const html = await download('Download HTML presentation');
+  const offline = await browser.newContext({ offline: true });
+  try {
+    const presentation = await offline.newPage();
+    await presentation.setContent(html);
+    await expect(presentation.getByText('Service boundary', { exact: true })).toBeVisible();
+    await expect(presentation.getByText('Queue boundary', { exact: true })).toBeVisible();
+  } finally { await offline.close(); }
+});
+
 test('imports library conflicts as copies and restores an explicitly removed definition', async ({ page }) => {
   async function openShelf() {
     await page.getByRole('button', { name: 'Build with guidance' }).click();
