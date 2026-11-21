@@ -1,4 +1,4 @@
-import { assistLabelOperations, digestPattern, pendingAssistKey, requestIdPattern, type PendingAssistRequest } from '../authoring/assist-exchange';
+import { assistOperations, digestPattern, pendingAssistKey, requestIdPattern, type PendingAssistRequest } from '../authoring/assist-exchange';
 import { elementUuidPattern } from '../authoring/identities';
 import common from '../authoring/schemas/common.schema.json';
 import { matchesBundledContract } from '../authoring/validate-mermaid-project';
@@ -23,7 +23,7 @@ export function validPendingAssist(value: unknown): value is PendingAssistReques
     || !scope.writableElementIds.length || !scope.writableElementIds.every(id => scope.readContextIds.includes(id))
     || !Array.isArray(item.allowedOperations) || !item.allowedOperations.length
     || new Set(item.allowedOperations).size !== item.allowedOperations.length
-    || !item.allowedOperations.every(operation => assistLabelOperations.includes(operation))) {
+    || !item.allowedOperations.every(operation => assistOperations.includes(operation))) {
     return false;
   }
   try {
