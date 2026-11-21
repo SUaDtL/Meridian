@@ -264,3 +264,84 @@ test('undoes a structural edit from reviewed source and keeps caret and Outline 
   await expect(outline.getByRole('status')).toHaveText('1 selected · 0 hidden');
   await expect(second).toHaveAttribute('aria-selected', 'true');
 });
+
+test('keeps failed candidates unapplied and lets an accepted drawing recover after a mount error', async ({ page }) => {
+  const source = 'flowchart LR\n  A[First]\n  B[Second]\n  A link@--> B\n';
+  const project = { ...createDocument(), title: 'Drawing recovery', source };
+  await page.addInitScript(({ key, project }) => {
+    localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] }));
+    const parse = DOMParser.prototype.parseFromString;
+    const createUrl = URL.createObjectURL;
+    let rejectNextSvg = false;
+    let rejectNextDrawing = false;
+    window.addEventListener('test-candidate-render-failure', () => { rejectNextSvg = true; });
+    window.addEventListener('test-accepted-image-failure', () => { rejectNextDrawing = true; });
+    DOMParser.prototype.parseFromString = function(text, type) {
+      if (rejectNextSvg && type === 'image/svg+xml') {
+        rejectNextSvg = false;
+        document.documentElement.dataset.candidateFault = 'used';
+        return parse.call(this, '<malformed', type);
+      }
+      return parse.call(this, text, type);
+    };
+    URL.createObjectURL = function(blob) {
+      if (rejectNextDrawing && blob instanceof Blob && blob.type === 'image/svg+xml') {
+        rejectNextDrawing = false;
+        document.documentElement.dataset.drawingFault = 'used';
+        return createUrl(new Blob(['<broken'], { type: 'image/svg+xml' }));
+      }
+      return createUrl(blob);
+    };
+  }, { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Drawing recovery' }).click();
+
+  const live = page.getByRole('dialog', { name: project.title, exact: true });
+  const drawing = live.getByRole('img', { name: 'Diagram preview for Drawing recovery' });
+  const undo = live.getByRole('button', { name: 'Undo', exact: true });
+  await expect.poll(() => drawing.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  const original = await download(page, live);
+  await expect(undo).toBeDisabled();
+  const edit = live.getByRole('button', { name: 'Edit Mermaid source', exact: true });
+  const review = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const input = review.getByRole('textbox', { name: 'Mermaid source' });
+  const preview = review.getByRole('button', { name: 'Preview source' });
+  const apply = review.getByRole('button', { name: 'Apply source' });
+  const revised = source.replace('A[First]', 'A[Updated]');
+  await edit.click();
+  await input.fill(revised);
+  await page.evaluate(() => window.dispatchEvent(new Event('test-candidate-render-failure')));
+  await preview.click();
+  await expect(review.getByRole('alert')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-candidate-fault', 'used');
+  await expect(apply).toBeDisabled();
+  await review.getByRole('button', { name: 'Close', exact: true }).click();
+  expect(await download(page, live)).toEqual(original);
+  await expect(undo).toBeDisabled();
+
+  await edit.click();
+  await expect(input).toContainText('A[Updated]');
+  await preview.click();
+  await expect(apply).toBeEnabled();
+  await page.evaluate(() => window.dispatchEvent(new Event('test-accepted-image-failure')));
+  await apply.click();
+  await expect(live.getByRole('alert')).toContainText('The browser could not display the drawing.');
+  await expect(page.locator('html')).toHaveAttribute('data-drawing-fault', 'used');
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  await expect(drawing).toHaveCount(0);
+  await expect(undo).toBeEnabled();
+  const accepted = await download(page, live);
+  expect(accepted.source).toBe(revised);
+  expect(accepted.identity).toEqual(original.identity);
+
+  await live.getByRole('button', { name: 'Retry drawing' }).click();
+  await expect.poll(() => drawing.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  expect(await download(page, live)).toEqual(accepted);
+  await undo.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const undone = await download(page, live);
+  expect(undone).toEqual({ ...original, revision: accepted.revision + 1, updatedAt: undone.updatedAt });
+});
