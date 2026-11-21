@@ -1069,6 +1069,10 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
           initialOperation={editFlowchart} initialTarget={editFlowchart === "moveToGroup" ? undefined : editTarget}
           deleteConnections={deleteConnections} groupMembers={groupMembers} groupRemoval={groupRemoval}
           onClose={closeStructureEditor}
+          onSwitchProject={() => {
+            closeStructureEditor();
+            close();
+          }}
           onApply={proposal => {
             const current = editor.current!;
             const result = current.applyStructure(proposal);
