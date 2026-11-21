@@ -7,6 +7,7 @@ import { groupedFlowchartTopology } from './source-patches';
 import { validateMermaidProject } from './validate-mermaid-project';
 
 type PaintField = 'fill' | 'color' | 'stroke';
+type StyleField = PaintField | 'fontSize';
 type RecipeSettings = Pick<StudioSettings, 'spacing' | 'frame' | 'padding' | 'motion' | 'background' | 'ambient' | 'shadow'>;
 
 const definitions = {
@@ -30,11 +31,13 @@ const definitions = {
 export type DesignRecipeId = keyof typeof definitions;
 export const designRecipeIds = Object.freeze(Object.keys(definitions) as DesignRecipeId[]);
 const recipeVersion = '1.0.0';
+const presentationLabelSize = 22;
 
 export function readDesignRecipe(id: DesignRecipeId) {
   if (!Object.hasOwn(definitions, id)) throw new Error('Choose one of the available design recipes.');
   const { title, description, settings, nodeStyle } = definitions[id];
   return { id, version: recipeVersion, title, description, settings: { ...settings }, nodeStyle: { ...nodeStyle },
+    scopedLabelSize: id === 'presentation' ? presentationLabelSize : null,
     decisionShape: presentationRoleShape({ id, version: recipeVersion }, 'decision') ?? null };
 }
 
@@ -42,15 +45,16 @@ const display: Record<keyof RecipeSettings, string> = {
   spacing: 'Spacing', frame: 'Frame', padding: 'Padding', motion: 'Motion', background: 'Background', ambient: 'Ambient light', shadow: 'Shadows',
 };
 
-type ScopedDesign = ({ kind: 'selection'; ids: readonly string[] } | { kind: 'role'; role: SemanticRole }) & { preserveOverrides?: boolean };
+type ScopedDesign = ({ kind: 'selection'; ids: readonly string[] } | { kind: 'role'; role: SemanticRole }) & { preserveOverrides?: boolean; enlargeLabels?: boolean };
 export type DesignScope = { kind: 'diagram'; applyRoleShapes?: boolean } | ScopedDesign;
 type Frame = Awaited<ReturnType<typeof renderMermaidProject>>;
 type RecipeChange = { label: string; before: unknown; after: unknown };
 type ScopeSummary = { eligible: number; total: number; protectedFields: number; clearedFields: number; clearedTargets: number;
-  exclusions: string[]; omitted: string[] };
-type PaintProof = { targetId: string; field: PaintField; value: string };
+  exclusions: string[]; omitted: string[]; typography?: { protected: string[]; moved: string[] } };
+type StyleProof = { targetId: string; field: StyleField; value: string | number };
 
 const paintFields = { fill: 'Fill', color: 'Text', stroke: 'Border' } as const;
+const verifiedFields = ['fill', 'color', 'stroke', 'fontSize'] as const;
 const capability: Record<PaintField, ElementCapability> = { fill: 'fill', color: 'text', stroke: 'stroke' };
 
 export function buildDesignRecipeCandidate(base: MermaidProjectV3, id: DesignRecipeId, applyRoleShapes: boolean, current?: Frame) {
@@ -85,7 +89,7 @@ export function buildDesignRecipeCandidate(base: MermaidProjectV3, id: DesignRec
     revision: base.revision + 1,
     updatedAt: new Date().toISOString(),
   });
-  return { recipe, document, changes, scope: undefined, proof: [] as PaintProof[], shapeIds };
+  return { recipe, document, changes, scope: undefined, proof: [] as StyleProof[], shapeIds };
 }
 
 /** Scope appearance to measured nodes and clear only explicitly reviewed paint overrides. */
@@ -102,7 +106,9 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
   const manualElements = { ...base.design.elements };
   const changes: RecipeChange[] = [];
   const exclusions: string[] = [];
-  const proof: PaintProof[] = [];
+  const proof: StyleProof[] = [];
+  const labelSize = intent.enlargeLabels && recipe.scopedLabelSize;
+  const protectedTypography: string[] = [];
   let eligible = 0;
   let protectedFields = 0;
   let clearedFields = 0;
@@ -112,7 +118,10 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
     const element = elements.get(targetId);
     const name = element ? `${element.label || 'Unnamed element'} (${bound.get(targetId) ?? 'no source ID'})` : 'Unavailable element';
     const previous = recipeElements[targetId];
-    if (element?.kind !== 'node' || (previous && Object.keys(previous.style).some(field => !Object.hasOwn(paintFields, field)))) {
+    const sameRecipe = previous?.recipe.id === recipe.id && previous.recipe.version === recipe.version;
+    const unsupportedStyle = previous && Object.keys(previous.style).some(field =>
+      !Object.hasOwn(paintFields, field) && !(sameRecipe && field === 'fontSize'));
+    if (element?.kind !== 'node' || unsupportedStyle) {
       exclusions.push(name);
       continue;
     }
@@ -142,7 +151,19 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
       proof.push({ targetId, field, value });
       changes.push({ label: `${name} · ${label}${override ? ' · Clear user override' : ''}`, before, after: value });
     }
-    if (!hasEligiblePaint) {
+    let hasEligibleTypography = false;
+    if (labelSize) {
+      const before = element.appearance?.fontSize;
+      if (manualStyle.fontSize !== undefined) {
+        protectedTypography.push(name);
+      } else if (element.capabilities.includes('typography') && before !== undefined && before < labelSize) {
+        hasEligibleTypography = true;
+        style.fontSize = labelSize;
+        proof.push({ targetId, field: 'fontSize', value: labelSize });
+        changes.push({ label: `${name} · Label size`, before: `${before} px`, after: `${labelSize} px` });
+      }
+    }
+    if (!hasEligiblePaint && !hasEligibleTypography) {
       exclusions.push(name);
       continue;
     }
@@ -154,29 +175,39 @@ export function buildScopedDesignRecipe(base: MermaidProjectV3, id: DesignRecipe
       else delete manualElements[targetId];
     }
   }
-  if (!eligible) throw new Error('This scope has no eligible node paint. Choose another selection or role.');
+  if (!eligible) throw new Error('This scope has no eligible node styling. Choose another selection or role.');
   const scope: ScopeSummary = {
     eligible, total: selected.size, protectedFields, clearedFields, clearedTargets, exclusions, omitted: Object.values(display),
+    typography: labelSize ? { protected: protectedTypography, moved: [] } : undefined,
   };
   const document = proof.length ? validateMermaidProject({
     ...base, design: { ...base.design, recipeElements, elements: manualElements }, revision: base.revision + 1, updatedAt: new Date().toISOString(),
   }) : base;
-  return { recipe, document, changes, scope, proof };
+  return { recipe, document, changes, scope, proof, selectedIds: [...selected] };
 }
 
-export function verifyScopedDesign(current: Frame, preview: Frame, proof: readonly PaintProof[]) {
+export function verifyScopedDesign(current: Frame, preview: Frame, proof: readonly StyleProof[], selectedIds: readonly string[]) {
   if (!current.targetTable || !preview.targetTable || verifiedTopology(current.targetTable) !== verifiedTopology(preview.targetTable)) {
     throw new Error('The selected design did not preserve the diagram topology and labels.');
   }
   const changes = new Map(proof.map(item => [`${item.targetId}:${item.field}`, item.value]));
   const measured = new Map(preview.result.elements?.map(item => [item.key, item]));
+  const selected = new Set(selectedIds);
+  const moved: string[] = [];
   for (const item of current.result.elements ?? []) {
     const next = measured.get(item.key);
-    for (const field of Object.keys(paintFields) as PaintField[]) {
+    for (const field of verifiedFields) {
       const expected = changes.get(`${item.key}:${field}`) ?? item.appearance?.[field];
-      if (next?.appearance?.[field] !== expected) throw new Error('Meridian could not verify the reviewed scope and its rendered paint.');
+      if (next?.appearance?.[field] !== expected) throw new Error('Meridian could not verify the reviewed scope and its rendered appearance.');
     }
+    if (item.kind !== 'node' || selected.has(item.key) || !item.bounds || !next?.bounds) continue;
+    const before = item.bounds;
+    const after = next.bounds;
+    const dx = after.x + after.width / 2 - (before.x + before.width / 2);
+    const dy = after.y + after.height / 2 - (before.y + before.height / 2);
+    if (Math.hypot(dx, dy) >= 1) moved.push(`${item.label || 'Unnamed node'} (${item.sourceId})`);
   }
+  return moved;
 }
 
 export function verifyPresentationRoleShapes(current: Frame, preview: Frame, shapeIds: readonly string[]) {

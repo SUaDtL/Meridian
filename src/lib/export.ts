@@ -230,12 +230,16 @@ export async function buildPresentationHtml(svg: string, doc: StudioDocument): P
   return buildTimelineHtml(svg, doc, validateStoryboard(doc.storyboard));
 }
 
-export async function buildMermaidProjectPresentation(rendered: Awaited<ReturnType<typeof renderMermaidProject>>, project: MermaidProjectV3) {
+export async function buildMermaidProjectPresentation(
+  rendered: Awaited<ReturnType<typeof renderMermaidProject>>,
+  project: MermaidProjectV3,
+  options: ExportFrameOptions = {},
+) {
   const { targetTable } = rendered;
   if (!targetTable || !sameBaseToken(targetTable.baseToken, await projectBaseToken(project))) {
     throw new Error('Render the current project before exporting its presentation.');
   }
-  const frame = buildExportFrame(rendered.result, project, { animated: true });
+  const frame = buildExportFrame(rendered.result, project, { ...options, animated: true });
   return buildTimelineHtml(frame.svg, project, project.storyboard, targetTable);
 }
 

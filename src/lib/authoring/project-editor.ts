@@ -280,7 +280,10 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     const candidate = scope.kind === 'diagram' ? buildDesignRecipeCandidate(base, id, scope.applyRoleShapes === true, accepted)
       : buildScopedDesignRecipe(base, id, scope, accepted!);
     const rendered = candidate.document === base && accepted ? accepted : await renderMermaidProject(candidate.document, signal);
-    if (accepted && scope.kind !== 'diagram') verifyScopedDesign(accepted, rendered, candidate.proof);
+    if (accepted && 'selectedIds' in candidate) {
+      const moved = verifyScopedDesign(accepted, rendered, candidate.proof, candidate.selectedIds);
+      if (candidate.scope.typography) candidate.scope.typography.moved = moved;
+    }
     if (accepted && 'shapeIds' in candidate && candidate.shapeIds.length) verifyPresentationRoleShapes(accepted, rendered, candidate.shapeIds);
     signal?.throwIfAborted();
     if (!rendered.targetTable) throw new Error('This design can only be previewed on a verified flowchart.');

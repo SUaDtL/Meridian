@@ -51,6 +51,7 @@ test('reviews hidden unresolved annotations and removes only the confirmed recor
   await page.screenshot({ path: info.outputPath('annotation-review-mobile.png') });
   await annotations.getByRole('button', { name: 'Close dialog' }).click();
   expect(await download()).toEqual(original);
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
   await open.click();
   await annotations.getByRole('checkbox', { name: 'node:Former' }).check();
   await annotations.getByRole('button', { name: 'Review removal' }).click();

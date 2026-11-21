@@ -212,6 +212,7 @@ test('moves saved scenes by keyboard, reviews deletion, and restores the exact s
   } finally { await context.close(); }
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Story', exact: true }).click();
   await edit.click();
   const remove = dialog.getByRole('button', { name: 'Delete scene', exact: true });
   const confirm = dialog.getByRole('button', { name: 'Delete selected scene' });

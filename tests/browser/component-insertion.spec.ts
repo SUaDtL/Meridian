@@ -4,7 +4,7 @@ import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 import { createScene } from '../../src/lib/storyboard';
 import type { ComponentDefinition } from '../../src/lib/authoring/component-definition';
 
-test('inserts a reviewed component and attachment as one source-preserving project change', async ({ page }, info) => {
+test('inserts a reviewed component and attachment as one source-preserving project change', async ({ page, browser }, info) => {
   const source = '\uFEFFflowchart LR\r\n  m_n1[Intake]\r\n  End[Finish]\r\n  %% Keep the existing source\r\n  m_n1 m_e1@--> End\r\n';
   const manual = { ...createScene(), title: 'Original scene', visible: ['node:m_n1', 'node:End', 'edge:id:m_e1'] };
   const project = { ...createDocument(), title: 'Insertion example', source,
@@ -23,9 +23,9 @@ test('inserts a reviewed component and attachment as one source-preserving proje
     const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
     const path = await file.path();
     if (!path) throw new Error('Missing project download.');
-    return JSON.parse(await readFile(path, 'utf8'));
+    return readFile(path);
   }
-  const original = await download();
+  const original = JSON.parse((await download()).toString('utf8'));
   await live.getByRole('button', { name: 'Commands', exact: true }).click();
   const search = page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox');
   await search.fill('Insert component');
@@ -50,7 +50,8 @@ test('inserts a reviewed component and attachment as one source-preserving proje
   await page.screenshot({ path: info.outputPath('component-insert-mobile.png') });
   await component.getByRole('button', { name: 'Insert reviewed component' }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
-  const inserted = await download();
+  const insertedBytes = await download();
+  const inserted = JSON.parse(insertedBytes.toString('utf8'));
   expect(inserted.source).toBe(source + '  m_n2["API"]\r\n  m_n3[("Work queue")]\r\n  m_n4["Worker"]\r\n'
     + '  m_n2 m_e2@-->|"Enqueue"| m_n3\r\n  m_n3 m_e3@-->|"Consume"| m_n4\r\n  m_n1 m_e4@--> m_n2\r\n');
   expect(inserted.identity.elements.slice(0, original.identity.elements.length)).toEqual(original.identity.elements);
@@ -62,8 +63,45 @@ test('inserts a reviewed component and attachment as one source-preserving proje
 
   await live.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();
-  const undone = await download();
+  const undone = JSON.parse((await download()).toString('utf8'));
   expect(undone).toEqual({ ...original, revision: inserted.revision + 1, updatedAt: undone.updatedAt });
+
+  const fresh = await browser.newContext({ baseURL: new URL(page.url()).origin, acceptDownloads: true });
+  try {
+    const destination = await fresh.newPage();
+    await destination.goto('/');
+    await destination.getByRole('button', { name: 'Manage projects' }).click();
+    await destination.getByRole('button', { name: 'Project migration and recovery' }).click();
+    await destination.getByLabel('Import v3 project file').setInputFiles({
+      name: 'component-attachment.meridian.json', mimeType: 'application/json', buffer: insertedBytes,
+    });
+    await expect(destination.getByText('Imported Insertion example as a separate v3 project.')).toBeVisible();
+    const [portable] = await Promise.all([
+      destination.waitForEvent('download'),
+      destination.getByRole('button', { name: 'Download v3 copy of Insertion example' }).click(),
+    ]);
+    const path = await portable.path();
+    if (!path) throw new Error('Missing reimported project download.');
+    const reimported = JSON.parse(await readFile(path, 'utf8'));
+    expect(reimported.id).not.toBe(inserted.id);
+    expect(reimported).toEqual({ ...inserted, id: reimported.id, revision: 0 });
+
+    await destination.getByRole('button', { name: 'Open v3 project Insertion example' }).click();
+    const restored = destination.getByRole('dialog', { name: 'Insertion example', exact: true });
+    await expect.poll(() => restored.getByRole('img', { name: 'Diagram preview for Insertion example' })
+      .evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+    await restored.getByRole('button', { name: 'Outline', exact: true }).click();
+    const outline = destination.getByRole('dialog', { name: 'Diagram outline' });
+    await outline.getByRole('button', { name: 'Relationships', exact: true }).click();
+    const relationships = outline.getByRole('listbox', { name: 'Relationships' });
+    await expect(relationships.getByRole('option')).toHaveCount(4);
+    await relationships.getByRole('option', { name: /m_e4 · Line 11/ }).click();
+    await outline.getByRole('button', { name: 'Jump to source' }).click();
+    await expect(restored.locator('mark')).toHaveText('m_n1 m_e4@--> m_n2');
+    expect(await restored.locator('pre').textContent()).toBe(inserted.source);
+  } finally {
+    await fresh.close();
+  }
 });
 
 test('inserts the same grouped component twice while keeping every current source binding distinct', async ({ page }) => {

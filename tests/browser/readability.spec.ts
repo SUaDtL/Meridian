@@ -58,11 +58,13 @@ test('checks the accepted drawing and shows the exact finding targets without ed
   await check.getByRole('button', { name: 'Check diagram' }).click();
   await expect(report.getByText(/Service measures .* CSS pixels/).first()).toBeVisible();
   await check.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Design', exact: true }).click();
   await live.getByRole('button', { name: 'Check readability', exact: true }).click();
   await expect(check.getByRole('combobox', { name: 'Viewing profile' })).toHaveValue('document');
   await expect(check.getByRole('spinbutton', { name: 'Allocated width in CSS pixels' })).toHaveValue('125');
   await expect(report).toHaveCount(0);
   await check.getByRole('button', { name: 'Close dialog' }).click();
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Build', exact: true }).click();
   await live.getByText('Mermaid source', { exact: true }).click();
   expect(await live.locator('pre').textContent()).toBe(source);
   await expect(live.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
@@ -329,7 +331,9 @@ test('reviews separate regions and keeps an ignored name finding across unrelate
   const result = await downloadProject(page, live);
   expect(result.source).toBe(source.replace('B[Service]', 'B["Payments"]'));
   expect(JSON.stringify(result)).not.toContain('ignored');
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Canvas', exact: true }).click();
   await expect(live.getByRole('img', { name: 'Diagram preview for Updated name review' })).toBeVisible();
+  await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Design', exact: true }).click();
   await reviewNames();
   await expect(duplicate).toHaveCount(0);
 });
@@ -395,4 +399,53 @@ test('keeps a dismissed role paint finding across a heading edit and rechecks ne
   const accepted = await downloadProject(page, live);
   expect(accepted.source).toBe(project.source);
   expect(accepted.design).toEqual({ ...project.design, elements: { [target]: { color: changedColor } } });
+});
+
+test('downloads 1× and 2× PNGs with identical label findings at the same document width', async ({ page }) => {
+  const source = 'flowchart LR\r\n  A[Service] --> B[Warehouse]\r\n';
+  const live = await openProject(page, { ...createDocument(), title: 'Readability export density', source });
+  const check = page.getByRole('dialog', { name: 'Check readability' });
+  const report = check.getByRole('region', { name: 'Readability results' });
+  const width = check.getByRole('spinbutton', { name: 'Allocated width in CSS pixels' });
+  const presentation = page.getByRole('dialog', { name: 'Take your diagram with you.' });
+  const approved = await downloadProject(page, live);
+  async function measureLabel() {
+    await live.getByRole('button', { name: 'Check readability', exact: true }).click();
+    await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('document');
+    await width.fill('125');
+    await expect(check.getByText('125 CSS pixels allocated · Fits width · Project revision 0')).toBeVisible();
+    await check.getByRole('button', { name: 'Check diagram' }).click();
+    await expect(report.getByText('Viewed label size · 2 measured · 0 unknown · 1 not applicable')).toBeVisible();
+    const finding = report.getByText(/Service measures [\d.]+ CSS pixels in this viewing area/);
+    await expect(finding).toBeVisible();
+    const result = await finding.textContent();
+    await check.getByRole('button', { name: 'Close dialog' }).click();
+    return result;
+  }
+  async function downloadPngAt(scale: '1' | '2') {
+    await live.getByRole('button', { name: 'Export diagram', exact: true }).click();
+    await presentation.getByRole('combobox', { name: 'Resolution' }).selectOption(scale);
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      presentation.getByRole('button', { name: 'Download PNG', exact: true }).click(),
+    ]);
+    expect(download.suggestedFilename()).toBe('readability-export-density.png');
+    const path = await download.path();
+    if (!path) throw new Error('Missing exported PNG.');
+    const bytes = await readFile(path);
+    expect(bytes.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect(bytes.subarray(12, 16).toString('ascii')).toBe('IHDR');
+    await expect(presentation.getByRole('status')).toContainText('PNG downloaded');
+    await presentation.getByRole('button', { name: 'Close dialog' }).click();
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  }
+  const standard = await downloadPngAt('1');
+  const firstFinding = await measureLabel();
+  const dense = await downloadPngAt('2');
+  expect(dense.width).toBeGreaterThanOrEqual(standard.width * 2);
+  expect(dense.width).toBeLessThanOrEqual(standard.width * 2 + 1);
+  expect(dense.height).toBeGreaterThanOrEqual(standard.height * 2);
+  expect(dense.height).toBeLessThanOrEqual(standard.height * 2 + 1);
+  expect(await measureLabel()).toBe(firstFinding);
+  expect(await downloadProject(page, live)).toEqual(approved);
 });

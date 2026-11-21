@@ -1,4 +1,4 @@
-import { assistRequestTimestamp } from '../authoring/assist-request-id';
+import { assistRequestTimestamp } from '../authoring/assist-request-id.ts';
 
 const requestLifetimeMs = 24 * 60 * 60 * 1000;
 const maxFutureOffsetMs = 5 * 60 * 1000;

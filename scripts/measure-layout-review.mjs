@@ -161,6 +161,7 @@ async function measure(mobile) {
         process.stderr.write(`${mobile ? 'mobile' : 'desktop'} input fixture ${index + 1}/${documents.length}\n`);
         continue;
       }
+      if (mobile) await live.getByRole('navigation', { name: 'Workspace panels' }).getByRole('button', { name: 'Design', exact: true }).tap();
       await live.getByRole('button', { name: 'Compare layouts', exact: true }).click();
       const dialog = page.getByRole('dialog', { name: 'Compare layouts' });
       const choices = dialog.getByRole('group', { name: 'Layout alternatives' });

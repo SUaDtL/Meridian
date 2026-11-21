@@ -17,8 +17,8 @@ import {
   buildExportFrame,
   downloadSvg,
   exportPng,
-  exportPresentation,
   pngDimensions,
+  type ExportFrameOptions,
 } from "../lib/export";
 import { downloadText, safeFilename } from "../lib/storage";
 import Modal from "./Modal";
@@ -41,18 +41,24 @@ export default function ExportDialog({
   onRender,
   onEditSource,
   onDownload,
+  presentation,
   notify,
   onClose,
 }: {
-  document: StudioDocument;
+  document: Pick<StudioDocument, "title" | "subtitle" | "source" | "settings">;
   result: RenderResult | null;
   stale: boolean;
   rendering: boolean;
   renderError: string;
-  onRender: () => void;
+  onRender?: () => void;
   onEditSource: () => void;
   onDownload: () => void;
-  notify: Notify;
+  presentation: {
+    sceneCount: number;
+    download: (svg: string, options: ExportFrameOptions) => Promise<void>;
+    unavailable?: string;
+  };
+  notify?: Notify;
   onClose: () => void;
 }) {
   const [format, setFormat] = useState<Format>("png");
@@ -61,8 +67,10 @@ export default function ExportDialog({
   const [includeFrame, setIncludeFrame] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const report = notify ?? setSuccess;
   const visual = format === "png" || format === "svg" || format === "html";
-  const valid = result !== null && !stale && !renderError;
+  const valid = result !== null && !stale && !renderError && !(format === "html" && presentation.unavailable);
   const frame = useMemo(
     () =>
       visual && valid && result
@@ -79,6 +87,7 @@ export default function ExportDialog({
   const download = async () => {
     setBusy(true);
     setError("");
+    setSuccess("");
     try {
       if (format === "project") onDownload();
       else if (format === "source") {
@@ -87,20 +96,20 @@ export default function ExportDialog({
           `${filename}.mmd`,
           "text/plain;charset=utf-8",
         );
-        notify("Mermaid source downloaded.");
+        report("Mermaid source downloaded.");
       } else if (!frame)
         throw new Error(
           "Render the current diagram successfully before exporting it.",
         );
       else if (format === "svg") {
         downloadSvg(frame.svg, `${filename}.svg`);
-        notify("SVG downloaded.");
+        report("SVG downloaded.");
       } else if (format === "html") {
-        await exportPresentation(frame.svg, document);
-        notify("Offline HTML presentation downloaded.");
+        await presentation.download(frame.svg, { transparent, includeFrame });
+        report("Offline HTML presentation downloaded.");
       } else {
         const pixels = await exportPng(frame.svg, `${filename}.png`, scale);
-        notify(
+        report(
           `PNG downloaded at ${pixels.width.toLocaleString()} × ${pixels.height.toLocaleString()} pixels.`,
         );
       }
@@ -130,6 +139,7 @@ export default function ExportDialog({
             onClick={() => {
               setFormat(value);
               setError("");
+              setSuccess("");
             }}
             aria-pressed={format === value}
           >
@@ -205,7 +215,7 @@ export default function ExportDialog({
                   <span>
                     {format === "svg"
                       ? "Vector dimensions; scales without losing detail"
-                      : `${document.storyboard?.scenes.length || 0} scenes · Works offline`}
+                      : `${presentation.sceneCount} scenes · Works offline`}
                   </span>
                 </>
               )}
@@ -223,7 +233,9 @@ export default function ExportDialog({
           <CircleAlert size={18} />
           <div>
             <strong>
-              {renderError
+              {format === "html" && presentation.unavailable
+                ? presentation.unavailable
+                : renderError
                 ? "Correct the source to export a picture."
                 : !document.source.trim()
                   ? "Add a diagram to export a picture."
@@ -232,7 +244,7 @@ export default function ExportDialog({
                     : "Update the canvas before exporting."}
             </strong>
             <p>Project and Mermaid downloads are always available.</p>
-            <button
+            {(renderError || !document.source.trim() || onRender) && <button
               className="button secondary"
               disabled={rendering}
               onClick={
@@ -252,7 +264,7 @@ export default function ExportDialog({
               {renderError || !document.source.trim()
                 ? "Open source"
                 : "Render now"}
-            </button>
+            </button>}
           </div>
         </div>
       )}
@@ -262,6 +274,7 @@ export default function ExportDialog({
           {error}
         </p>
       )}
+      {success && <p role="status">{success}</p>}
       <div className="export-bottom">
         <span>
           {filename}.
