@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { CompanionGeneration } from './generation';
 import { issueCompanionTicket } from './issue-ticket';
+import { createLocalCompanionApi } from './local-api';
 import type { PricePolicy, ProviderUsage } from './price-policy';
 import { parseCompanionRequest } from './request';
 
@@ -67,10 +68,152 @@ async function setup(provider: Provider, filename = ':memory:') {
     return { bytes, requestHash, issued, generate, requestId: request.requestId };
   }
 
-  return { ledger, keys, resultKey, service, issue, advance: (ms: number) => { now = initialTime + ms; } };
+  const issueFromApi = (request: Parameters<typeof issueCompanionTicket>[0], owner: string, time: number) =>
+    issueCompanionTicket(request, owner, signing, keys, policy, ledger, time);
+  return { ledger, keys, resultKey, service, issue, issueFromApi, now: () => now,
+    advance: (ms: number) => { now = initialTime + ms; } };
+}
+
+function apiSession(subjectBinding: string, csrfToken: string, serviceEnabled = true) {
+  return { subjectBinding, csrfToken, serviceEnabled, disabledReason: null, modelLabel: 'Local provider fixture',
+    pricePolicy: policy, subjectAllowance: { remainingMicrousd: '38', resetsAt: '2026-11-21T00:00:00Z',
+      generationStartsPerMinute: 5, concurrentLimit: 2 }, globalCapacityAvailable: true,
+    sessionIdleExpiresAt: '2026-11-20T08:00:00Z', sessionAbsoluteExpiresAt: '2026-11-20T15:00:00Z',
+  };
 }
 
 describe.skipIf(!sqlite)('local companion generation with a provider stub', () => {
+  it('serves the local API with exact origin, session, CSRF, body and idempotency boundaries', async () => {
+    const origin = 'https://companion.example.invalid';
+    const csrf = 'c'.repeat(48);
+    let authenticated = true;
+    let enabled = true;
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    let release!: (outcome: typeof validOutcome) => void;
+    const result = new Promise<typeof validOutcome>(resolve => { release = resolve; });
+    const provider = vi.fn<Provider>(async () => { started(); return result; });
+    const env = await setup(provider);
+    const api = createLocalCompanionApi({ origin, generation: env.service, issue: env.issueFromApi, now: env.now,
+      async authenticate(request) {
+        const cookie = request.headers.get('Cookie');
+        if (!authenticated || (cookie !== '__Host-meridian-assist=owner' && cookie !== '__Host-meridian-assist=other')) return null;
+        const session = apiSession(cookie.endsWith('owner') ? subject : wrongSubject, csrf, enabled);
+        return { ...session, pricePolicy: { ...session.pricePolicy, serverCredential: 'fixture-server-credential' },
+          subjectAllowance: { ...session.subjectAllowance, privateState: 'fixture-private-state' },
+          identityCredential: 'fixture-identity-credential',
+        };
+      },
+      async logout() { authenticated = false; },
+    });
+    function read(path: string, owner = 'owner') {
+      return api(new Request(origin + path, { headers: { Cookie: '__Host-meridian-assist=' + owner } }));
+    }
+    function send(path: string, body: string, headers: Record<string, string> = {},
+      sourceOrigin: string | null = origin, signal?: AbortSignal) {
+      return api(new Request(origin + path, { method: 'POST', body, signal, headers: {
+        ...(sourceOrigin ? { Origin: sourceOrigin } : {}), Cookie: '__Host-meridian-assist=owner',
+        'Content-Type': 'application/json', 'X-CSRF-Token': csrf, ...headers,
+      } }));
+    }
+    try {
+      expect((await api(new Request(origin + '/v1/session'))).status).toBe(401);
+      const disclosure = await read('/v1/session');
+      expect(disclosure.headers.get('Cache-Control')).toBe('no-store');
+      expect(disclosure.headers.get('Access-Control-Allow-Origin')).toBeNull();
+      const publicFields = await disclosure.text();
+      expect(JSON.parse(publicFields)).toMatchObject({ authenticated: true, csrfToken: csrf, pricePolicy: policy });
+      expect(publicFields).not.toMatch(/subjectBinding|fixture-(?:server|private|identity)/);
+      const request = requestAt();
+      const { requestHash } = await parseCompanionRequest(encoder.encode(JSON.stringify(request)));
+      const ticketBody = JSON.stringify({ requestId: request.requestId, requestHash, acknowledgeBillableRequest: true,
+        pricePolicyVersion: policy.version, acknowledgedMaxChargeMicrousd: policy.maxChargeMicrousd });
+      for (const rejected of [
+        await send('/v1/tickets', ticketBody, {}, null),
+        await send('/v1/tickets', ticketBody, {}, origin + '.other'),
+        await send('/v1/tickets', ticketBody, { 'X-CSRF-Token': 'd'.repeat(48) }),
+      ]) expect(rejected.status).toBe(403);
+      expect(await (await read(`/v1/proposals/${request.requestId}`)).json()).toMatchObject({ code: 'REQUEST_NOT_FOUND' });
+      const duplicateKey = ticketBody.replace('{', '{"requestId":"duplicate",');
+      expect((await send('/v1/tickets', duplicateKey)).status).toBe(400);
+      expect((await send('/v1/tickets', ticketBody, { 'Content-Type': 'text/plain' })).status).toBe(400);
+      const oversized = await send('/v1/tickets', ' '.repeat(5_000), { 'Content-Length': '1' });
+      expect(oversized.status).toBe(413);
+      expect(oversized.headers.get('Content-Type')).toBe('application/problem+json');
+      const issued = await send('/v1/tickets', ticketBody);
+      expect(issued.status).toBe(201);
+      const issuedBody = await issued.json();
+      const repeated = await send('/v1/tickets', ticketBody);
+      expect(repeated.status).toBe(200);
+      expect(await repeated.json()).toEqual(issuedBody);
+      expect((await send('/v1/tickets', ticketBody.replace(requestHash, 'f'.repeat(64)))).status).toBe(409);
+      expect(provider).not.toHaveBeenCalled();
+      const envelope = JSON.stringify({ ticket: issuedBody.ticket, request });
+      const path = `/v1/proposals/${request.requestId}`;
+      const headers = { 'Idempotency-Key': request.requestId };
+      expect((await send('/v1/proposals', envelope)).status).toBe(400);
+      expect((await send('/v1/proposals', envelope, { 'Idempotency-Key': requestAt(2).requestId })).status).toBe(409);
+      const client = new AbortController();
+      const first = send('/v1/proposals', envelope, headers, origin, client.signal);
+      await ready;
+      client.abort();
+      const duplicate = await send('/v1/proposals', envelope, headers);
+      expect(duplicate.status).toBe(202);
+      expect(await duplicate.json()).toMatchObject({ state: 'running', resultAvailable: false, cost: { reservedMicrousd: '38' } });
+      expect(await (await read(path, 'other')).json()).toEqual(await (await read(`/v1/proposals/${requestAt(2).requestId}`)).json());
+      release(validOutcome);
+      const complete = await first;
+      expect(complete.status).toBe(200);
+      const published = await complete.json();
+      expect(published).toMatchObject({ requestId: request.requestId, state: 'succeeded', resultAvailable: true });
+      expect(await (await read(path)).json()).toEqual(published);
+      enabled = false;
+      expect((await send('/v1/tickets', ticketBody)).status).toBe(503);
+      expect((await read(path)).status).toBe(200);
+      env.advance(15 * 60_000);
+      const expired = await read(path);
+      expect(expired.status).toBe(410);
+      expect(await expired.json()).toMatchObject({ code: 'RESULT_EXPIRED', cost: { settledMicrousd: '9' } });
+      const signedOut = await send('/v1/logout', '{}');
+      expect(signedOut.status).toBe(204);
+      expect(signedOut.headers.get('Set-Cookie')).toMatch(/Max-Age=0.*Path=\/.*Secure.*HttpOnly.*SameSite=Lax/);
+      expect((await read(path)).status).toBe(401);
+      expect(provider).toHaveBeenCalledTimes(1);
+    } finally { release(validOutcome); env.ledger.close(); }
+  });
+
+  it('reports an uncertain provider result through the API without retrying or releasing cost', async () => {
+    const origin = 'https://companion.example.invalid';
+    const csrf = 'c'.repeat(48);
+    const provider = vi.fn<Provider>(async () => { throw new Error('private-provider-fixture'); });
+    const env = await setup(provider);
+    const api = createLocalCompanionApi({ origin, generation: env.service, issue: env.issueFromApi, now: env.now,
+      async authenticate() { return apiSession(subject, csrf); }, async logout() {},
+    });
+    try {
+      const request = requestAt();
+      const { issued } = await env.issue(request);
+      const send = () => api(new Request(origin + '/v1/proposals', { method: 'POST',
+        body: JSON.stringify({ ticket: issued.ticket, request }), headers: {
+          Origin: origin, 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': request.requestId,
+        },
+      }));
+      const reserved = { reservedMicrousd: '38', settledMicrousd: null, costStatus: 'reserved_unknown' };
+      const first = await send();
+      expect(first.status).toBe(504);
+      const problem = await first.text();
+      expect(JSON.parse(problem)).toMatchObject({ code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: false, state: 'uncertain', cost: reserved });
+      expect(problem).not.toContain('private-provider-fixture');
+      const retry = await send();
+      expect(retry.status).toBe(504);
+      expect(await retry.text()).toBe(problem);
+      const status = await api(new Request(`${origin}/v1/proposals/${request.requestId}`));
+      expect(status.status).toBe(200);
+      expect(await status.json()).toMatchObject({ state: 'uncertain', resultAvailable: false, cost: reserved });
+      expect(provider).toHaveBeenCalledTimes(1);
+    } finally { env.ledger.close(); }
+  });
+
   it('reports only owned status and keeps exact cost after the proposal expires', async () => {
     let release!: (outcome: typeof validOutcome) => void;
     const completed = new Promise<typeof validOutcome>(resolve => { release = resolve; });
