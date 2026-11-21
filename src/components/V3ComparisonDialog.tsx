@@ -17,9 +17,11 @@ type Choice = DesignRecipeId | LayoutAlternativeId;
 type ComparisonMode = "design" | "layout";
 type ReadabilityEvidence = { smallest: number | null; measured: number; unknown: number };
 type ScopeSummary = NonNullable<NonNullable<ReturnType<Editor["readDesignPreview"]>>["scope"]>;
-type Preview = { scope?: ScopeSummary; proposal: ReadyProposal; changes: { label: string; before: unknown; after: unknown }[]; url: string; width: number; height: number;
+type Preview = { scope?: ScopeSummary; proposal: ReadyProposal; changes: { label: string; before: unknown; after: unknown }[]; url: string; width: number; height: number; estimatedBytes: number;
   evidence?: { current: ReadabilityEvidence; proposed: ReadabilityEvidence; crossings?: LayoutCrossingComparison | null } };
 
+type Candidate = { preview: Preview; error?: never } | { preview?: never; error: string };
+const candidateCacheBytes = 8 * 1024 * 1024;
 const viewingProfile = { width: 1280, height: 720, padding: 32 };
 function labelEvidence(result: RenderResult, frame: FrameGeometry): ReadabilityEvidence {
   const scale = viewingScale(viewingProfile, frame);
@@ -54,7 +56,9 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   const [direction, setDirection] = useState<LayoutIntent["direction"]>("keep");
   const offerRoleShapes = allowScopedDesign && choice === "presentation" && selectedRoleCounts.some(([id]) => id === "decision");
   const offerTypography = allowScopedDesign && scopeKind !== "diagram" && choice === "presentation";
-  const [preview, setPreview] = useState<Preview>();
+  const [candidates, setCandidates] = useState(() => new Map<Choice, Candidate>());
+  const retained = useRef(candidates);
+  const preview = candidates.get(choice)?.preview;
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -66,13 +70,43 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
     const work = active.current;
     active.current = undefined;
     work?.abort();
+    for (const candidate of retained.current.values()) if (candidate.preview) URL.revokeObjectURL(candidate.preview.url);
   }, []);
-  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+
+  function saveCandidate(option: Choice, candidate?: Candidate) {
+    const next = new Map(retained.current);
+    const old = next.get(option)?.preview;
+    if (old) URL.revokeObjectURL(old.url);
+    next.delete(option);
+    if (candidate) next.set(option, candidate);
+    let estimated = Array.from(next.values()).reduce((total, item) => total + (item.preview?.estimatedBytes ?? 0), 0);
+    for (const [id, older] of next) {
+      if (estimated <= candidateCacheBytes) break;
+      if (id === option || !older.preview) continue;
+      estimated -= older.preview.estimatedBytes;
+      URL.revokeObjectURL(older.preview.url);
+      next.delete(id);
+    }
+    retained.current = next;
+    setCandidates(next);
+  }
 
   function resetPreview() {
-    setPreview(undefined);
+    for (const candidate of retained.current.values()) if (candidate.preview) URL.revokeObjectURL(candidate.preview.url);
+    retained.current = new Map();
+    setCandidates(retained.current);
     setPainted(false);
     setView("current");
+    setError("");
+    setCancelled(false);
+  }
+
+  function chooseOption(next: Choice) {
+    if (next === choice) return;
+    if (preview && preview.estimatedBytes > candidateCacheBytes) saveCandidate(choice);
+    setChoice(next);
+    setPainted(false);
+    setView(retained.current.get(next)?.preview ? "proposed" : "current");
     setError("");
     setCancelled(false);
   }
@@ -98,7 +132,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
     setPainted(false);
     setError("");
     setCancelled(false);
-    setPreview(undefined);
+    saveCandidate(choice);
     setView("current");
     try {
       // Give the pending controls a paint opportunity before Mermaid work.
@@ -126,13 +160,14 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
         }
       }
       work.signal.throwIfAborted();
-      setPreview({ proposal, changes: candidate.changes, ...geometry, scope: designCandidate?.scope,
+      saveCandidate(choice, { preview: { proposal, changes: candidate.changes, ...geometry, scope: designCandidate?.scope,
+        estimatedBytes: (svg.length + candidate.rendered.result.svg.length) * 2,
         evidence: layoutCandidate ? { current: labelEvidence(layoutCandidate.current.result, currentSize),
           proposed: labelEvidence(candidate.rendered.result, geometry), crossings } : undefined,
-        url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) });
+        url: URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" })) } });
       setView("proposed");
     } catch (reason) {
-      if (!work.signal.aborted) setError(reason instanceof Error ? reason.message : "This option could not be previewed.");
+      if (!work.signal.aborted) saveCandidate(choice, { error: reason instanceof Error ? reason.message : "This option could not be previewed." });
     } finally {
       if (active.current === work) {
         active.current = undefined;
@@ -146,7 +181,8 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
     const status = onApply(preview.proposal);
     if (status === "applied" || status === "unchanged") onClose();
     else {
-      setPreview(undefined);
+      if (status === "stale") resetPreview();
+      else saveCandidate(choice);
       setPainted(false);
       setView("current");
       setError(status === "stale" ? "The project changed. Refresh the preview." : "This option could not be applied with Undo.");
@@ -227,9 +263,11 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
       <div className="recipe-options" role="group" aria-label={layout ? "Layout alternatives" : "Design recipes"}>
         {options.map(option => {
           return <button className="button secondary" key={option.id} aria-pressed={choice === option.id} disabled={busy}
-            onClick={() => { if (choice !== option.id) { setChoice(option.id); resetPreview(); } }}>
+            onClick={() => chooseOption(option.id)}>
             <strong>{option.title}</strong><span>{!layout && scopeKind !== "diagram" && "nodeStyle" in option
               ? `Fill ${option.nodeStyle.fill} · Text ${option.nodeStyle.color} · Border ${option.nodeStyle.stroke}` : option.description}</span>
+            {candidates.get(option.id)?.preview && <span>Preview ready</span>}
+            {candidates.get(option.id)?.error && <span>Preview failed</span>}
           </button>;
         })}
       </div>
@@ -251,7 +289,11 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
           <figcaption>Current frame · {currentSize.width} × {currentSize.height}</figcaption>
         </figure>
         {preview && <figure hidden={view !== "proposed"}>
-          <img src={preview.url} alt={`Proposed ${title} ${mode}`} onLoad={() => setPainted(true)} onError={() => setError("The proposed image could not be displayed.")} />
+          <img key={preview.url} src={preview.url} alt={`Proposed ${title} ${mode}`} onLoad={() => setPainted(true)} onError={() => {
+            saveCandidate(choice, { error: "The proposed image could not be displayed." });
+            setPainted(false);
+            setView("current");
+          }} />
           <figcaption>Proposed frame · {preview.width} × {preview.height}</figcaption>
         </figure>}
       </div>
@@ -288,7 +330,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
       </section>}
       {busy && <p role="status">Rendering the {title} {mode}…</p>}
       {cancelled && <p role="status">Preview cancelled. Your choices are ready to preview again.</p>}
-      {error && <p role="alert">{error}</p>}
+      {(error || candidates.get(choice)?.error) && <p role="alert">{error || candidates.get(choice)?.error}</p>}
       <div className="dialog-actions">
         {busy && <button className="button quiet" onClick={cancelPreview}>Cancel preview</button>}
         <button ref={previewButton} className="button secondary" disabled={busy} onClick={() => void prepare()}>Preview {title}</button>

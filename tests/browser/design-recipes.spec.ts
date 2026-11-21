@@ -431,3 +431,68 @@ test('reviews larger selected labels and discloses measured movement outside the
   const undone = await downloadProject(page, live);
   expect(undone).toEqual({ ...original, revision: edited.revision + 1, updatedAt: undone.updatedAt });
 });
+
+test('preserves a successful design candidate when a different option fails', async ({ page }) => {
+  const source = 'flowchart LR\n  A[Client]\n  B[Service]\n  A route@--> B\n';
+  const project = { ...createDocument(), title: 'Independent design candidates', source };
+  await page.addInitScript(({ key, project }) => {
+    localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] }));
+    const parse = DOMParser.prototype.parseFromString;
+    let failNextSvg = false;
+    window.addEventListener('test-design-option-failure', () => { failNextSvg = true; });
+    DOMParser.prototype.parseFromString = function(text, type) {
+      if (failNextSvg && type === 'image/svg+xml') {
+        failNextSvg = false;
+        document.documentElement.dataset.designFault = 'used';
+        return parse.call(this, '<malformed', type);
+      }
+      return parse.call(this, text, type);
+    };
+  }, { key: STORAGE_KEY, project });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('button', { name: 'Project migration and recovery' }).click();
+  await page.getByRole('button', { name: 'Prepare v3 copies' }).click();
+  await page.getByRole('button', { name: 'Open v3 project Independent design candidates' }).click();
+  const live = page.getByRole('dialog', { name: project.title, exact: true });
+  await expect(live.getByRole('img', { name: /Diagram preview for/ })).toBeVisible();
+  const original = await downloadProject(page, live);
+  await live.getByRole('button', { name: 'Explore designs', exact: true }).click();
+  const design = page.getByRole('dialog', { name: 'Explore designs' });
+  const choices = design.getByRole('group', { name: 'Design recipes' });
+
+  await design.getByRole('button', { name: 'Preview Clear' }).click();
+  const clear = choices.getByRole('button', { name: /^Clear/ });
+  const apply = design.getByRole('button', { name: 'Apply Clear', exact: true });
+  const image = design.getByRole('img', { name: 'Proposed Clear design' });
+  await expect(apply).toBeEnabled();
+  const url = await image.getAttribute('src');
+  expect(url).toBeTruthy();
+  await expect(clear).toContainText('Preview ready');
+  const presentation = choices.getByRole('button', { name: /^Presentation/ });
+  await presentation.click();
+  await design.getByRole('button', { name: 'Preview Presentation' }).focus();
+  await page.evaluate(() => window.dispatchEvent(new Event('test-design-option-failure')));
+  await design.getByRole('button', { name: 'Preview Presentation' }).press('Enter');
+  await expect(page.locator('html')).toHaveAttribute('data-design-fault', 'used');
+  await expect(design.getByRole('alert')).toBeVisible();
+  await expect(presentation).toContainText('Preview failed');
+  await expect(clear).toContainText('Preview ready');
+  await expect(design.getByRole('button', { name: 'Apply Presentation', exact: true })).toBeDisabled();
+
+  await clear.focus();
+  await clear.press('Enter');
+  await expect(design.getByRole('alert')).toHaveCount(0);
+  await expect(presentation).toContainText('Preview failed');
+  await expect(image).toHaveAttribute('src', url!);
+  await expect(apply).toBeEnabled();
+  await apply.click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const accepted = await downloadProject(page, live);
+  expect(accepted.source).toBe(source);
+  expect(accepted.design.recipe).toEqual({ id: 'clear', version: '1.0.0' });
+  await live.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(live.getByText('Saved in this browser.')).toBeVisible();
+  const undone = await downloadProject(page, live);
+  expect(undone).toEqual({ ...original, revision: accepted.revision + 1, updatedAt: undone.updatedAt });
+});
