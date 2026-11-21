@@ -41,6 +41,16 @@ test('adds one decision and two explicitly chosen branches in a single reversibl
   await expect(review).toContainText('Incoming connection from Start (A).');
   await expect(review).toContainText('Proceed → Existing destination (B)');
   await expect(review).toContainText('Review → Ask for review (new step)');
+  const reorder = edit.getByRole('button', { name: 'Show second branch first' });
+  await reorder.focus();
+  await reorder.press('Space');
+  await expect(reorder).toHaveAttribute('aria-pressed', 'true');
+  await expect(reorder).toBeFocused();
+  await expect(edit.getByRole('group', { name: /^Branch [12]$/ }).first()).toHaveAccessibleName('Branch 2');
+  await expect(existing.getByRole('textbox', { name: 'Connection label' })).toHaveValue('Proceed');
+  await expect(newStep.getByRole('textbox', { name: 'New step label' })).toHaveValue('Ask for review');
+  await expect(review.getByRole('listitem')).toHaveText(['Review → Ask for review (new step)', 'Proceed → Existing destination (B)']);
+  await expect(edit.getByRole('button', { name: 'Apply change' })).toBeEnabled();
   await page.screenshot({ path: info.outputPath('decision-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: info.outputPath('decision-mobile.png') });

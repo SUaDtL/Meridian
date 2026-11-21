@@ -49,6 +49,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
     ? group?.id ?? "" : initialOperation === "addEdge" ? "" : initialTarget);
   const [members, setMembers] = useState<ReadonlySet<string>>(() => new Set(groupMembers?.ids));
   const [branches, setBranches] = useState(emptyBranches);
+  const [showSecondBranchFirst, setShowSecondBranchFirst] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Preview>();
@@ -62,6 +63,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   const ungrouping = operation === "removeGroup";
   const deletingGroup = operation === "removeGroupContents";
   const movingToGroup = operation === "moveToGroup";
+  const displayedBranches = (showSecondBranchFirst ? [1, 0] : [0, 1]).map(index => ({ index, branch: branches[index] }));
   const incident = (removingNode || movingToGroup) && to ? edges.filter(edge => edge.sourceId === to || edge.targetId === to) : [];
   const unidentified = incident.filter(edge => !edge.explicit);
   const boundary = grouping ? edges.filter(edge =>
@@ -166,6 +168,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
             setTo(next === "removeGroup" || next === "removeGroupContents" ? group?.id ?? "" : "");
             setMembers(new Set());
             setBranches(emptyBranches());
+            setShowSecondBranchFirst(false);
             resetPreview();
           }}>
             {removingEdges ? <option value="removeEdges">Delete selected connections</option>
@@ -234,7 +237,9 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
             onChange={event => { setFrom(event.target.value); resetPreview(); }}>
             <option value="">No incoming connection</option>{nodeOptions}
           </select></label>
-          {branches.map((branch, index) => <fieldset key={index} className="guided-process-fieldset" disabled={busy}>
+          <button className="button quiet" type="button" disabled={busy} aria-pressed={showSecondBranchFirst}
+            onClick={() => setShowSecondBranchFirst(value => !value)}>Show second branch first</button>
+          {displayedBranches.map(({ branch, index }) => <fieldset key={index} className="guided-process-fieldset" disabled={busy}>
             <legend>Branch {index + 1}</legend>
             <label>Connection label<input maxLength={400} value={branch.label}
               onChange={event => editBranch(index, { ...branch, label: event.target.value })} /></label>
@@ -344,7 +349,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         </section>}
         {preview && operation === "addDecision" && <section aria-label="Decision connections">
           {from && <p>Incoming connection from {nodes.find(node => node.id === from)?.label}.</p>}
-          <ul>{branches.map(({ label: edge, destination }, index) => <li key={index}>{edge} → {destination.kind === "new"
+          <ul>{displayedBranches.map(({ branch: { label: edge, destination }, index }) => <li key={index}>{edge} → {destination.kind === "new"
             ? `${destination.label} (new step)` : nodes.find(node => node.id === destination.id)?.label}</li>)}</ul>
         </section>}
         <div className="dialog-actions">
