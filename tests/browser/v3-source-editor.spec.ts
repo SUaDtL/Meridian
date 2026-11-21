@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 
@@ -497,3 +499,76 @@ test('keeps a native composition together and defers source review until it is c
     }
   }
 });
+
+for (const mode of ['hosted', 'standalone'] as const) {
+  test(`recovers from a worker deadline and rejects unsafe source without project writes (${mode})`, async ({ page, context, baseURL }) => {
+    const network: string[] = [];
+    const origin = mode === 'hosted' ? new URL(baseURL!).origin : undefined;
+    const isRemote = (url: string) => /^https?:/.test(url) && new URL(url).origin !== origin;
+    context.on('request', request => {
+      if (isRemote(request.url())) network.push(request.url());
+    });
+    await context.route(isRemote, route => route.abort('blockedbyclient'));
+    if (mode === 'standalone') await context.setOffline(true);
+    await page.addInitScript(() => {
+      const nativePost = Worker.prototype.postMessage;
+      const nativeTerminate = Worker.prototype.terminate;
+      let stalled: Worker | undefined;
+      Worker.prototype.postMessage = function (...args) {
+        if (args[0]?.version === 1 && typeof args[0]?.text === 'string') {
+          if (!stalled) { stalled = this; return; }
+          if (this !== stalled) document.documentElement.dataset.freshSourceWorker = 'true';
+        }
+        return nativePost.apply(this, args);
+      };
+      Worker.prototype.terminate = function () {
+        if (this === stalled) document.documentElement.dataset.stalledSourceWorkerStopped = 'true';
+        nativeTerminate.call(this);
+      };
+    });
+    if (mode === 'hosted') await page.goto('/');
+    else await page.goto(pathToFileURL(resolve('standalone/Meridian.html')).href);
+    await page.getByRole('button', { name: 'Build with guidance' }).click();
+    const wizard = page.getByRole('dialog', { name: 'Build with guidance' });
+    await wizard.getByLabel('Project title').fill('Bounded source review');
+    const steps = wizard.getByLabel('Put one step on each line');
+    await steps.fill('Start\nFinish');
+    await wizard.getByRole('button', { name: 'Review connections' }).click();
+    const retry = wizard.getByRole('button', { name: 'Retry for five seconds' });
+    await expect(retry).toBeEnabled();
+    await expect(page.locator('html')).toHaveAttribute('data-stalled-source-worker-stopped', 'true');
+    await expect(steps).toHaveValue('Start\nFinish');
+    await retry.click();
+    await expect(wizard.getByText('2 steps · 1 connections · New project')).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-fresh-source-worker', 'true');
+    await wizard.getByRole('button', { name: 'Preview process' }).click();
+    await wizard.getByRole('button', { name: 'Create process' }).click();
+    const live = page.getByRole('dialog', { name: 'Bounded source review' });
+    await expect(live.getByText('Saved in this browser.')).toBeVisible();
+    const original = await download(page, live);
+    await live.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+    const input = editor.getByRole('textbox', { name: 'Mermaid source' });
+    const apply = editor.getByRole('button', { name: 'Apply source' });
+    const preview = editor.getByRole('button', { name: 'Preview source' });
+    for (const [draft, diagnostic] of [
+      ['flowchart LR\n A["unclosed', 'Mermaid syntax'],
+      ['flowchart LR\n A[[', 'Mermaid syntax'],
+      ['flowchart LR\n A@{ img: "https://example.invalid/shape.png" }', 'Resource restriction'],
+      ['flowchart LR\n A[Start]\n style A fill:u\\72l(https://example.invalid/style.svg)', 'Resource restriction'],
+    ]) {
+      await input.fill(draft);
+      await preview.click();
+      await expect(editor.getByRole('alert')).toContainText(diagnostic);
+      await expect(apply).toBeDisabled();
+      await expect.poll(() => input.innerText()).toBe(draft);
+    }
+    await input.fill(original.source + '\n  review_recovered[Recovered]');
+    await preview.click();
+    await expect(apply).toBeEnabled();
+    await editor.getByRole('button', { name: 'Close', exact: true }).click();
+    expect(await download(page, live)).toEqual(original);
+    await expect(live.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+    expect(network).toEqual([]);
+  });
+}
