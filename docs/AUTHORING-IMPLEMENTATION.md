@@ -1,5 +1,7 @@
 # Authoring implementation ledger
 
+The [acceptance coverage](AUTHORING-COVERAGE.md) maps all 118 package stories to current source, tests, prerequisites and remaining work.
+
 The handoff is Meridian Design Package v1.0. Its baseline and the fetched `main` both resolve to `949e4d181a77a4ffc2c67aaab876dea70a0f1fc7`. The archive CRC check passed and all 193 listed entries matched their recorded byte counts and SHA-256 hashes. The supplied research, initial design and review files are preserved in the original archive. Below, specification paths refer to that archive.
 
 ## Current application and migration boundaries
@@ -385,3 +387,11 @@ No acceptance story is marked fully verified at this checkpoint. G02 and G03 rem
 - The offline assistant exchange permits one solid connection between current nodes when a writable node and its second endpoint have explicit authorization. A read-only attachment grants permission for the connection only. The preview, Apply and Undo use the pinned source proof and local request matching. [PR #129](https://github.com/SUaDtL/Meridian/pull/129)
 - The OpenAPI 3.1 importer resolves static anchors and registered logical IDs declared on supported supplied components. Cyclic references produce declared edges without expanding the target, making external requests, or retaining the logical URLs. [PR #131](https://github.com/SUaDtL/Meridian/pull/131)
 - Small-screen story review opens a separate canvas for the selected scene. Playback starts only on request. Returning restores the originating scene control, and Escape closes only the canvas. [PR #132](https://github.com/SUaDtL/Meridian/pull/132)
+
+## Verified recovery, chart tables, and Outline return
+
+- Process and manual systems creation can download a normalized draft after a storage failure and continue through creation. Process drafts omit raw paste. Manual systems drafts retain authored text, roles, shapes and reviewed directions. [PR #134](https://github.com/SUaDtL/Meridian/pull/134) · [Published workflow](https://github.com/SUaDtL/Meridian/actions/runs/44864674531)
+- A reviewed nested deletion inventories descendants, direct container links, scene annotations and the exact indexed-style changes. Chromium confirms exact source, identities, cancellation and Undo. [PR #135](https://github.com/SUaDtL/Meridian/pull/135)
+- Offline assistant exchange accepts one explicitly enabled standalone node. Its read-only context remains bound to the reviewed request, and the Chromium fixture refuses a context rename, verifies exact Apply and Undo, and checks request consumption. The dedicated service still requires operator and deployment decisions. [PR #136](https://github.com/SUaDtL/Meridian/pull/136)
+- The chart table identifies each observation through a row header and retains measurement units. Count aggregations use counts. Chromium compares the accessible title, description, row context and the exact measure in studio and portable HTML. Physical screen-reader validation remains open. [PR #139](https://github.com/SUaDtL/Meridian/pull/139) · [Workflow evidence](https://github.com/SUaDtL/Meridian/actions/runs/44865281885)
+- Jumping from a reviewed relationship to source can return to the same filtered Outline view while the authored source is current. Chromium verifies the exact relationship, active focus, selection and filter after a switch to phone width. [PR #133](https://github.com/SUaDtL/Meridian/pull/133)
