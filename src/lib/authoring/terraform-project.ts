@@ -17,7 +17,8 @@ export async function prepareTerraformProject(facts: TerraformFacts, selected: R
   const title = facts.planned ? 'Terraform planned resource inventory' : 'Terraform state resource inventory';
   const prepared = await prepareGuidedFlowchart(title, {
     direction: 'LR',
-    nodes: resources.map(item => ({ key: item.address, label: item.address })),
+    // The pinned Mermaid renderer can display these bracket glyphs as literal text.
+    nodes: resources.map(item => ({ key: item.address, label: item.address.replaceAll('[', '［').replaceAll(']', '］') })),
     edges: references.map(item => ({ from: item.source, to: item.target, label: 'Declared reference' })),
   }, signal);
   signal.throwIfAborted();
