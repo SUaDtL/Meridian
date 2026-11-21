@@ -25,6 +25,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
   const [selected, setSelected] = useState(new Map<string, AssistSelection>());
   const [writableEdges, setWritableEdges] = useState(new Set<string>());
   const [edgeOperation, setEdgeOperation] = useState<AssistConnectionOperation>("setEdgeLabel");
+  const [allowNodeRemoval, setAllowNodeRemoval] = useState(false);
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(batchSize);
   const [request, setRequest] = useState<RequestPreview>();
@@ -59,7 +60,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
     void run("Preparing request", async signal => {
       const edgeStyles = new Map(elements.flatMap(item => item.kind === "edge" && item.appearance?.lineStyle
         ? [[item.key, item.appearance.lineStyle] as const] : []));
-      const result = await buildAssistRequest(project, table, edgeLabels, edgeStyles, selected, instruction, writableEdges, edgeOperation);
+      const result = await buildAssistRequest(project, table, edgeLabels, edgeStyles, selected, instruction, writableEdges, edgeOperation, allowNodeRemoval);
       signal.throwIfAborted();
       if (editor.snapshot() !== project) throw new Error("The project changed. Close this dialog and review the current diagram.");
       setRequest(result);
@@ -132,7 +133,7 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
   }
   return <Modal title="External assistant file exchange" wide busy={durableActions.has(busy)} onClose={onClose}>
     {!candidate && !request && <>
-      <p>Download a scoped request or review a returned proposal. A proposal can edit one label or remove one explicitly authorized connection. Meridian processes the files locally.</p>
+      <p>Download a scoped request or review a returned proposal. A proposal can make one authorized label edit or removal. Meridian processes the files locally.</p>
       <div className="dialog-actions">
         <button className="button secondary" aria-pressed={mode === "export"} disabled={!!busy} onClick={() => { setMode("export"); setError(""); }}>Prepare a request</button>
         <button className="button secondary" aria-pressed={mode === "import"} disabled={!!busy} onClick={() => { setMode("import"); setError(""); }}>Review a proposal</button>
@@ -173,6 +174,10 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
               }} />{connectionName(edge.id)}{edgeLabels.get(edge.id) && ` · ${edgeLabels.get(edge.id)}`}
             </label>)}
         </fieldset>}
+        <label className="check-label">
+          <input type="checkbox" checked={allowNodeRemoval} disabled={!!busy} onChange={event => setAllowNodeRemoval(event.target.checked)} />
+          Allow removal of one writable node and all its writable incident connections
+        </label>
         <div className="dialog-actions">
           <button className="button primary" type="submit" disabled={!!busy || (!writable && !writableEdges.size) || !instruction.trim()}>Review what will be shared</button>
         </div>
@@ -189,6 +194,10 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
         : "A proposal may change one label on an element marked writable below."}</p>
       {request.request.allowedOperations.includes("removeEdge") && request.request.allowedOperations.includes("setNodeLabel") &&
         <p>It may also rename one writable node as its single change.</p>}
+      {request.removableNodes.length > 0 && <>
+        <p>As its single change, the proposal may remove one of these nodes and all its incident connections.</p>
+        <ul aria-label="Nodes eligible for removal">{request.removableNodes.map(node => <li key={node.id}>{node.label}</li>)}</ul>
+      </>}
       <ul>{request.request.graph.nodes.map(node => <li key={node.id}>
         {node.label} · {request.request.scope.writableElementIds.includes(node.id) ? "Writable node" : "Read-only context"}
       </li>)}</ul>
@@ -210,23 +219,31 @@ export default function AssistExchangeDialog({ db, editor, project, table, eleme
       {candidate.op === "setNodeLabel" ? <p>Rename {labels.get(candidate.targetId)} to {candidate.label}.</p>
         : candidate.op === "removeEdge" ? <p>Remove {connectionName(candidate.targetId)}
           {edgeLabels.get(candidate.targetId) && ` · ${edgeLabels.get(candidate.targetId)}`}.</p>
+        : candidate.op === "removeNode" ? <>
+          <p>Remove {labels.get(candidate.targetId)} and every listed incident connection.</p>
+          {candidate.incidentEdgeIds.length > 0 && <ul aria-label="Connections to remove">
+            {candidate.incidentEdgeIds.map(id => <li key={id}>{connectionName(id)}{edgeLabels.get(id) && ` · ${edgeLabels.get(id)}`}</li>)}
+          </ul>}
+        </>
         : <p>{candidate.label ? <>Set the label of {connectionName(candidate.targetId)} to {candidate.label}.</>
           : <>Clear the label of {connectionName(candidate.targetId)}.</>}</p>}
-      {candidate.op === "removeEdge" && candidate.impact && <section aria-label="Retained annotations">
+      {candidate.impact && <section aria-label="Retained annotations">
         <p>{candidate.impact.sceneReferenceCount} scene references and {candidate.impact.styleCount} style records will remain as unresolved annotations.</p>
         {candidate.impact.sceneTitles.length > 0 && <ul aria-label="Affected scenes">
           {candidate.impact.sceneTitles.map((title, index) => <li key={index}>{title}</li>)}
         </ul>}
       </section>}
       <img src={candidate.url} alt={candidate.op === "setNodeLabel" ? "Diagram preview with proposed node label"
-        : candidate.op === "removeEdge" ? "Diagram preview after proposed connection removal" : "Diagram preview with proposed connection label"}
+        : candidate.op === "removeEdge" ? "Diagram preview after proposed connection removal"
+        : candidate.op === "removeNode" ? "Diagram preview after proposed node removal" : "Diagram preview with proposed connection label"}
         onLoad={() => setPainted(true)}
         onError={() => setError("The candidate diagram could not be displayed.")} />
       <div className="dialog-actions">
         <button className="button quiet" disabled={!!busy} onClick={() => setCandidate(undefined)}>Back to proposal file</button>
         <button className="button primary" disabled={!painted || !!busy} onClick={apply}>
           {candidate.op === "setNodeLabel" ? "Apply reviewed rename"
-            : candidate.op === "removeEdge" ? "Apply reviewed connection removal" : "Apply reviewed connection label"}
+            : candidate.op === "removeEdge" ? "Apply reviewed connection removal"
+            : candidate.op === "removeNode" ? "Apply reviewed node removal" : "Apply reviewed connection label"}
         </button>
       </div>
     </section>}
