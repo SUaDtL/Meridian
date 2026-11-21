@@ -372,13 +372,65 @@ export function supportedUngroupSourceId(source: string) {
   catch { return undefined; }
 }
 
-export function planGroupContentsRemoval(source: string, groupId: string, memberIds: readonly string[], incidentIds: readonly string[]) {
-  const group = groupRemovalPlan(source);
-  if (group.sourceId !== groupId) throw unsupported();
+function groupContents(parsed: ReturnType<typeof readSubset>, sourceId: string) {
+  const children = parsed.groups.get(sourceId);
+  if (!children) throw unsupported();
+  const descendants = new Set<string>(children);
+  for (const id of descendants) {
+    for (const child of parsed.groups.get(id) ?? []) descendants.add(child);
+  }
+  const endpoints = new Set([sourceId, ...descendants]);
+  const connections = parsed.edges.filter(edge => endpoints.has(edge.from) || endpoints.has(edge.to));
+  return { descendants, endpoints, connections };
+}
+
+export function groupContentsDeletionScopes(source: string) {
+  const scopes = new Map<string, { members: string[]; connections: string[]; unavailable?: string }>();
+  try {
+    const parsed = readSubset(source, true);
+    for (const id of parsed.groups.keys()) {
+      const { descendants, connections } = groupContents(parsed, id);
+      try {
+        groupContentsPatches(source, parsed, id, descendants);
+        scopes.set(id, { members: [...descendants], connections: connections.map(item => item.id!) });
+      } catch (error) {
+        scopes.set(id, { members: [], connections: [], unavailable: error instanceof Error ? error.message : unsupported().message });
+      }
+    }
+  } catch { /* Unsupported diagrams have no reviewed deletion targets. */ }
+  return scopes;
+}
+
+function groupContentsPatches(source: string, parsed: ReturnType<typeof readSubset>, sourceId: string, descendants: ReadonlySet<string>) {
+  const groups = [sourceId, ...[...descendants].filter(id => parsed.groups.has(id))];
+  const leaves = [...descendants].filter(id => parsed.nodes.has(id));
+  if (leaves.length === parsed.nodes.size) throw new Error('Keep at least one node in the diagram.');
+  const parent = [...parsed.groups.values()].find(members => members.includes(sourceId));
+  if (parent?.length === 1) throw new Error('Keep at least one member in the containing group.');
+  const patches = groups.flatMap(id => groupWrapperPatches(source, parsed, id));
+  const endpoints = new Set([sourceId, ...descendants]);
+  const removed = new Set<number>();
+  parsed.edges.forEach(({ id, from, to }, index) => {
+    if (!endpoints.has(from) && !endpoints.has(to)) return;
+    if (!id) throw new Error('An incident connection needs an explicit source ID before deleting this group and its contents.');
+    removed.add(index);
+  });
+  return [...patches, ...leaves.map(id => replace(parsed.nodes.get(id)!.declaration, '')),
+    ...planEdgeRemovals(parsed.edges, parsed.styles, removed)];
+}
+
+export function planGroupContentsRemoval(source: string, sourceId: string, memberIds: readonly string[], incidentIds: readonly string[]) {
+  const parsed = readSubset(source, true);
+  const { descendants, connections } = groupContents(parsed, sourceId);
   const members = new Set(memberIds);
-  if (members.size !== memberIds.length || members.size !== group.memberIds.length
-    || group.memberIds.some(id => !members.has(id))) throw new Error('Review every current group member before deleting its contents.');
-  return { ...group, afterGroupRemoval: planNodeRemovals(group.flatSource, memberIds, incidentIds, true) };
+  if (members.size !== memberIds.length || members.size !== descendants.size
+    || [...descendants].some(id => !members.has(id))) throw new Error('Review every current group member before deleting its contents.');
+  const patches = groupContentsPatches(source, parsed, sourceId, descendants);
+  const reviewed = new Set(incidentIds);
+  if (reviewed.size !== incidentIds.length || reviewed.size !== connections.length || connections.some(item => !reviewed.has(item.id!))) {
+    throw new Error('Review all incident connections before deleting this group and its contents.');
+  }
+  return { sourceId, patches };
 }
 
 function standaloneDeclaration(source: string, declaration: RecordSpan) {
@@ -391,12 +443,16 @@ function standaloneDeclaration(source: string, declaration: RecordSpan) {
 }
 
 function removeGroupWrappers(source: string, group: ReturnType<typeof readSubset>, sourceId: string) {
-  const opening = group.groupDeclarations.get(sourceId);
-  const ending = group.groupEndings.get(sourceId);
-  if (!opening || !ending) throw unsupported();
   if (group.edges.some(({ from, to }) => from === sourceId || to === sourceId)) {
     throw new Error('A group with a connection on its container cannot be ungrouped. Review that connection first.');
   }
+  return groupWrapperPatches(source, group, sourceId);
+}
+
+function groupWrapperPatches(source: string, group: ReturnType<typeof readSubset>, sourceId: string) {
+  const opening = group.groupDeclarations.get(sourceId);
+  const ending = group.groupEndings.get(sourceId);
+  if (!opening || !ending) throw unsupported();
   return [opening, ending].map(record => {
     const line = standaloneDeclaration(source, record);
     if (!line) throw unsupported();
@@ -506,7 +562,7 @@ export function planNodeRemoval(source: string, nodeId: string, incidentIds: rea
   return planNodeRemovals(source, [nodeId], incidentIds);
 }
 
-function planNodeRemovals(source: string, nodeIds: readonly string[], incidentIds: readonly string[], group = false): SourcePatch[] {
+function planNodeRemovals(source: string, nodeIds: readonly string[], incidentIds: readonly string[]): SourcePatch[] {
   const { nodes, edges, styles } = readSubset(source);
   const selection = new Set(nodeIds);
   if (!selection.size || selection.size !== nodeIds.length) throw unsupported();
@@ -516,13 +572,12 @@ function planNodeRemovals(source: string, nodeIds: readonly string[], incidentId
     return replace(node.declaration, '');
   });
   if (nodes.size === selection.size) throw new Error('Keep at least one node in the diagram.');
-  const scope = group ? 'this group and its contents' : 'this node';
-  const review = () => new Error(`Review all incident connections before deleting ${scope}.`);
+  const review = () => new Error('Review all incident connections before deleting this node.');
   const expected = new Set(incidentIds);
   const removed = new Set<number>();
   edges.forEach((edge, index) => {
     if (!selection.has(edge.from) && !selection.has(edge.to)) return;
-    if (!edge.id) throw new Error(`An incident connection needs an explicit source ID before deleting ${scope}.`);
+    if (!edge.id) throw new Error('An incident connection needs an explicit source ID before deleting this node.');
     if (!expected.delete(edge.id)) throw review();
     removed.add(index);
   });
