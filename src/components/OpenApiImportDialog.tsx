@@ -23,6 +23,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   const [visibleLimit, setVisibleLimit] = useState(rowLimit);
   const [choices, setChoices] = useState<ReadonlyMap<string, OpenApiChoice>>(new Map());
   const [schemas, setSchemas] = useState<ReadonlyMap<string, OpenApiSchemaChoice>>(new Map());
+  const [includeUnresolved, setIncludeUnresolved] = useState(false);
   const [review, setReview] = useState<Review>();
   const [painted, setPainted] = useState(false);
   const [busy, setBusy] = useState("");
@@ -75,6 +76,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
       setFacts(parsed);
       setChoices(new Map());
       setSchemas(new Map());
+      setIncludeUnresolved(false);
       setQuery("");
       setVisibleLimit(rowLimit);
       setTitle(schemaMode ? "OpenAPI schema relationships" : "New diagram from file");
@@ -85,7 +87,7 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
     if (!facts || !(facts.schemaView ? schemas.size : choices.size)) return;
     void run("Checking and rendering the proposed diagram", async signal => {
       const candidate = facts.schemaView
-        ? await prepareOpenApiSchemaProject(title.trim() || "OpenAPI schema relationships", facts, schemas, signal)
+        ? await prepareOpenApiSchemaProject(title.trim() || "OpenAPI schema relationships", facts, schemas, includeUnresolved, signal)
         : await prepareOpenApiProject(title.trim() || "New diagram from file", facts,
           facts.operations.flatMap(operation => choices.has(operation.key) ? [choices.get(operation.key)!] : []), signal);
       signal.throwIfAborted();
@@ -131,9 +133,9 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
   const matchingSchemas = schemaFacts?.schemas.filter(item => item.name.toLowerCase().includes(needle)
     || item.virtualPath.toLowerCase().includes(needle)) ?? [];
   const visibleSchemas = matchingSchemas.slice(0, visibleLimit);
-  const schemaScope = facts && schemaFacts ? openApiSchemaScope(facts, schemas) : undefined;
+  const schemaScope = facts && schemaFacts ? openApiSchemaScope(facts, schemas, includeUnresolved) : undefined;
   const selectedReferences = schemaScope?.references.length ?? 0;
-  const scopeTooLarge = schemas.size > openApiNodeLimit || selectedReferences > 200;
+  const scopeTooLarge = schemaScope && (schemaScope.nodeCount > openApiNodeLimit || schemaScope.edgeCount > 200);
   const matching = facts?.operations.filter(({ key, tags, method, path }) =>
     [key, method, path, ...tags].some(value => value.toLowerCase().includes(needle))) ?? [];
   const visible = matching.slice(0, visibleLimit);
@@ -176,15 +178,16 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
     </form>}
     {facts && schemaFacts && !review && <form className="heading-form" onSubmit={event => { event.preventDefault(); preview(); }}>
       <p>OpenAPI {facts.version} · {countLabel(schemaFacts.files.length, "supplied file")} · {countLabel(schemaFacts.schemas.length, "schema")}</p>
-      <p>{countLabel(schemaFacts.references.length, "resolved reference")} · {countLabel(schemaFacts.unresolved, "unresolved reference")}
+      <p>{countLabel(schemaFacts.references.length, "resolved reference")} · {countLabel(schemaFacts.unresolved.length, "unresolved reference")}
         {" · "}{countLabel(schemaFacts.omitted, "unsupported schema location")}</p>
-      <p>Connections show declared references to named components in the supplied files. Unavailable files, anchors and unsupported schema locations have separate coverage above.</p>
+      <p>Resolved connections show declared references to named components in the supplied files.</p>
       <label>Diagram title<input value={title} maxLength={120} disabled={!!busy} onChange={event => setTitle(event.target.value)} /></label>
       <label>Find schemas<input value={query} maxLength={160} disabled={!!busy}
         onChange={event => { setQuery(event.target.value); setVisibleLimit(rowLimit); }} /></label>
       <p role="status">{schemas.size} selected · {schemas.size - visibleSchemas.filter(item => schemas.has(item.key)).length} selected outside visible rows
         {" · "}{countLabel(selectedReferences, "selected reference")}</p>
-      {scopeTooLarge && <p role="alert">Choose a scope of up to 100 schemas and 200 references.</p>}
+      {scopeTooLarge && schemaScope && <p role="alert">This scope would create {schemaScope.nodeCount} nodes and {schemaScope.edgeCount} connections.
+        Choose up to 100 nodes and 200 connections, including placeholders.</p>}
       {!visibleSchemas.length && <p>No schema facts match this view.</p>}
       <ul className="project-list">{visibleSchemas.map(({ key, name, virtualPath }) => {
         const current = schemas.get(key);
@@ -198,6 +201,17 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
       })}</ul>
       {visibleSchemas.length < matchingSchemas.length && <button type="button" className="button quiet"
         onClick={() => setVisibleLimit(value => value + rowLimit)}>Show more schemas</button>}
+      {!!schemaScope?.unresolved.length && <fieldset>
+        <legend>{countLabel(schemaScope.unresolved.length, "unresolved reference")} in selected schemas</legend>
+        <label className="check-label"><input type="checkbox" checked={includeUnresolved} disabled={!!busy}
+          onChange={event => setIncludeUnresolved(event.target.checked)} /> Include labeled placeholders in the diagram</label>
+        <details><summary>See unresolved locations</summary>
+          <ul>{schemaScope.unresolved.slice(0, 100).map(item => <li key={item.virtualPath + "#" + item.pointer}>
+            {item.virtualPath} · {item.pointer} · {item.reason}
+          </li>)}</ul>
+          {schemaScope.unresolved.length > 100 && <p>Refine the selected scope to see all unresolved locations.</p>}
+        </details>
+      </fieldset>}
       <div className="dialog-actions">
         <button type="button" className="button quiet" disabled={!!busy} onClick={() => { setFacts(undefined); setError(""); }}>Choose another file</button>
         <button type="submit" className="button primary" disabled={!!busy || !schemas.size || scopeTooLarge}>Preview diagram</button>
@@ -247,6 +261,8 @@ export default function OpenApiImportDialog({ onBack, onClose, onCreated, onTerr
         : countLabel(facts.operations.length - choices.size, "operation fact")} omitted</p>
       <p>Connections show {schemaFacts ? "declared OpenAPI schema references" : "declared OpenAPI tag membership"}.
         {" "}The project keeps each fact’s virtual path, JSON pointer and relationship.</p>
+      {schemaScope && schemaScope.unresolved.length > 0 && <p>{countLabel(schemaScope.placeholderCount, "unresolved placeholder")} included
+        {" · "}{countLabel(schemaScope.unresolved.length - schemaScope.placeholderCount, "unresolved reference")} omitted from selected schemas.</p>}
       <div className="migration-preview"><img src={review.url} alt={schemaFacts ? "Proposed OpenAPI schema diagram" : "Proposed OpenAPI operation diagram"}
         onLoad={() => setPainted(true)} onError={() => setError("The proposed diagram could not be displayed.")} /></div>
       <div className="dialog-actions">
