@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
+import { expectWorkspaceOmits } from './helpers';
 
 test('resumes a reviewed Terraform scope with declared references and address-only provenance', async ({ page }) => {
   await page.goto('/');
@@ -55,6 +56,7 @@ test('resumes a reviewed Terraform scope with declared references and address-on
     };
   }));
   const drafts = await readDrafts();
+  await expectWorkspaceOmits(page, ['private-test-']);
   expect(drafts).toEqual([expect.objectContaining({ feature: 'engineering-facts', payload: expect.objectContaining({
     adapter: 'terraform-show', virtualPaths: ['plan.json'], selectedFactIds: ['f1', 'f2'], selectedRelationshipIds: ['r1'],
   }) })]);
@@ -99,5 +101,6 @@ test('resumes a reviewed Terraform scope with declared references and address-on
     relationship: 'Declared Terraform configuration reference',
   }));
   expect(body).not.toContain('private-test-');
+  await expectWorkspaceOmits(page, ['private-test-']);
   expect(await readDrafts()).toEqual([]);
 });

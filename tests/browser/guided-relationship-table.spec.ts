@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expectWorkspaceOmits } from './helpers';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 
 async function readDrafts(page: Page) {
@@ -46,6 +47,7 @@ test('maps a local relationship table and exports distinct identities for duplic
   const stored = await readDrafts(page);
   expect(stored).toHaveLength(1);
   expect(JSON.stringify(stored)).not.toContain('session-only-cell');
+  await expectWorkspaceOmits(page, ['session-only-cell']);
   await page.reload();
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   await page.getByRole('button', { name: 'Systems and relationships' }).click();
@@ -71,6 +73,7 @@ test('maps a local relationship table and exports distinct identities for duplic
   if (!downloaded) throw new Error('No downloaded project.');
   const result = JSON.parse(await readFile(downloaded, 'utf8'));
   expect(result.source).toBe('flowchart LR\n  m_n1["Service"]\n  m_n2["Service"]\n  m_n2 m_e1@--> m_n1\n');
+  await expectWorkspaceOmits(page, ['session-only-cell']);
   const identities = result.identity.elements.filter((record: { elementKind: string }) => record.elementKind === 'node');
   expect(identities).toHaveLength(2);
   expect(identities[0].id).not.toEqual(identities[1].id);
