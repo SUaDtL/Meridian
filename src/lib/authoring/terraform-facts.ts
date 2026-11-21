@@ -4,7 +4,7 @@ import { validateVirtualPath } from './openapi-facts';
 const name = '[A-Za-z_][A-Za-z_0-9-]*';
 const numericIndex = '(?:\\[(?:0|[1-9][0-9]*)\\])?';
 const moduleStep = new RegExp(`^module\\.${name}${numericIndex}$`);
-const resourceStep = new RegExp(`^(?:data\\.)?${name}\\.${name}${numericIndex}$`);
+const resourceAddress = new RegExp(`^((?:module\\.${name}${numericIndex}\\.)*)((?:data\\.)?${name}\\.${name}${numericIndex})$`);
 const attribute = new RegExp(`^(?:\\.${name})*$`);
 const bounded = (value: string) => value.length > 0 && value.length <= 200 && value === value.trim();
 const identifier = new RegExp(`^${name}$`);
@@ -12,6 +12,12 @@ const at = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const list = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 const token = (value: string) => value.replaceAll('~', '~0').replaceAll('/', '~1');
+
+export function terraformResourceModule(address: string): string | null | undefined {
+  const match = bounded(address) && resourceAddress.exec(address);
+  if (!match || match[2].startsWith('module.')) return undefined;
+  return match[1] ? match[1].slice(0, -1) : null;
+}
 
 export type TerraformFacts = {
   virtualPath: string;
@@ -47,14 +53,14 @@ export function readTerraformFacts(bytes: ArrayBuffer, virtualPath: string): Ter
   function inventoryModule(module: Record<string, unknown>, prefix: string, pointer: string) {
     list(module.resources).forEach((value, index) => {
       const { address } = at(value) ?? {};
-      if (typeof address !== 'string' || !bounded(address) || !address.startsWith(prefix)
-        || !resourceStep.test(address.slice(prefix.length)) || address.slice(prefix.length).startsWith('module.')) {
+      const moduleAddress = prefix ? prefix.slice(0, -1) : null;
+      if (typeof address !== 'string' || terraformResourceModule(address) !== moduleAddress) {
         omitted++;
         return;
       }
       if (addresses.has(address)) throw new Error('The inventory has duplicate resource addresses.');
       addresses.add(address);
-      resources.push({ address, module: prefix ? prefix.slice(0, -1) : null, pointer: `${pointer}/resources/${index}` });
+      resources.push({ address, module: moduleAddress, pointer: `${pointer}/resources/${index}` });
     });
     list(module.child_modules).forEach((value, index) => {
       const child = at(value);
