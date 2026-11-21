@@ -47,7 +47,15 @@ test('keeps duplicate systems distinct, resumes explicit directions, and creates
   await expect(dialog.getByRole('status')).toContainText('Draft saved locally');
   await page.reload();
   dialog = await openSystems(page);
-  await dialog.getByRole('button', { name: /Resume Reviewed system map/ }).click();
+  const resume = dialog.getByRole('button', { name: /Resume Reviewed system map/ });
+  await expect(resume.locator('time')).toHaveCount(2);
+  const dates = await resume.locator('time').evaluateAll(times => times.map(time => time.getAttribute('datetime')));
+  expect(dates).toHaveLength(2);
+  expect(Date.parse(dates[1]!) - Date.parse(dates[0]!)).toBe(7 * 24 * 60 * 60 * 1_000);
+  await resume.click();
+  const restored = dialog.getByRole('status').filter({ hasText: 'Draft saved locally at' });
+  await expect(restored).toContainText(/Draft saved locally at .* · expires /);
+  for (const [index, date] of dates.entries()) await expect(restored.locator('time').nth(index)).toHaveAttribute('datetime', date!);
   await dialog.getByRole('button', { name: 'Review relationships' }).click();
   await expect(link.getByRole('combobox', { name: 'Direction' })).toHaveValue('both');
   await expect(neutral.getByRole('combobox', { name: 'Direction' })).toHaveValue('none');

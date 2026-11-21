@@ -60,7 +60,7 @@ test('resumes a normalized draft after reload and clears it after creating the p
   await wizard.getByLabel('Project title').fill('Reviewed draft');
   await wizard.getByLabel('Put one step on each line').fill('1. Start\n\n• Review\nFinish');
   await wizard.getByRole('button', { name: 'Review connections' }).click();
-  await expect(wizard.getByText(/Draft saved locally · expires/)).toBeVisible();
+  await expect(wizard.getByText(/Draft saved locally at .* · expires/)).toBeVisible();
   await wizard.getByRole('button', { name: 'Back to steps' }).click();
   await expectWorkspaceOmits(page, ['1. Start', '• Review']);
   await wizard.getByLabel('Put one step on each line').fill('New unreviewed entry');
@@ -69,7 +69,14 @@ test('resumes a normalized draft after reload and clears it after creating the p
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   const resume = wizard.getByRole('button', { name: /Resume Reviewed draft/ });
   await expect(resume).toContainText(/Saved .* expires /);
+  await expect(resume.locator('time')).toHaveCount(2);
+  const dates = await resume.locator('time').evaluateAll(times => times.map(time => time.getAttribute('datetime')));
+  expect(dates).toHaveLength(2);
+  expect(Date.parse(dates[1]!) - Date.parse(dates[0]!)).toBe(7 * 24 * 60 * 60 * 1_000);
   await resume.click();
+  const restored = wizard.getByRole('status').filter({ hasText: 'Draft saved locally at' });
+  await expect(restored).toContainText(/Draft saved locally at .* · expires /);
+  for (const [index, date] of dates.entries()) await expect(restored.locator('time').nth(index)).toHaveAttribute('datetime', date!);
   await expect(wizard.getByText('3 steps · 2 connections · New project')).toBeVisible();
   await expect(wizard.getByText('Next: Review')).toBeVisible();
   await expect(wizard.getByText('New unreviewed entry')).toHaveCount(0);
@@ -208,7 +215,7 @@ test('reviews and resumes explicit approval branches without connecting approve 
   await wizard.getByLabel('Mark Complete as an end').check();
   await wizard.getByRole('button', { name: 'Move Reject up' }).click();
   await wizard.getByRole('button', { name: 'Save draft', exact: true }).click();
-  await expect(wizard.getByText(/Draft saved locally · expires/)).toBeVisible();
+  await expect(wizard.getByText(/Draft saved locally at .* · expires/)).toBeVisible();
 
   await page.reload();
   await page.getByRole('button', { name: 'Build with guidance' }).click();

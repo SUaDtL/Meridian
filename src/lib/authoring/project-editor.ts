@@ -608,10 +608,12 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return proposal;
   }
 
-  function applyStory(proposal: ReadyProposal) {
+  async function applyStory(proposal: ReadyProposal) {
     const change = stories.get(proposal);
     if (closed || !change || change.destination === 'duplicate') return 'invalid';
-    return change.base === current.document ? commit(change.next) : 'stale';
+    const status = await commitPreparedChange(change);
+    if (status === 'applied') stories.delete(proposal);
+    return status;
   }
 
   function editStorySceneOrder(sceneId: string, action: StorySceneOrderEdit, base: MermaidProjectV3) {

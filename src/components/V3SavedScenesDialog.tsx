@@ -36,7 +36,8 @@ export default function V3SavedScenesDialog({ editor, startNew, initialScope, on
   const draft = scene ? drafts.get(scene.id) ?? sceneDetails(scene) : undefined;
   const [review, setReview] = useState<Review>();
   const [ready, setReady] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"preview" | "save">();
+  const working = !!busy;
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [confirmRemoval, setConfirmRemoval] = useState(false);
@@ -67,7 +68,7 @@ export default function V3SavedScenesDialog({ editor, startNew, initialScope, on
     if (!selected || !draft || (!creating && !changed) || operation.current) return;
     const work = new AbortController();
     operation.current = work;
-    setBusy(true);
+    setBusy("preview");
     setReady(false);
     setReview(undefined);
     setError("");
@@ -83,34 +84,40 @@ export default function V3SavedScenesDialog({ editor, startNew, initialScope, on
       if (!work.signal.aborted) setError(reason instanceof Error ? reason.message : "The scene could not be previewed.");
     } finally {
       operation.current = null;
-      if (!work.signal.aborted) setBusy(false);
+      if (!work.signal.aborted) setBusy(undefined);
     }
   }
 
-  function apply() {
+  async function apply() {
     if (!selected || !review || !ready || busy) return;
-    const result = onApply(review.proposal);
-    if (result === "applied") {
-      const id = review.scene.id;
-      setBase(editor.snapshot());
-      setDrafts(previous => {
-        const next = new Map(previous);
-        next.delete(selected);
-        return next;
-      });
-      if (creating) {
-        setSelected(id);
-        setNewScene(undefined);
-        setScope(undefined);
+    setBusy("save");
+    setError("");
+    try {
+      const result = await onApply(review.proposal);
+      if (result === "applied") {
+        const id = review.scene.id;
+        setBase(editor.snapshot());
+        setDrafts(previous => {
+          const next = new Map(previous);
+          next.delete(selected);
+          return next;
+        });
+        if (creating) {
+          setSelected(id);
+          setNewScene(undefined);
+          setScope(undefined);
+        }
+        resetReview();
+        setStatus(creating ? "Scene added to the storyboard." : "Scene updated.");
+        requestAnimationFrame(() => cards.current.get(id)?.focus());
+      } else {
+        setReview(undefined);
+        setReady(false);
+        setError(result === "stale" ? "The saved project changed. Reopen it before reviewing the story again." : "The scene could not be applied with Undo.");
       }
-      resetReview();
-      setStatus(creating ? "Scene added to the storyboard." : "Scene updated.");
-      requestAnimationFrame(() => cards.current.get(id)?.focus());
-    } else {
-      setReview(undefined);
-      setReady(false);
-      setError(result === "stale" ? "The project changed. Open the current story again." : "The scene could not be applied with Undo.");
-    }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The scene could not be saved.");
+    } finally { setBusy(undefined); }
   }
 
   function startScene() {
@@ -164,12 +171,12 @@ export default function V3SavedScenesDialog({ editor, startNew, initialScope, on
   }
 
   const coverage = review?.result.suggestions[0]?.coverage;
-  return <Modal title="Edit saved scenes" wide onClose={onClose} initialFocus={startNew ? "[name='scene-title']" : "[aria-pressed='true']"}>
-    <button type="button" className="button secondary" ref={add} disabled={busy || creating || base.storyboard.scenes.length >= 50}
+  return <Modal title="Edit saved scenes" wide onClose={onClose} busy={busy === "save"} initialFocus={startNew ? "[name='scene-title']" : "[aria-pressed='true']"}>
+    <button type="button" className="button secondary" ref={add} disabled={working || creating || base.storyboard.scenes.length >= 50}
       onClick={startScene}>{newScene && !creating ? scope ? "Resume new scene from selection" : "Resume new overview scene" : "New overview scene"}</button>
     <ol className="project-list" aria-label="Saved scenes">{base.storyboard.scenes.map((item, index) => (
       <li className="project-row" key={item.id}>
-        <button type="button" className="button quiet" aria-pressed={item.id === selected} disabled={busy}
+        <button type="button" className="button quiet" aria-pressed={item.id === selected} disabled={working}
           ref={button => { if (button) cards.current.set(item.id, button); else cards.current.delete(item.id); }}
           onClick={() => { setSelected(item.id); setConfirmRemoval(false); resetReview(); }}>
           {index + 1}. {item.title || "Untitled scene"} · {item.duration} s
@@ -178,11 +185,11 @@ export default function V3SavedScenesDialog({ editor, startNew, initialScope, on
     ))}</ol>
     {!scene && <p ref={empty} tabIndex={-1}>No saved scenes.</p>}
     {scene && !creating && <div className="dialog-actions" role="group" aria-label="Selected scene order">
-      <button type="button" className="button quiet" disabled={busy || confirmRemoval || selectedIndex === 0}
+      <button type="button" className="button quiet" disabled={working || confirmRemoval || selectedIndex === 0}
         onClick={() => editOrder("earlier")}>Move earlier</button>
-      <button type="button" className="button quiet" disabled={busy || confirmRemoval || selectedIndex === base.storyboard.scenes.length - 1}
+      <button type="button" className="button quiet" disabled={working || confirmRemoval || selectedIndex === base.storyboard.scenes.length - 1}
         onClick={() => editOrder("later")}>Move later</button>
-      <button type="button" className="button secondary" disabled={busy || confirmRemoval} onClick={() => {
+      <button type="button" className="button secondary" disabled={working || confirmRemoval} onClick={() => {
         resetReview(); setConfirmRemoval(true);
         requestAnimationFrame(() => cancelRemoval.current?.focus());
       }}>Delete scene</button>
@@ -203,24 +210,24 @@ export default function V3SavedScenesDialog({ editor, startNew, initialScope, on
         <p>{scope.ids.length} selected · {scope.hidden} hidden in the outline</p>
         <p>The scene also shows connection endpoints and the group containers needed for the selected elements.</p>
       </section> : <p>The overview shows the entire diagram. Preview it before adding it to the end of the story.</p>)}
-      <label>Scene title<input ref={titleField} name="scene-title" value={draft.title} maxLength={120} disabled={busy} onChange={event => change({ ...draft, title: event.target.value })} /></label>
-      <label>Duration in seconds<input type="number" step="any" min={0.5} max={120} required disabled={busy}
+      <label>Scene title<input ref={titleField} name="scene-title" value={draft.title} maxLength={120} disabled={working} onChange={event => change({ ...draft, title: event.target.value })} /></label>
+      <label>Duration in seconds<input type="number" step="any" min={0.5} max={120} required disabled={working}
         value={Number.isNaN(draft.duration) ? "" : draft.duration} onChange={event => change({ ...draft, duration: event.target.valueAsNumber })} /></label>
-      <label>Entrance in seconds<input type="number" step="any" min={0} max={Math.min(10, draft.duration || 10)} required disabled={busy}
+      <label>Entrance in seconds<input type="number" step="any" min={0} max={Math.min(10, draft.duration || 10)} required disabled={working}
         value={Number.isNaN(draft.transition) ? "" : draft.transition} onChange={event => change({ ...draft, transition: event.target.valueAsNumber })} /></label>
-      <label>Entrance easing<select value={draft.easing} disabled={busy}
+      <label>Entrance easing<select value={draft.easing} disabled={working}
         onChange={event => change({ ...draft, easing: event.target.value as StoryScene["easing"] })}>
         <option value="linear">Linear</option><option value="ease-in-out">Ease in and out</option><option value="ease-out">Ease out</option>
       </select></label>
-      <label>Reveal order<select value={draft.reveal} disabled={busy}
+      <label>Reveal order<select value={draft.reveal} disabled={working}
         onChange={event => change({ ...draft, reveal: event.target.value as StoryScene["reveal"] })}>
         <option value="together">Together</option><option value="sequence">In sequence</option>
       </select></label>
       {(scene.camera.mode === "elements" || (creating && scope)) && <label>Camera padding in diagram units
-        <input type="number" step="any" min={8} max={240} required disabled={busy} value={Number.isNaN(draft.padding) ? "" : draft.padding}
+        <input type="number" step="any" min={8} max={240} required disabled={working} value={Number.isNaN(draft.padding) ? "" : draft.padding}
           onChange={event => change({ ...draft, padding: event.target.valueAsNumber })} />
       </label>}
-      {busy && <p role="status">Preparing the scene preview…</p>}
+      {busy && <p role="status">{busy === "save" ? "Saving the reviewed scene…" : "Preparing the scene preview…"}</p>}
       {review && <section aria-label="Proposed scene">
         {coverage && <>
           <p>Shown · Nodes {coverage.node.shown} · Connections {coverage.edge.shown} · Groups {coverage.group.shown}</p>
@@ -230,9 +237,9 @@ export default function V3SavedScenesDialog({ editor, startNew, initialScope, on
           accent={getTheme(base.settings.theme).accent} onReady={setReady} />
       </section>}
       <div className="dialog-actions">
-        {creating && <button className="button quiet" type="button" disabled={busy} onClick={cancelNewScene}>Cancel new scene</button>}
-        <button className="button secondary" type="submit" disabled={(!creating && !changed) || busy}>{creating ? "Preview new scene" : "Preview scene edit"}</button>
-        <button className="button primary" type="button" disabled={!review || !ready || busy} onClick={apply}>{creating ? "Add reviewed scene" : "Apply scene edit"}</button>
+        {creating && <button className="button quiet" type="button" disabled={working} onClick={cancelNewScene}>Cancel new scene</button>}
+        <button className="button secondary" type="submit" disabled={(!creating && !changed) || working}>{creating ? "Preview new scene" : "Preview scene edit"}</button>
+        <button className="button primary" type="button" disabled={!review || !ready || working} onClick={() => void apply()}>{creating ? "Add reviewed scene" : "Apply scene edit"}</button>
       </div>
     </form>}
   </Modal>;
