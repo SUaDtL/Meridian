@@ -204,7 +204,7 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   await expect(dialog.getByText('0 unresolved placeholders included · 1 unresolved reference omitted from selected schemas.')).toBeVisible();
   await dialog.getByRole('button', { name: 'Back to scope' }).click();
   await dialog.getByText('See unresolved locations', { exact: true }).click();
-  await expect(dialog.getByText('services/models.yaml · /components/schemas/Account/properties/remote/$ref · Unsupported reference form')).toBeVisible();
+  await expect(dialog.getByText('services/models.yaml · /components/schemas/Account/properties/remote/$ref · Target component unavailable in supplied files')).toBeVisible();
   await dialog.getByRole('checkbox', { name: 'Include labeled placeholders in the diagram' }).check();
   await dialog.getByRole('button', { name: 'Preview diagram' }).click();
   await expect(dialog.getByText('3 nodes · 3 connections · 1 schema omitted')).toBeVisible();
@@ -230,7 +230,7 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   expect(unresolved).toHaveLength(2);
   expect(unresolved).toEqual(unresolved.map((item: { elementId: string }) => ({
     elementId: item.elementId, adapter: 'openapi-schemas', adapterVersion: '1.0.0', virtualPath: 'services/models.yaml',
-    pointer: '/components/schemas/Account/properties/remote/$ref', relationship: 'Unresolved OpenAPI reference · Unsupported reference form',
+    pointer: '/components/schemas/Account/properties/remote/$ref', relationship: 'Unresolved OpenAPI reference · Target component unavailable in supplied files',
   })));
   expect(text).not.toMatch(/private-schema|example\.invalid|Audit/);
   expect(requested).toEqual([]);
@@ -239,7 +239,7 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
 
 test('requires reviewed distinct virtual paths and retains provenance across supplied OpenAPI files', async ({ page }) => {
   const outgoing: string[] = [];
-  await page.route('https://meridian-import.invalid/**', route => {
+  await page.route(/^https:\/\/(?:meridian-import|registered-models)\.invalid\//, route => {
     outgoing.push(route.request().url());
     return route.abort();
   });
@@ -249,8 +249,10 @@ test('requires reviewed distinct virtual paths and retains provenance across sup
   const dialog = page.getByRole('dialog', { name: 'Engineering file' });
   await dialog.getByRole('combobox', { name: 'OpenAPI view' }).selectOption('schemas');
   const pointer = '/components/schemas/Record';
-  const first = { openapi: '3.1.0', components: { schemas: { Record: { $ref: `../shared/models.json#${pointer}` } } } };
-  const second = { openapi: '3.1.0', components: { schemas: { Record: { $ref: `https://meridian-import.invalid/api/models.json#${pointer}` } } } };
+  const first = { openapi: '3.1.0', components: { schemas: { Record: { $anchor: 'reviewed',
+    $ref: 'https://registered-models.invalid/exact/id#record' } } } };
+  const second = { openapi: '3.1.0', components: { schemas: { Record: { $id: 'https://registered-models.invalid/exact/id',
+    $anchor: 'record', $ref: 'https://meridian-import.invalid/api/models.json#reviewed' } } } };
   await dialog.getByLabel('OpenAPI specification').setInputFiles([first, second].map(spec => ({
     name: 'models.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(spec)),
   })));
@@ -278,6 +280,6 @@ test('requires reviewed distinct virtual paths and retains provenance across sup
     expect(project.provenance).toContainEqual(expect.objectContaining({ virtualPath, pointer, relationship: 'Declared OpenAPI schema' }));
     expect(project.provenance).toContainEqual(expect.objectContaining({ virtualPath, pointer: pointer + '/$ref', relationship: 'Declared OpenAPI schema reference' }));
   }
-  expect(text).not.toContain('meridian-import.invalid');
+  expect(text).not.toMatch(/meridian-import\.invalid|registered-models\.invalid|#reviewed|#record/);
   expect(outgoing).toEqual([]);
 });
