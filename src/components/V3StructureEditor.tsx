@@ -21,7 +21,7 @@ const emptyBranches = (): DecisionBranch[] => [
   { label: "", destination: { kind: "existing", id: "" } },
 ];
 
-export default function V3StructureEditor({ editor, nodes, edges, group, movableNodes, flatFlowchart, canEditLabels,
+export default function V3StructureEditor({ editor, nodes, edges, group, movableNodes, flatFlowchart, canEditLabels, canUngroup,
   initialOperation = "addNode", initialTarget = "",
   deleteConnections, groupMembers, groupRemoval, onApply, onClose }: {
   editor: Editor;
@@ -31,6 +31,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
   movableNodes: NodeChoice[];
   flatFlowchart: boolean;
   canEditLabels: boolean;
+  canUngroup: boolean;
   initialOperation?: Operation;
   initialTarget?: string;
   deleteConnections?: { ids: string[]; hidden: number };
@@ -231,7 +232,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
                 <option value="removeNode" disabled={nodes.length < 2}>Delete node</option>
               </>}
               {group && <>
-                <option value="removeGroup">Ungroup</option>
+                {canUngroup && <option value="removeGroup">Ungroup</option>}
                 {groupRemoval && <option value="removeGroupContents" disabled={!!groupRemoval.unavailable}>Delete group and contents</option>}
                 {!!movableNodes.length && <option value="moveToGroup">Move node into group</option>}
               </>}
@@ -282,7 +283,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         {removingNode && !!unidentified.length && <p role="status">Each incident connection needs an explicit source ID before this node can be deleted.</p>}
         {movingToGroup && <label>Node to move into {group?.label}
           <select value={to} disabled={busy} onChange={event => { setTo(event.target.value); resetPreview(); }}>
-            <option value="">Choose a top-level node</option>
+            <option value="">Choose a node</option>
             {movableNodes.map(node => <option value={node.id} key={node.id}>{node.label}</option>)}
           </select>
         </label>}
