@@ -272,7 +272,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const editingUnavailable = busy ? "Wait for the current action to finish."
     : !targetTable || !flatFlowchart ? "Open a rendered flat flowchart with explicit node declarations." : undefined;
   const labelEditingUnavailable = busy ? "Wait for the current action to finish."
-    : !targetTable || !componentInsertionSupported ? "Open a rendered flowchart with explicit node declarations." : undefined;
+    : !targetTable || !componentSourceSupported ? "Open a rendered flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
     if (!project || busy || commandsOpen || outlineOpen || readabilityOpen || comparison || storyOpen || savedScenesOpen
