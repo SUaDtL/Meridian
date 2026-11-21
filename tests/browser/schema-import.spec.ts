@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
+import { expectWorkspaceOmits } from './helpers';
 
 test('resumes schema facts without source bytes and creates exact local provenance', async ({ page }) => {
   const remoteRequests: string[] = [];
@@ -57,6 +58,7 @@ test('resumes schema facts without source bytes and creates exact local provenan
   }));
   const saved = await records();
   expect(saved).toHaveLength(1);
+  await expectWorkspaceOmits(page, ['raw-schema-secret', 'schema.example']);
   expect(JSON.stringify(saved)).toContain('Pet field');
   expect(JSON.stringify(saved)).not.toMatch(/raw-schema-secret|schema\.example/);
   await page.reload();
@@ -85,6 +87,7 @@ test('resumes schema facts without source bytes and creates exact local provenan
   }));
   expect(contents).not.toMatch(/raw-schema-secret|schema\.example/);
   expect(await records()).toHaveLength(0);
+  await expectWorkspaceOmits(page, ['raw-schema-secret', 'schema.example']);
   expect(remoteRequests).toEqual([]);
 });
 

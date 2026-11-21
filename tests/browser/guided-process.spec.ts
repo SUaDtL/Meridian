@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expectWorkspaceOmits } from './helpers';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 
 test('creates a reviewed five-step v3 process without writing source', async ({ page }) => {
@@ -61,6 +62,7 @@ test('resumes a normalized draft after reload and clears it after creating the p
   await wizard.getByRole('button', { name: 'Review connections' }).click();
   await expect(wizard.getByText(/Draft saved locally · expires/)).toBeVisible();
   await wizard.getByRole('button', { name: 'Back to steps' }).click();
+  await expectWorkspaceOmits(page, ['1. Start', '• Review']);
   await wizard.getByLabel('Put one step on each line').fill('New unreviewed entry');
 
   await page.reload();
@@ -75,6 +77,7 @@ test('resumes a normalized draft after reload and clears it after creating the p
   await wizard.getByRole('button', { name: 'Preview process' }).click();
   await wizard.getByRole('button', { name: 'Create process' }).click();
   await expect(page.getByRole('dialog', { name: 'Reviewed draft' }).getByText('Saved in this browser.')).toBeVisible();
+  await expectWorkspaceOmits(page, ['1. Start', '• Review', 'New unreviewed entry']);
 
   await page.reload();
   await page.getByRole('button', { name: 'Build with guidance' }).click();

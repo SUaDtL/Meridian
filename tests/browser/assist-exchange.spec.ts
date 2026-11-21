@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expectWorkspaceOmits } from './helpers';
 import { canonicalDigest, projectBaseToken } from '../../src/lib/authoring/base-token';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 import { createScene } from '../../src/lib/storyboard';
@@ -82,6 +83,7 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
   }));
   expect(pending).toEqual([expect.objectContaining({ id: request.requestId, requestHash })]);
   expect(JSON.stringify(pending)).not.toMatch(/literal label|Context node/);
+  await expectWorkspaceOmits(page, ['Use a short literal label on the writable node.']);
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   expect(await download(page, live.getByRole('button', { name: 'Download v3 project' }))).toBe(before);
 
@@ -101,6 +103,7 @@ test('exports scoped facts offline, rejects context-only changes, and applies a 
   await review(dialog, proposal);
   await expect(dialog.getByRole('img', { name: 'Diagram preview with proposed node label' })).toBeVisible();
   await expect(dialog.getByRole('region', { name: 'Unverified suggestion' })).toContainText('Rename First to Reviewed label.');
+  await expectWorkspaceOmits(page, ['Use a short literal label on the writable node.', 'Reviewed label']);
   await dialog.getByRole('button', { name: 'Apply reviewed rename' }).click();
   await expect(dialog).toBeHidden();
   await expect(live.getByText('Saved in this browser.')).toBeVisible();

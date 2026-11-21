@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
+import { expectWorkspaceOmits } from './helpers';
 
 function readDrafts(page: Page) {
   return page.evaluate(() => new Promise<unknown[]>((resolve, reject) => {
@@ -71,6 +72,7 @@ test('resumes reviewed OpenAPI operations and keeps precise provenance without t
     ] },
   }) })]);
   expect(JSON.stringify(drafts)).not.toMatch(/raw-file-secret|raw-description-secret|example\.invalid/);
+  await expectWorkspaceOmits(page, ['raw-file-secret', 'raw-description-secret', 'example.invalid']);
   await page.reload();
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   await page.getByRole('button', { name: 'Engineering file' }).click();
@@ -94,6 +96,7 @@ test('resumes reviewed OpenAPI operations and keeps precise provenance without t
   const contents = await readFile(path, 'utf8');
   const project = JSON.parse(contents);
   expect(project.source).toContain('Read one pet');
+  await expectWorkspaceOmits(page, ['raw-file-secret', 'raw-description-secret', 'example.invalid']);
   expect(await readDrafts(page)).toEqual([]);
   expect(project.provenance).toContainEqual(expect.objectContaining({
     adapter: 'openapi-operations', adapterVersion: '1.0.0', virtualPath: 'specifications/service.json',

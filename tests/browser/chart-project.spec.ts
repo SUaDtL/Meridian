@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expectWorkspaceOmits } from './helpers';
 
 async function download(page: Page, button: Locator) {
   const [file] = await Promise.all([page.waitForEvent('download'), button.click()]);
@@ -58,7 +59,7 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
   const chart = page.getByRole('dialog', { name: 'Chart values' });
   await chart.getByLabel('Chart data file').setInputFiles({
     name: 'team.json', mimeType: 'application/json',
-    buffer: Buffer.from('[{"Team":"North","Requests":0.1},{"Team":"North","Requests":0.2},{"Team":"South","Requests":"pending"}]'),
+    buffer: Buffer.from('[{"Team":"North","Requests":0.1},{"Team":"North","Requests":0.2},{"Team":"South","Requests":"unparsed-chart-cell"}]'),
   });
   await chart.getByRole('button', { name: 'Read data' }).click();
   const requests = chart.getByRole('group', { name: 'Requests' });
@@ -78,6 +79,7 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
   await chart.getByRole('button', { name: 'Back to mapping' }).click();
   await chart.getByRole('button', { name: 'Save data draft' }).click();
   await expect(chart.getByText('Typed data and mapping draft saved in this browser.')).toBeVisible();
+  await expectWorkspaceOmits(page, ['unparsed-chart-cell']);
   await page.reload();
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   await page.getByRole('button', { name: 'Chart values' }).click();
@@ -113,6 +115,7 @@ test('confirms typed file data, reviews an exact aggregate, saves, reopens, and 
     chartSpec: { mark: 'bar', aggregation: 'sum' },
   });
   expect(initial).not.toHaveProperty('source');
+  await expectWorkspaceOmits(page, ['unparsed-chart-cell']);
 
   await page.reload();
   await page.getByRole('button', { name: 'Manage projects' }).click();
