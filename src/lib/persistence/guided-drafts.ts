@@ -20,12 +20,15 @@ function expiredGuidedDraft(record: Record<string, unknown>, now: number) {
     && (record.payload.intent === 'process' || record.payload.intent === 'systems');
   const chart = record.baseToken === null && record.feature === 'chart' && 'step' in record.payload && record.payload.step === 'mapping';
   const token = record.baseToken as { projectId?: unknown; revision?: unknown; contentHash?: unknown; stateDigest?: unknown } | null;
-  const story = record.feature === 'story' && typeof token?.projectId === 'string' && elementUuidPattern.test(token.projectId)
+  const validToken = typeof token?.projectId === 'string' && elementUuidPattern.test(token.projectId)
     && typeof token.revision === 'number' && Number.isSafeInteger(token.revision) && token.revision >= 0
     && typeof token.contentHash === 'string' && /^[a-f0-9]{64}$/.test(token.contentHash)
-    && typeof token.stateDigest === 'string' && /^[a-f0-9]{64}$/.test(token.stateDigest)
-    && 'strategy' in record.payload && (record.payload.strategy === 'groups' || record.payload.strategy === 'paths');
-  if (!guided && !chart && !story) return false;
+    && typeof token.stateDigest === 'string' && /^[a-f0-9]{64}$/.test(token.stateDigest);
+  const story = record.feature === 'story' && validToken && 'strategy' in record.payload
+    && (record.payload.strategy === 'groups' || record.payload.strategy === 'paths');
+  const component = record.feature === 'component' && (token === null || validToken) && 'definitionId' in record.payload
+    && typeof record.payload.definitionId === 'string' && elementUuidPattern.test(record.payload.definitionId);
+  if (!guided && !chart && !story && !component) return false;
   const created = Date.parse(record.createdAt);
   const expires = Date.parse(record.expiresAt);
   return expires <= now && expires - created === draftWeek;
