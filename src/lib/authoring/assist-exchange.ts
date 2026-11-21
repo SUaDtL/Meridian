@@ -1,6 +1,6 @@
 import { canonicalDigest, canonicalJson, projectBaseToken, sameBaseToken, type BaseToken } from './base-token';
 import { decodeJson } from './decode-json';
-import { encodeMermaidLabel, type ConnectionDirection, type Shape } from './flowchart-source';
+import { authoringLimits, encodeMermaidLabel, type ConnectionDirection, type Shape } from './flowchart-source';
 import { elementUuidPattern } from './identities';
 import type { MermaidProjectV3 } from './mermaid-project';
 import type { RenderTargetTable } from './project-render';
@@ -14,7 +14,7 @@ export const requestIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-
 export const digestPattern = /^[a-f0-9]{64}$/;
 const day = 24 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
-export const assistOperations = ['setNodeLabel', 'setEdgeLabel', 'removeEdge', 'removeNode', 'addEdge'] as const;
+export const assistOperations = ['setNodeLabel', 'setEdgeLabel', 'removeEdge', 'removeNode', 'addEdge', 'addNode'] as const;
 type AssistOperation = typeof assistOperations[number];
 export type AssistConnectionOperation = Extract<AssistOperation, 'setEdgeLabel' | 'removeEdge'>;
 
@@ -61,7 +61,8 @@ export type PendingAssistRequest = {
 type AssistantEdit = { op: 'setNodeLabel' | 'setEdgeLabel'; targetId: string; label: string }
   | { op: 'removeEdge'; targetId: string; annotationPolicy: 'preserve-orphans' }
   | { op: 'removeNode'; targetId: string; incidentEdgeIds: string[]; annotationPolicy: 'preserve-orphans' }
-  | { op: 'addEdge'; ref: string; sourceId: string; targetId: string; label: string; direction: ConnectionDirection; lineStyle: 'solid' };
+  | { op: 'addEdge'; ref: string; sourceId: string; targetId: string; label: string; direction: ConnectionDirection; lineStyle: 'solid' }
+  | { op: 'addNode'; ref: string; label: string; shape: Shape; parentGroupId: null };
 export type AssistSelection = 'context' | 'writable' | 'attachment';
 
 export function assistWritableEdges(document: MermaidProjectV3, table: RenderTargetTable, selected: ReadonlyMap<string, AssistSelection>) {
@@ -92,8 +93,7 @@ export async function buildAssistRequest(
   instruction: string,
   writableEdges: ReadonlySet<string> = new Set(),
   edgeOperation: AssistConnectionOperation = 'setEdgeLabel',
-  allowNodeRemoval = false,
-  allowConnectionAddition = false,
+  permissions: { removeNode?: boolean; addEdge?: boolean; addNode?: boolean } = {},
   now = Date.now(),
 ) {
   const token = await projectBaseToken(document);
@@ -108,15 +108,17 @@ export async function buildAssistRequest(
   }
   const editable = assistWritableEdges(document, table, chosen).filter(item => writableEdges.has(item.id)).map(item => item.id);
   if (editable.length !== writableEdges.size) throw new Error('Choose writable connections with an explicit source ID and both endpoints in scope.');
-  if (!writableNodes.length && !editable.length) throw new Error('Choose at least one writable node or connection.');
+  if (!writableNodes.length && !editable.length && !permissions.addNode) {
+    throw new Error('Choose at least one writable node or connection, or explicitly allow a new node.');
+  }
   const allowedOperations: AssistOperation[] = [];
   if (writableNodes.length) allowedOperations.push('setNodeLabel');
   if (editable.length) allowedOperations.push(edgeOperation);
-  if (allowConnectionAddition) {
+  if (permissions.addEdge) {
     if (!writableNodes.length) throw new Error('Choose at least one writable node to allow a new connection.');
     allowedOperations.push('addEdge');
   }
-  const attachmentPointIds = allowConnectionAddition
+  const attachmentPointIds = permissions.addEdge
     ? currentNodes.filter(item => chosen.get(item.id) === 'attachment').map(item => item.id) : [];
   const selected = new Set(currentNodes.map(item => item.id));
   const edges = table.targets.filter(item => item.elementKind === 'edge');
@@ -125,6 +127,10 @@ export async function buildAssistRequest(
   const scopedEdgeIds = new Set(scopedEdges.map(item => item.id));
   const byId = new Map(document.identity.elements.map(item => [item.id, item]));
   const shapes = new Map(flowchartSubsetTopology(document.source).nodes.map(item => [item.id, item.shape]));
+  if (permissions.addNode) {
+    if (shapes.size >= authoringLimits.graphNodes) throw new Error('The diagram is too large to allow a new node.');
+    allowedOperations.push('addNode');
+  }
   const request: AssistRequest = {
     schema: 'meridian/assist-request/v1',
     requestId: uuidV7(now),
@@ -160,11 +166,11 @@ export async function buildAssistRequest(
     },
     allowedOperations,
   };
-  const removableNodes = allowNodeRemoval && table.targets.filter(item => item.elementKind === 'node').length > 1
+  const removableNodes = permissions.removeNode && table.targets.filter(item => item.elementKind === 'node').length > 1
     ? request.graph.nodes.filter(node => chosen.get(node.id) === 'writable' && node.incidentEdgesComplete
       && edges.every(edge => (edge.sourceId !== node.id && edge.targetId !== node.id) || writableEdges.has(edge.id)))
     : [];
-  if (allowNodeRemoval) {
+  if (permissions.removeNode) {
     if (!removableNodes.length) {
       throw new Error('Choose a writable node and mark every incident connection writable before allowing node removal. Keep at least one other node.');
     }
@@ -208,6 +214,12 @@ const edgeAdditionSchema = {
     label: { type: 'string', maxLength: 200 }, direction: { enum: ['forward', 'both', 'none'] }, lineStyle: { const: 'solid' },
   },
 };
+const nodeAdditionSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['op', 'ref', 'label', 'shape', 'parentGroupId'],
+  properties: { op: { const: 'addNode' }, ref: common.$defs.NewRef, label: common.$defs.Label,
+    shape: common.$defs.Shape, parentGroupId: { type: 'null' } },
+};
 const proposalSchema = {
   type: 'object', additionalProperties: false,
   required: ['schema', 'id', 'documentKind', 'baseToken', 'origin', 'requestId', 'requestHash', 'operations'],
@@ -215,7 +227,7 @@ const proposalSchema = {
     schema: { const: 'meridian-proposal/v1' }, id: common.$defs.UUID, documentKind: { const: 'mermaid' },
     baseToken: common.$defs.BaseToken, origin: { const: 'ai' }, requestHash: common.$defs.Sha256,
     requestId: { type: 'string', pattern: requestIdPattern.source },
-    operations: { type: 'array', minItems: 1, maxItems: 1, items: { oneOf: [renameSchema, edgeLabelSchema, edgeRemovalSchema, nodeRemovalSchema, edgeAdditionSchema] } },
+    operations: { type: 'array', minItems: 1, maxItems: 1, items: { oneOf: [renameSchema, edgeLabelSchema, edgeRemovalSchema, nodeRemovalSchema, edgeAdditionSchema, nodeAdditionSchema] } },
     explanation: { type: 'string', maxLength: 2000 },
   },
 };
@@ -243,6 +255,10 @@ export function authorizeAssistEdit(
   const readable = new Set(pending.scope.readContextIds);
   if (!pending.allowedOperations.includes(edit.op)) {
     throw new Error('The suggestion targets an element or operation outside the request’s writable scope.');
+  }
+  if (edit.op === 'addNode') {
+    encodeMermaidLabel(edit.label);
+    return edit;
   }
   if (edit.op === 'addEdge') {
     const endpoints = [edit.sourceId, edit.targetId];
