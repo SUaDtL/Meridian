@@ -5,7 +5,7 @@ import Modal from "./Modal";
 import type { StoryboardController, StoryPlaybackState, StoryScene } from "../types/storyboard";
 
 type PreviewProps = {
-  svg: string; story: StoryScene[]; table: RenderTargetTable; accent: string; onReady: (ready: boolean) => void;
+  svg: string; story: StoryScene[]; table: RenderTargetTable; accent: string; loop?: boolean; onReady?: (ready: boolean) => void;
 };
 
 export default function ResponsiveStoryPreview(props: PreviewProps) {
@@ -41,7 +41,7 @@ export default function ResponsiveStoryPreview(props: PreviewProps) {
   </>;
 }
 
-function StoryPreviewPlayer({ svg, story, table, accent, onReady, initialScene = 0, showSceneChoices = true }: PreviewProps & {
+function StoryPreviewPlayer({ svg, story, table, accent, loop = false, onReady, initialScene = 0, showSceneChoices = true }: PreviewProps & {
   initialScene?: number; showSceneChoices?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -51,17 +51,17 @@ function StoryPreviewPlayer({ svg, story, table, accent, onReady, initialScene =
     const root = host.current?.querySelector<SVGSVGElement>("[data-meridian-export]");
     if (!root) return;
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const controller = createStoryboardPlayer(root, { version: 2, scenes: story, loop: false },
+    const controller = createStoryboardPlayer(root, { version: 2, scenes: story, loop },
       { targetTable: table, accent, reducedMotion: motion.matches, initialPreview: initialScene,
         onUpdate: ({ sceneIndex, playing }) => setPlayback(current => current?.sceneIndex === sceneIndex && current.playing === playing
           ? current : { sceneIndex, playing }) });
     if (!controller) return;
     player.current = controller;
-    onReady(true);
+    onReady?.(true);
     const update = () => controller.setReducedMotion(motion.matches);
     motion.addEventListener("change", update);
     return () => { motion.removeEventListener("change", update); controller.destroy(); player.current = undefined; };
-  }, [svg, story, table, accent, onReady, initialScene]);
+  }, [svg, story, table, accent, loop, onReady, initialScene]);
   const sceneIndex = playback?.sceneIndex;
   const active = sceneIndex === undefined ? undefined : story[sceneIndex];
   const canGoEarlier = sceneIndex !== undefined && sceneIndex > 0;
