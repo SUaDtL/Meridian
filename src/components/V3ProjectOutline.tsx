@@ -41,7 +41,7 @@ function outlineRows(items: readonly ProjectOutlineItem[], relationships: boolea
   return rows;
 }
 
-export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onBulkText, onDesign, onSaveComponent,
+export default function V3ProjectOutline({ items, selected, onSelection, canRename, onRename, onSource, onBulkText, onDesign, onResetDesign, onSaveComponent,
   onDeleteConnections, onClose }: {
   items: ProjectOutlineItem[];
   selected: ReadonlySet<string>;
@@ -51,6 +51,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
   onSource: (location: OutlineSourceLocation) => void;
   onBulkText: (hidden: number) => void;
   onDesign?: (hidden: number) => void;
+  onResetDesign?: (hidden: number) => void;
   onSaveComponent?: (hidden: number) => void;
   onDeleteConnections?: (hidden: number) => void;
   onClose: () => void;
@@ -150,6 +151,7 @@ export default function V3ProjectOutline({ items, selected, onSelection, canRena
           <button type="button" className="button secondary" disabled={!selected.size} onClick={() => onBulkText(hidden)}>Change selected text color</button>
           {onDesign && <button type="button" className="button secondary" disabled={!selected.size}
             onClick={() => onDesign(hidden)}>Explore designs for selection</button>}
+          {onResetDesign && <button type="button" className="button secondary" onClick={() => onResetDesign(hidden)}>Reset selected styles</button>}
           {onSaveComponent && <button type="button" className="button secondary" disabled={!canSaveComponent}
             title={canSaveComponent ? undefined : "Select one to 100 nodes"}
             onClick={() => onSaveComponent(hidden)}>Save as component</button>}
