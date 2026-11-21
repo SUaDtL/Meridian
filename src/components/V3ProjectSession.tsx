@@ -46,6 +46,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [project, setProject] = useState<MermaidProjectV3>();
   const [save, setSave] = useState<ProjectSaveState>();
   const [frame, setFrame] = useState<Frame>();
+  const [framedTargets, setFramedTargets] = useState<{ frame: Frame; url: string; count: number }>();
   const [error, setError] = useState("");
   const [renderError, setRenderError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -77,6 +78,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   const [storyDraft, setStoryDraft] = useState(initialGroupStoryDraft);
   const [canvasProfile, setCanvasProfile] = useState<ViewingProfile>();
   const previewImage = useRef<HTMLImageElement>(null);
+  const fitDiagram = useRef<HTMLButtonElement>(null);
   const suggestScenesButton = useRef<HTMLButtonElement>(null);
   const outlineButton = useRef<HTMLButtonElement>(null);
   const sourceDetails = useRef<HTMLDetailsElement>(null);
@@ -129,6 +131,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     const controller = new AbortController();
     let url: string | undefined;
     setFrame(undefined);
+    setFramedTargets(undefined);
     setRenderError("");
     void renderMermaidProject(project, controller.signal).then(rendered => {
       if (controller.signal.aborted) return;
@@ -143,6 +146,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       if (url) URL.revokeObjectURL(url);
     };
   }, [project]);
+  useEffect(() => () => { if (framedTargets) URL.revokeObjectURL(framedTargets.url); }, [framedTargets]);
 
   async function run(work: () => Promise<void>) {
     if (inFlight.current) return;
@@ -181,6 +185,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
 
   const title = project?.title || "Untitled diagram";
   const currentFrame = frame?.document === project ? frame : undefined;
+  const focusedFrame = framedTargets?.frame === currentFrame ? framedTargets : undefined;
   const source = project?.source;
   const flatFlowchart = useMemo(() => {
     if (!source) return false;
@@ -311,6 +316,21 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     sourceDetails.current.open = true;
     requestAnimationFrame(() => sourceMark.current?.focus());
   }
+  function frameOutlineTargets(ids: readonly string[], closeOutline: boolean) {
+    if (!currentFrame) return "The current diagram is still rendering. Try framing again when it is ready.";
+    try {
+      const svg = buildReadabilityHighlight(currentFrame.rendered, currentFrame.document, ids, true);
+      const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+      setFramedTargets({ frame: currentFrame, url, count: ids.length });
+      if (closeOutline) {
+        setOutlineOpen(false);
+        requestAnimationFrame(() => fitDiagram.current?.focus());
+      }
+      return undefined;
+    } catch (reason) {
+      return reason instanceof Error ? reason.message : "The selected elements could not be framed.";
+    }
+  }
   function renameFromOutline(id: string) {
     if (labelEditingUnavailable || !nodes.some(node => node.id === id)) return;
     setOutlineOpen(false);
@@ -411,7 +431,14 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         {project && (
           <>
             <div className="migration-preview">
-              {currentFrame && <img ref={previewImage} src={currentFrame.url} alt={`Diagram preview for ${title}`} />}
+              {currentFrame && <img ref={previewImage} src={focusedFrame?.url ?? currentFrame.url} alt={`Diagram preview for ${title}`} />}
+              {focusedFrame && <div className="recovery-actions">
+                <p>Framed around {focusedFrame.count} {focusedFrame.count === 1 ? "element" : "elements"}.</p>
+                <button type="button" className="button quiet" ref={fitDiagram} onClick={() => {
+                  setFramedTargets(undefined);
+                  outlineButton.current?.focus();
+                }}>Fit full diagram</button>
+              </div>}
               {!currentFrame && !renderError && <p role="status">Rendering the current diagram…</p>}
               {renderError && <p role="alert">{renderError}</p>}
               <details ref={sourceDetails}><summary>Mermaid source</summary>
@@ -426,7 +453,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
             {needsRecovery && <p role="alert">{save?.message}</p>}
             {targetTable && !flatFlowchart && (
               <p className="muted-note">{removableGroup ? "Use the group actions below to edit this diagram."
-                : "Visual edits support flat flowcharts with explicit node declarations."}</p>
+                : componentSourceSupported ? "Use Outline or Commands to edit labels in this grouped flowchart."
+                : "Open Mermaid source to edit this diagram."}</p>
             )}
             <div className="recovery-actions">
               <button className="button secondary" disabled={busy} aria-keyshortcuts="Control+K Meta+K" onClick={() => setCommandsOpen(true)}>Commands</button>
@@ -494,7 +522,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
       {outline && <V3ProjectOutline items={outline} selected={outlineSelection} onSelection={setOutlineSelection}
         canRename={!labelEditingUnavailable} onClose={() => setOutlineOpen(false)}
-        onRename={renameFromOutline} onSource={jumpToSource} onBulkText={setBulkTextHidden}
+        onRename={renameFromOutline} onSource={jumpToSource} onFrame={frameOutlineTargets} onBulkText={setBulkTextHidden}
         onConnect={!editingUnavailable && selectedSource ? openConnection : undefined}
         onGroup={!editingUnavailable ? hidden => {
           setGroupMembers({ ids: [...outlineSelection], hidden });

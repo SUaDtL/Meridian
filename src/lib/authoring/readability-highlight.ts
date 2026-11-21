@@ -4,7 +4,7 @@ import type { renderMermaidProject } from './project-render';
 
 /** Mark previously measured bounds in a static review image. */
 export function buildReadabilityHighlight(
-  frame: Awaited<ReturnType<typeof renderMermaidProject>>, project: MermaidProjectV3, selected: readonly string[],
+  frame: Awaited<ReturnType<typeof renderMermaidProject>>, project: MermaidProjectV3, selected: readonly string[], focus = false,
 ) {
   const ids = new Set(selected);
   const targets = frame.targetTable?.targets.filter(target => ids.has(target.id));
@@ -14,6 +14,21 @@ export function buildReadabilityHighlight(
   const doc = new DOMParser().parseFromString(exported.svg, 'image/svg+xml');
   const diagram = [...doc.documentElement.children].find(child => child.localName === 'svg');
   if (!diagram) throw new Error('The diagram preview could not be displayed.');
+  if (focus) {
+    const bounds = targets.map(target => target.bounds);
+    const left = Math.min(...bounds.map(item => item.x));
+    const top = Math.min(...bounds.map(item => item.y));
+    const right = Math.max(...bounds.map(item => item.x + item.width));
+    const bottom = Math.max(...bounds.map(item => item.y + item.height));
+    const viewBox = diagram.getAttribute('viewBox')?.trim().split(/[ ,]+/u).map(Number);
+    if (viewBox?.length !== 4 || !viewBox.every(Number.isFinite) || viewBox[2] <= 0 || viewBox[3] <= 0) {
+      throw new Error('The accepted diagram did not provide a viewing area.');
+    }
+    const width = Math.max(right - left + 48, viewBox[2] / 4);
+    const height = Math.max(bottom - top + 48, viewBox[3] / 4);
+    diagram.setAttribute('viewBox', [(left + right - width) / 2, (top + bottom - height) / 2, width, height].join(' '));
+    (diagram as SVGSVGElement).style.overflow = 'hidden';
+  }
   const ns = 'http://www.w3.org/2000/svg';
   const overlay = doc.createElementNS(ns, 'g');
   overlay.setAttribute('fill', 'none');
