@@ -1018,8 +1018,8 @@
 .panel-splitter { display: none; }
 @media (min-width: 801px) {
   .studio .workspace {
-    --left: min(var(--source-width, 416px), calc(100% - var(--right) - 250px));
-    --right: min(var(--inspector-width, 310px), 30vw);
+    --left: min(var(--source-width, clamp(320px, 41vw, 960px)), calc(100% - var(--right) - clamp(240px, 22vw, 390px)));
+    --right: min(var(--inspector-width, 310px), 26vw);
     grid-template-columns: var(--left) minmax(0, 1fr) var(--right);
   }
   .studio.source-hidden .workspace { --left: 0px; }
@@ -1027,6 +1027,10 @@
   .studio.is-presenting .workspace { grid-template-columns: minmax(0, 1fr); }
   .studio .source-panel, .studio .inspector-panel { position: relative; }
   .panel-splitter { display: block; position: absolute; inset-block: 0; width: 8px; z-index: 3; cursor: col-resize; touch-action: none; }
+  .source-width-toggle { border: 1px solid var(--border); border-radius: 5px; color: inherit; background: transparent; padding: 3px 7px; cursor: pointer; font: inherit; font-size: 12px; }
+  .source-width-toggle:hover, .source-width-toggle:focus-visible { background: #254039; }
+  .modal:has(.v3-source-draft) { width: min(84vw, 1440px); max-width: calc(100vw - 40px); }
+  .v3-source-draft { height: clamp(16rem, 46svh, 32rem); }
   .splitter-source { right: 0; } .splitter-inspector { left: 0; }
   .panel-splitter:hover, .panel-splitter:focus-visible { background: #89ceae66; outline-offset: -2px; }
   .studio .app-bar { height: 52px; min-height: 52px; }

@@ -1,0 +1,32 @@
+import { expect, test } from '@playwright/test';
+
+test('desktop source width responds to the viewport, widens on demand, and restores custom widths', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Start from scratch', exact: true }).click();
+  const code = page.locator('.editor-wrap .cm-content');
+  const panel = page.locator('.source-panel');
+  const width = () => panel.evaluate(el => Math.round(el.getBoundingClientRect().width));
+  await expect.poll(width).toBe(590);
+  expect((await code.boundingBox())!.width).toBeGreaterThan(540);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await expect.poll(width).toBe(787);
+  const splitter = page.getByRole('separator', { name: 'Resize source panel' });
+  await splitter.press('ArrowLeft');
+  await expect.poll(width).toBe(771);
+  await page.reload();
+  await page.getByRole('button', { name: /^Continue project/ }).click();
+  await expect.poll(width).toBe(771);
+  await page.getByRole('button', { name: 'Widen editor' }).click();
+  await expect.poll(width).toBeGreaterThan(1100);
+  await page.getByRole('button', { name: 'Auto width' }).click();
+  await expect.poll(width).toBe(787);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect.poll(width).toBe(420);
+  expect((await page.locator('.canvas-panel').boundingBox())!.width).toBeGreaterThanOrEqual(240);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', {name: 'Source',exact:true}).click();
+  await expect(code).toBeVisible();
+  await expect.poll(width).toBe(390);
+  await expect(page.getByRole('button', { name: 'Widen editor' })).toHaveCount(0);
+});
