@@ -168,6 +168,12 @@ test('a named checkpoint restores the heading and can be undone', async ({ page 
 });
 
 test('pasted chart data makes a chart that opens from the ordinary project manager', async ({ page }) => {
+  const previous = createDocument();
+  await page.addInitScript(({ key, previous }) => {
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, JSON.stringify({ version: 2, activeId: previous.id, documents: [previous] }));
+    localStorage.setItem('meridian:last-opened', previous.id);
+  }, { key: STORAGE_KEY, previous });
   await page.goto('/');
   await page.getByRole('button', { name: 'Build with guidance' }).click();
   await page.getByRole('button', { name: 'Chart values' }).click();
@@ -182,6 +188,7 @@ test('pasted chart data makes a chart that opens from the ordinary project manag
   await chart.getByRole('button', { name: 'Create chart project' }).click();
   await expect(chart.getByRole('button', { name: 'Download chart project' })).toBeVisible();
   await page.reload();
+  await expect(page.getByRole('button', { name: 'Continue project: Requests by team' })).toBeVisible();
   await page.getByRole('button', { name: 'Manage projects' }).click();
   await page.getByRole('dialog', { name: 'Your projects' }).getByRole('button', { name: /Requests by team/ }).click();
   await expect(page.getByRole('table', { name: 'Displayed values' }).getByText('25', { exact: true })).toBeVisible();

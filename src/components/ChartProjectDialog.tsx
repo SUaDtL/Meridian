@@ -62,8 +62,8 @@ function ConversionSummary({ dataset, counts }: {
   </section>;
 }
 
-export default function ChartProjectDialog({ onBack, onClose, initialId, fromProjects = false }: {
-  onBack: () => void; onClose: () => void; fromProjects?: boolean; initialId?: string;
+export default function ChartProjectDialog({ onBack, onClose, onOpened, initialId, fromProjects = false }: {
+  onBack: () => void; onClose: () => void; onOpened: (id: string) => void; fromProjects?: boolean; initialId?: string;
 }) {
   const [stage, setStage] = useState<Stage>("choose");
   const [projects, setProjects] = useState<{ id: string; title: string }[]>([]);
@@ -260,6 +260,7 @@ export default function ChartProjectDialog({ onBack, onClose, initialId, fromPro
     previous?.editor.dispose();
     if (previous && previous.db !== db) previous.db.close();
     chartSession.current = { db, editor };
+    onOpened(id);
     setSaveState(editor.saveState());
     setCandidate(editor.snapshot());
     setStage("workspace");

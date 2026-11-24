@@ -23,9 +23,15 @@ const databaseVersion = 2;
 const documentsStore = 'documents';
 const componentDefinitionsStore = 'library';
 const kindIndex = 'document-kind';
-export function openWorkspaceDatabase(factory = indexedDB): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = factory.open(databaseName, databaseVersion);
+// IndexedDB sends "blocked" only to the upgrade at the head of its queue.
+// Share its outcome with Home, thumbnails, and recovery so each caller can
+// report the blocker. Once open, each caller receives its own connection.
+const opening = new WeakMap<IDBFactory, Promise<IDBDatabase>>();
+export async function openWorkspaceDatabase(factory = indexedDB): Promise<IDBDatabase> {
+  const pending = opening.get(factory);
+  if (pending) return pending.then(() => openWorkspaceDatabase(factory));
+  const request = factory.open(databaseName, databaseVersion);
+  const attempt = new Promise<IDBDatabase>((resolve, reject) => {
     let blocked = false;
     request.onblocked = () => {
       blocked = true;
@@ -46,14 +52,20 @@ export function openWorkspaceDatabase(factory = indexedDB): Promise<IDBDatabase>
       }
       request.transaction!.objectStore(documentsStore).createIndex(kindIndex, 'document.documentKind');
     };
-    request.onerror = () => reject(request.error ?? new Error('Could not open Meridian workspace storage.'));
+    request.onerror = () => {
+      opening.delete(factory);
+      reject(request.error ?? new Error('Could not open Meridian workspace storage.'));
+    };
     request.onsuccess = () => {
+      opening.delete(factory);
       const db = request.result;
       db.onversionchange = () => db.close();
       if (blocked) db.close();
       else resolve(db);
     };
   });
+  opening.set(factory, attempt);
+  return attempt;
 }
 
 export async function listStoredProjects(): Promise<ProjectListItem[]> {

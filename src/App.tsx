@@ -431,7 +431,7 @@ export default function App() {
               <ProjectManager
                 documents={inventory}
                 inventoryStatus={inventoryError || (!inventoryReady ? "Checking saved projects…" : "")}
-                activeId={screen === "author" && author ? "mermaid/" + author.id : workspace.activeId}
+                activeId={lastOpened ?? workspace.activeId}
                 onOpen={open}
                 onNew={showNew}
                 onImport={importClick}
@@ -476,7 +476,7 @@ export default function App() {
               }} />}
             {dialog === "components" && <ComponentProjectDialog onBack={() => setDialog("guided")} onClose={closeDialog}
               onCreated={id => { openAuthor(id); }} />}
-            {(dialog === "guided-chart" || dialog === "saved-charts") && <ChartProjectDialog initialId={dialog === "saved-charts" ? chartId : undefined} fromProjects={dialog === "saved-charts"}
+            {(dialog === "guided-chart" || dialog === "saved-charts") && <ChartProjectDialog onOpened={id => rememberOpened("chart/" + id)} initialId={dialog === "saved-charts" ? chartId : undefined} fromProjects={dialog === "saved-charts"}
               onBack={() => setDialog(dialog === "saved-charts" ? "projects" : "guided")} onClose={closeDialog} />}
             {dialog === "engineering-file" && <OpenApiImportDialog onBack={() => setDialog("guided")} onClose={closeDialog}
               onTerraform={() => setDialog("terraform-file")} onSchema={() => setDialog("schema-file")}
