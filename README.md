@@ -2,7 +2,7 @@
 
 A presentation-grade, browser-based Mermaid diagram studio. Meridian turns familiar Mermaid source into polished diagrams with live editing, themes, purposeful motion, pan/zoom, and portable exports.
 
-This is the independent repository **SUaDtL/Meridian**. Its GitHub Pages workflow publishes only this repository. Integration with `arbiterforge.com`, `arbiterForge/arbiterforge-site`, or `SUaDtL/SIM` requires separate approval.
+[Open Meridian on ArbiterForge](https://arbiterforge.com/Meridian/). **SUaDtL/Meridian** is the source for both that URL and the [independent preview](https://suadtl.github.io/Meridian/). Push changes here. After a green release, the ArbiterForge publisher verifies and hosts the same build at its existing address.
 
 ## Features
 

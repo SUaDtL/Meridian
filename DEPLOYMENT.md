@@ -2,7 +2,16 @@
 
 ## Repository scope
 
-Publish **SUaDtL/Meridian** only to its own GitHub Pages preview. No `CNAME`, custom domain, DNS modifications, shared-site navigation changes, or writes to `arbiterForge/arbiterforge-site` or `SUaDtL/SIM` are part of this workflow. A later integration with `arbiterforge.com` requires separate explicit approval.
+**SUaDtL/Meridian** builds the application and publishes it to its independent Pages preview. The approved ArbiterForge integration serves that verified build at `https://arbiterforge.com/Meridian/`. ArbiterForge owns deployment to its domain. Browser projects are stored on the origin where the user created them.
+
+### Automatic delivery to ArbiterForge
+
+Push to Meridian’s `main`. After its Pages workflow succeeds, ArbiterForge can receive the release in either of these ways.
+
+- The ArbiterForge Pages workflow checks the live build on a ten-minute schedule. This works without a cross-repository secret. GitHub can delay scheduled runs.
+- To request delivery immediately on release, set the Meridian Actions repository secret `ARBITERFORGE_PAGES_TOKEN` to a fine-grained token scoped to `arbiterForge/arbiterforge-site` with Actions read/write. The release notification workflow uses it only to dispatch `pages.yml` on the destination’s `main`. The scheduled check also recovers a missed notification.
+
+ArbiterForge checks the exact upstream production commit and file digests, runs its browser checks, and verifies the public site after deploying. Compare both URLs’ `build.json` and the custom domain’s `/Meridian/publication.json` to trace a release.
 
 ## Source build and verification
 

@@ -1,0 +1,30 @@
+name: Notify ArbiterForge of a Meridian release
+
+on:
+  workflow_run:
+    workflows: ['Meridian Preview - Verify and Deploy']
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  notify:
+    if: >-
+      github.repository == 'SUaDtL/Meridian' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Request verification of the published release on ArbiterForge
+        env:
+          GH_TOKEN: ${{ secrets.ARBITERFORGE_PAGES_TOKEN }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo 'ArbiterForge will receive this release on its scheduled check.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh workflow run pages.yml --repo arbiterForge/arbiterforge-site --ref main
+          echo 'Requested the ArbiterForge Pages workflow. It verifies the live release before deploying.' >> "$GITHUB_STEP_SUMMARY"
