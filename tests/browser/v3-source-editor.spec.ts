@@ -591,19 +591,26 @@ for (const mode of ['hosted', 'standalone'] as const) {
     const input = editor.getByRole('textbox', { name: 'Mermaid source' });
     const apply = editor.getByRole('button', { name: 'Apply source' });
     const preview = editor.getByRole('button', { name: 'Preview source' });
+    const replaceDraft = async (text: string) => {
+      // CodeMirror owns the selection inside its contenteditable. Exercise its
+      // Select All command before pasting a replacement, as a user would.
+      await input.press('ControlOrMeta+a');
+      await page.keyboard.insertText(text);
+      await expect.poll(() => input.locator('.cm-line').allTextContents()).toEqual(text.split('\n'));
+    };
     for (const [draft, diagnostic] of [
       ['flowchart LR\n A["unclosed', 'Mermaid syntax'],
       ['flowchart LR\n A[[', 'Mermaid syntax'],
       ['flowchart LR\n A@{ img: "https://example.invalid/shape.png" }', 'Resource restriction'],
       ['flowchart LR\n A[Start]\n style A fill:u\\72l(https://example.invalid/style.svg)', 'Resource restriction'],
     ]) {
-      await input.fill(draft);
+      await replaceDraft(draft);
       await preview.click();
       await expect(editor.getByRole('alert')).toContainText(diagnostic);
       await expect(apply).toBeDisabled();
       await expect.poll(() => input.innerText()).toBe(draft);
     }
-    await input.fill(original.source + '\n  review_recovered[Recovered]');
+    await replaceDraft(original.source + '\n  review_recovered[Recovered]');
     await preview.click();
     await expect(apply).toBeEnabled();
     await editor.getByRole('button', { name: 'Close', exact: true }).click();
