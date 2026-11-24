@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { Minus, Plus, Maximize, Move, MousePointer2, RotateCcw, Focus, X, Code2, CircleAlert } from 'lucide-react';
 import type { RenderResult, StudioDocument } from '../types';
-import { buildExportFrame } from '../lib/export';
+import type { ExportFrame } from '../lib/export';
 import { getTheme } from '../lib/themes';
 import { createStoryboardPlayer } from '../lib/storyboard';
 import type { StoryboardController, StoryPlaybackState } from '../types/storyboard';
@@ -28,6 +28,7 @@ function headingField(target: EventTarget | null): 'title' | 'subtitle' | null {
 }
 
 interface Props {
+  frame: ExportFrame | {svg: string; width: number; height: number};
   result: RenderResult | null;
   document: StudioDocument;
   selectedKey: string | null;
@@ -48,7 +49,7 @@ interface Props {
   error?: string;
 }
 
-function DiagramStage({result, document: doc, selectedKey, onSelect, onRename, targetTable, replayKey, present, motionPaused, fitRequest, selectionRequest = 0, storyPreview = false, reducedMotion = false, onStoryController, onStoryPlayback, onEditHeading, loading = false, error = ''}: Props) {
+function DiagramStage({frame, result, document: doc, selectedKey, onSelect, onRename, targetTable, replayKey, present, motionPaused, fitRequest, selectionRequest = 0, storyPreview = false, reducedMotion = false, onStoryController, onStoryPlayback, onEditHeading, loading = false, error = ''}: Props) {
   const viewport = useRef<HTMLDivElement>(null);
   const drawing = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -90,8 +91,6 @@ function DiagramStage({result, document: doc, selectedKey, onSelect, onRename, t
   const editingCamera = useRef<{ documentId: string; zoom: number; pan: Point; fitted: boolean } | null>(null);
   const previousView = useRef({ documentId: doc.id, present: false, fitRequest: -1, source: doc.source });
   const theme = getTheme(doc.settings.theme);
-  const frame = useMemo(() => result ? buildExportFrame(result, doc, { animated: true, includeFrame: true }) : { svg: '', width: 900, height: 700 },
-    [result, doc.title, doc.subtitle, doc.settings.theme, doc.settings.font, doc.settings.padding, doc.settings.frame, doc.settings.showTitle, doc.settings.showBrand, doc.settings.background, doc.settings.ambient]);
   const { svg } = frame;
   const dimensions = frame;
   const markup = useMemo(() => ({ __html: svg }), [svg]);

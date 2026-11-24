@@ -50,6 +50,8 @@ import Inspector from "./components/Inspector";
 import { explainMermaidSourceError, SourceDiagnosticError } from "./lib/authoring/source-diagnostics";
 import { missingNodeBracket } from "./lib/authoring/source-diagnostic-repair";
 import { cacheThumbnail } from "./lib/persistence/project-thumbnail";
+import { buildExportFrame } from "./lib/export";
+import PresenterView from "./components/PresenterView";
 import SceneFilmstrip from "./components/SceneFilmstrip";
 import PanelSplitter from "./components/PanelSplitter";
 import Storyboard from "./components/Storyboard";
@@ -141,10 +143,19 @@ export function StudioWorkspace({
     setLive,
     renderNow,
   } = diagram;
+  const stageFrame = useMemo(() => {
+    if (!result) return { svg: "", width: 900, height: 700, template: null };
+    let template: SVGSVGElement | null = null;
+    const frame = buildExportFrame(result, stageDocument, { animated: true, includeFrame: true }, root => { template = root; });
+    return { ...frame, template: template as SVGSVGElement | null };
+  }, [result, stageDocument.title, stageDocument.subtitle, stageDocument.settings.theme, stageDocument.settings.font,
+    stageDocument.settings.padding, stageDocument.settings.frame, stageDocument.settings.showTitle, stageDocument.settings.showBrand,
+    stageDocument.settings.background, stageDocument.settings.ambient]);
   const { patch, settings, undo, redo, undoLabel, redoLabel } = workspace;
   const [tab, setTab] = useState<WorkspaceTab>("canvas");
   const [manual, setManual] = useState(false);
   const [cleanAudience, setCleanAudience] = useState(false);
+  const presentationFullscreen = useRef(false);
   const [present, setPresent] = useState(false);
   const [sourceVisible, setSourceVisible] = useState(() => panelVisible("source"));
   const [jumpLine, setJumpLine] = useState<number>();
@@ -167,6 +178,7 @@ export function StudioWorkspace({
   const [versions, setVersions] = useState<"checkpoints" | "styles">();
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [replayKey, setReplayKey] = useState(0);
+  const [selectionRevision, setSelectionRevision] = useState(0);
   const [selectionRequest, setSelectionRequest] = useState(0);
   const [fitRequest, setFitRequest] = useState(0);
   const [motionPaused, setMotionPaused] = useState(false);
@@ -258,7 +270,8 @@ export function StudioWorkspace({
   const beginPresentation = useCallback(() => startPresentation(manual), [startPresentation, manual]);
   const leavePresentation = useCallback(() => {
     setPresent(false);
-    if (globalThis.document.fullscreenElement) void globalThis.document.exitFullscreen().catch(() => {});
+    if (presentationFullscreen.current && globalThis.document.fullscreenElement) void globalThis.document.exitFullscreen().catch(() => {});
+    presentationFullscreen.current = false;
     stopStory();
   }, [stopStory]);
   const showCanvas = useCallback(() => setTab("canvas"), []);
@@ -281,6 +294,7 @@ export function StudioWorkspace({
   const selectElement = useCallback(
     (key: string | null) => {
       setSelectedKey(key);
+      setSelectionRevision(value => value + 1);
       native?.select(key);
       if (key) {
         setInspectorVisible(true);
@@ -873,6 +887,7 @@ export function StudioWorkspace({
                 </button>
               )}
               <DiagramStage
+                frame={stageFrame}
                 result={result}
                 document={stageDocument}
                 selectedKey={selectedKey}
@@ -1008,6 +1023,7 @@ export function StudioWorkspace({
                   onSettings={settings}
                   onDocument={changeDocument}
                   onDesign={changeDesign}
+                  selectionRevision={selectionRevision}
                   selectedElement={selectedElement}
                   selectedNode={selectedNode}
                   onSelectElement={key => { selectElement(key); if (key) setSelectionRequest(count => count + 1); }}
@@ -1022,8 +1038,8 @@ export function StudioWorkspace({
           </aside>
         )}
       </main>
-      {!present && inspectorMode === "story" && inspectorVisible && result && !!doc.storyboard?.scenes.length &&
-        <SceneFilmstrip doc={doc} result={result} selected={selectedSceneId} targets={native?.table}
+      {!present && inspectorMode === "story" && inspectorVisible && stageFrame.template && !!doc.storyboard?.scenes.length &&
+        <SceneFilmstrip doc={doc} template={stageFrame.template} selected={selectedSceneId} targets={native?.table}
           onSelect={(scene,index) => { setSelectedSceneId(scene.id); playbackAction("preview",index); }}
           onReorder={scenes => changeStoryboard({ ...doc.storyboard!, scenes })} />}
       {!present && (
@@ -1169,10 +1185,12 @@ export function StudioWorkspace({
             <Maximize2 size={16} />
             <span>Fit</span>
           </button>
+          {!!doc.storyboard?.scenes.length && <PresenterView scenes={doc.storyboard.scenes} index={storyPlayback?.sceneIndex ?? 0}
+            previous={() => playbackAction("previous")} next={() => playbackAction("next")}/>}
           <button onClick={() => setCleanAudience(true)} title="Hide controls. Press H to restore them.">Audience view</button>
           {globalThis.document.fullscreenEnabled && <button onClick={() => {
             const page = globalThis.document;
-            void (page.fullscreenElement ? page.exitFullscreen() : page.documentElement.requestFullscreen())
+            void (page.fullscreenElement ? page.exitFullscreen() : page.documentElement.requestFullscreen().then(() => { presentationFullscreen.current = true; }))
               .catch(() => notify("Fullscreen is unavailable in this window.", "error"));
           }}>Fullscreen</button>}
           <span className="control-separator" />

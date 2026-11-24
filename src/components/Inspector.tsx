@@ -11,6 +11,7 @@ import '../inspector.css';
 export interface InspectorProps {
   document: StudioDocument;
   result?: RenderResult | null;
+  selectionRevision?: number;
   selectedElement?: RenderElement | null;
   onDesign?: (design: DesignState) => void;
   onSelectElement?: (key: string | null) => void;
@@ -24,7 +25,7 @@ export interface InspectorProps {
   reducedMotion: boolean;
 }
 
-export function Inspector({ document, result, selectedElement, onDesign, onSelectElement, onSettings, onDocument, onEditHeading, selectedNode, onAccent, onClearSelection, onReplay, reducedMotion }: InspectorProps) {
+export function Inspector({ document, result, selectedElement, selectionRevision, onDesign, onSelectElement, onSettings, onDocument, onEditHeading, selectedNode, onAccent, onClearSelection, onReplay, reducedMotion }: InspectorProps) {
   const [scope, setScope] = useState<'diagram' | 'selected'>('diagram');
   const [filter, setFilter] = useState('');
   const scrollArea = useRef<HTMLDivElement>(null);
@@ -42,7 +43,7 @@ export function Inspector({ document, result, selectedElement, onDesign, onSelec
   const choices = selectedElement && !matches.some(item => item.key === selectedElement.key) ? [selectedElement, ...matches] : matches;
   useEffect(() => {
     setScope(selectedElement ? 'selected' : 'diagram');
-  }, [selectedElement?.key]);
+  }, [selectedElement?.key, selectionRevision]);
   useEffect(() => { setFilter(''); }, [document.id]);
   useLayoutEffect(() => { if (scrollArea.current) scrollArea.current.scrollTop = 0; }, [scope, selectedElement?.key]);
   const resetSelected = () => {
@@ -115,7 +116,7 @@ export function Inspector({ document, result, selectedElement, onDesign, onSelec
         <section className="mi-section" aria-labelledby="mi-motion-title"><div className="mi-section-heading"><h3 id="mi-motion-title"><Sparkles size={14} aria-hidden="true"/>Motion</h3><button className="mi-icon-button" type="button" aria-label="Replay diagram entrance" title="Replay entrance" onClick={onReplay}><RotateCcw size={14}/></button></div>
           <Choice label="Connection effect" value={settings.motion} disabled={!hasConnectors} options={[{ value: 'none', label: 'Still' }, { value: 'flow', label: 'Flow' }, { value: 'pulse', label: 'Pulse' }]} onChange={motion => onSettings({ motion })}/>
           {hasConnectors && settings.motion !== 'none' && <Range label="Speed" min={.25} max={3} step={.25} value={settings.speed} unit="×" onChange={speed => onSettings({ speed })}/>}
-          {(result?.edgeCount ?? 0) > 150 && <p className="mi-note">Canvas motion covers up to 150 connectors. Choose Connector flow in a scene to animate specific paths during playback.</p>}
+          {(result?.edgeCount ?? 0) > 150 && <p className="mi-note">Highlighted connectors get priority within the 150-connector motion limit. Choose Connector flow in a scene to animate specific paths during playback.</p>}
           {!hasConnectors && <p className="mi-note">Connection effects are available on flowchart connectors.</p>}
           {reducedMotion && <p className="mi-note">Reduced motion is enabled on this device. Animation stays paused.</p>}
         </section>

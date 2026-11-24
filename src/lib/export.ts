@@ -74,7 +74,7 @@ export interface ExportFrame {
 type FrameDocument = Pick<StudioDocument, 'title' | 'subtitle' | 'settings'>;
 
 /** Build framing and dimensions together so the stage never reparses the result. */
-export function buildExportFrame(result: RenderResult, doc: FrameDocument, opts: ExportFrameOptions = {}): ExportFrame {
+export function buildExportFrame(result: RenderResult, doc: FrameDocument, opts: ExportFrameOptions = {}, captureTemplate?: (root: SVGSVGElement) => void): ExportFrame {
   const source = parseSvg(result.svg);
   const xml = source.ownerDocument;
   const settings = opts.target === "slide" ? { ...doc.settings, frame: "16:9" as const }
@@ -162,6 +162,7 @@ export function buildExportFrame(result: RenderResult, doc: FrameDocument, opts:
   }
   const diagramScale = Math.min(contentWidth / result.width, contentHeight / result.height);
   const [minX, minY] = (source.getAttribute('viewBox') ?? '0 0').trim().split(/[ ,]+/).map(Number);
+  captureTemplate?.(outer);
   return { svg: new XMLSerializer().serializeToString(outer), width, height, diagramScale, diagramOrigin: {
     x: pad + (contentWidth - result.width * diagramScale) / 2 - minX * diagramScale,
     y: pad + headingHeight + (contentHeight - result.height * diagramScale) / 2 - minY * diagramScale,

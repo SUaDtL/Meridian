@@ -233,7 +233,3 @@ export function normalizeSource(source: string): string {
   if (closing.test(match[2])) return source;
   return match[2];
 }
-
-export function importedTitle(title: string) {
-  return (title || "Untitled project").slice(0, 109) + " (imported)";
-}

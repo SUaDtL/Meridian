@@ -19,7 +19,6 @@ import type { RelationshipTableDraft } from "./components/GuidedRelationshipTabl
 import { NoticeContext, NoticeMessage, type Notice } from "./components/Notice";
 import { useWorkspace } from "./hooks/useWorkspace";
 import {
-  importedTitle,
   createDocument,
   downloadText,
   LEGACY_STORAGE_KEY,
@@ -241,13 +240,12 @@ export default function App() {
               const original = parseChartProject(text).project;
               const chart = { ...original, id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString() };
               await writeWorkspaceProject(db, chart, null, undefined, { kind: "import" });
-              setChartId(chart.id); setDialog("saved-charts");
+              open("chart/" + chart.id);
             }
           } finally { db.close(); }
           return;
         }
         project = parseProject(text);
-        if (inventory.some(item => item.title === project.title)) project.title = importedTitle(project.title);
       }
       else {
         const source = normalizeSource(text);
@@ -261,14 +259,11 @@ export default function App() {
             "Imported diagram",
         };
       }
-      if (
-        addProject({
-          ...project,
-          id: createDocument().id,
-          updatedAt: new Date().toISOString(),
-        })
-      )
+      const id = createDocument().id;
+      if (addProject({ ...project, id, updatedAt: new Date().toISOString() })) {
+        try { localStorage.setItem("meridian:import/" + id, "1"); } catch { /* optional list annotation */ }
         notify(`Imported ${project.title || "Untitled diagram"}.`);
+      }
     } catch (reason) {
       notify(
         reason instanceof Error

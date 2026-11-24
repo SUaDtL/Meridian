@@ -83,13 +83,17 @@ test('keeps the legacy backup available after a quota failure and permits a clea
 });
 
 test('downloads the exact legacy workspace while an older tab blocks the database upgrade', async ({ page, context }) => {
-  const { raw } = await seedWorkspace(page);
+  // Host the version-one client on the same origin before the current Home
+  // screen opens its combined project inventory and upgrades the database.
+  await page.route('**/older-client.html', route => route.fulfill({ contentType: 'text/html', body: '<title>Older Meridian client</title>' }));
+  const { raw } = await seedWorkspace(page, source, '/older-client.html');
   const oldProject = JSON.parse(await readFile('src/lib/authoring/fixtures/example-project.json', 'utf8'));
   const { stateDigest } = await projectBaseToken(oldProject);
   const authored = { id: oldProject.id, document: oldProject, anchor: { stateDigest, storageGeneration: crypto.randomUUID() } };
   const older = await context.newPage();
   try {
-    await older.goto('/');
+    await older.route('**/older-client.html', route => route.fulfill({ contentType: 'text/html', body: '<title>Older Meridian client</title>' }));
+    await older.goto('/older-client.html');
     await older.evaluate(authored => new Promise<void>((resolve, reject) => {
       const open = indexedDB.open('meridian-workspace', 1);
       open.onupgradeneeded = () => {
@@ -108,6 +112,7 @@ test('downloads the exact legacy workspace while an older tab blocks the databas
         resolve();
       };
     }), authored);
+    await page.goto('/');
 
     const dialog = await openReview(page);
     await expect(dialog.getByRole('alert')).toHaveText('Close older Meridian tabs before preparing the workspace database.');

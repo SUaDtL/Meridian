@@ -100,3 +100,40 @@ test('search focuses a readable node on a 200-node graph and restores the previo
   await page.reload(); await page.getByRole('button', { name: 'Continue project: Navigation' }).click();
   await expect(splitter).toHaveAttribute('aria-valuenow', saved);
 });
+
+test('a scene from a selected neighborhood supports private presenter notes and manual advance', async ({ page }) => {
+  const project = { ...createDocument(), title: 'Briefing', source: 'flowchart LR\n A[Arrival] --> B[Review]\n B --> C[Release]' };
+  await page.addInitScript(({ project, key }) => {
+    if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 2, documents: [project], activeId: project.id }));
+  }, { project, key: STORAGE_KEY });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Continue project: Briefing' }).click();
+  await page.getByLabel('Inspect an element').selectOption('node:B');
+  await page.getByRole('button', { name: 'Storyboard', exact: true }).click();
+  const story = page.getByRole('region', { name: 'Presentation storyboard' });
+  await story.getByRole('button', { name: 'Scene from selected neighborhood' }).click();
+  await story.getByLabel('Presenter notes').fill('Private rehearsal note');
+  await story.getByRole('button', { name: 'Add scene', exact: true }).click();
+  await page.getByLabel('Presentation advance').selectOption('manual');
+  await page.getByRole('button', { name: 'Present', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Play presentation' })).toBeVisible();
+  const opened = page.waitForEvent('popup');
+  await page.getByRole('button', { name: 'Presenter view' }).click();
+  const notes = await opened;
+  await expect(notes.getByText('Private rehearsal note')).toBeVisible();
+  await expect(page.getByText('Private rehearsal note', { exact: true })).toHaveCount(0);
+  await notes.getByRole('button', { name: 'Next scene' }).click();
+  await expect(notes.getByText('Scene 2 of 2')).toBeVisible();
+  await page.getByRole('button', { name: 'Audience view' }).click();
+  await expect(page.locator('.presentation-controls')).toBeHidden();
+  await page.keyboard.press('h');
+  await page.getByRole('button', { name: /Exit.*Esc/ }).click();
+  await expect.poll(() => notes.isClosed()).toBe(true);
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: /^HTML/ }).click();
+  const pending = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'Download HTML' }).click();
+  const html = await readFile((await (await pending).path())!, 'utf8');
+  expect(html).not.toContain('Private rehearsal note');
+});

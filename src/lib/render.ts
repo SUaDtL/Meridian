@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify';
 import type { RenderNode, RenderResult, StudioSettings } from '../types';
 import { getTheme } from './themes';
 import type { DesignState } from '../types/design';
-import { createDesign, decorateDesign, designRenderSource, measureDesignElements, type FlowModel } from './design';
+import { createDesign, decorateDesign, designRenderSource, edgeIdentities, measureDesignElements, type FlowModel } from './design';
 import { SourceDiagnosticError } from './authoring/source-diagnostics';
 import { RenderCache, renderMemoryBudget, renderMemoryLimit } from './render-cache';
 import { checkRenderSignal, latestRenderQueue, renderAborted, type RenderPriority } from './render-queue';
@@ -407,7 +407,15 @@ async function performRender({ settings, nodeAccents, design: inputDesign, prepa
     }
     const duration = 4 / numeric(settings.speed, 1, 0.25, 3);
     if (settings.motion !== 'none') {
-      uniqueEdges.slice(0, 150).forEach((edge, index) => {
+      let motionEdges = uniqueEdges;
+      if (uniqueEdges.length > 150 && model) {
+        const keys = edgeIdentities(model.edges);
+        const highlighted = new Set(model.edges.flatMap((edge, index) =>
+          edge.id && design.elements[keys[index]]?.emphasis === 'highlight' ? [edge.id] : []));
+        const priority = (edge: SVGPathElement) => highlighted.has(edge.getAttribute('data-id') ?? edge.id.replace(id + '-', ''));
+        if (highlighted.size) motionEdges = [...uniqueEdges.filter(priority), ...uniqueEdges.filter(edge => !priority(edge))];
+      }
+      motionEdges.slice(0, 150).forEach((edge, index) => {
         if (!edge.getAttribute('d') || edge.style.stroke === 'transparent' || edge.style.strokeWidth === '0px') return;
         const pulse = makeElement(doc, 'path', {
           d: edge.getAttribute('d')!,
@@ -430,7 +438,7 @@ async function performRender({ settings, nodeAccents, design: inputDesign, prepa
         edge.after(pulse);
       });
       if (uniqueEdges.length === 0) warnings.push('Flow effects apply to path-based connectors. This diagram keeps its native layout and theme.');
-      if (uniqueEdges.length > 150) warnings.push('Motion is limited to the first 150 connectors to keep the canvas responsive.');
+      if (uniqueEdges.length > 150) warnings.push('Up to 150 connectors animate. Highlight a connector to give it priority, or choose specific paths in a scene.');
     }
     const elements = decorateDesign(svg, id, nodes, model, design, settings);
     const css = makeElement(doc, 'style');

@@ -12,7 +12,9 @@ export interface ProjectListItem {
   origin?: ProjectOrigin;
 }
 export function studioListItem(doc: StudioDocument): ProjectListItem {
-  return { id: doc.id, kind: "diagram", title: doc.title, subtitle: doc.subtitle, theme: doc.settings.theme,
+  let title = doc.title;
+  try { if (localStorage.getItem("meridian:import/" + doc.id)) title += " (imported)"; } catch { /* optional list annotation */ }
+  return { id: doc.id, kind: "diagram", title, subtitle: doc.subtitle, theme: doc.settings.theme,
     updatedAt: doc.updatedAt, sceneCount: doc.storyboard?.scenes.length ?? 0 };
 }
 
