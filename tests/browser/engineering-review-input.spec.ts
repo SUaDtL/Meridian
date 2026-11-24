@@ -94,6 +94,7 @@ for (const mode of ['keyboard', 'touch'] as const) {
         await activate(dialog.getByRole('button', { name: adapter.preview }));
         await expect(dialog.getByRole('img', { name: adapter.proposed })).toBeVisible();
         await activate(dialog.getByRole('button', { name: adapter.create }));
+        await activate(page.getByRole('button', { name: 'Authoring tools' }));
         const project = page.getByRole('dialog', { name: adapter.title, exact: true });
         await expect(project.getByRole('img', { name: `Diagram preview for ${adapter.title}` })).toBeVisible();
         await expect(project.getByText('Saved in this browser.')).toBeVisible();

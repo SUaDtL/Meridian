@@ -582,6 +582,7 @@ for (const mode of ['hosted', 'standalone'] as const) {
     await expect(page.locator('html')).toHaveAttribute('data-fresh-source-worker', 'true');
     await wizard.getByRole('button', { name: 'Preview process' }).click();
     await wizard.getByRole('button', { name: 'Create process' }).click();
+    await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
     const live = page.getByRole('dialog', { name: 'Bounded source review' });
     await expect(live.getByText('Saved in this browser.')).toBeVisible();
     const original = await download(page, live);

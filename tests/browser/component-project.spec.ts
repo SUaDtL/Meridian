@@ -51,6 +51,7 @@ test('previews a typed component, stores only instance bindings, and preserves t
   await preview.click();
   await expect(shelf.getByRole('img', { name: 'Proposed component diagram' })).toBeVisible();
   await shelf.getByRole('button', { name: 'Create component project' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'Local service component' });
   await expect(live.getByRole('img', { name: 'Diagram preview for Local service component' })).toBeVisible();
   async function downloadProject() {
@@ -115,6 +116,7 @@ test('creates a component project with nested verified containment and durable g
   await expect(shelf.getByRole('img', { name: 'Proposed component diagram' })).toBeVisible();
   await page.screenshot({ path: info.outputPath('grouped-component-review.png') });
   await shelf.getByRole('button', { name: 'Create component project' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'Nested service component' });
   await expect(live.getByRole('img', { name: 'Diagram preview for Nested service component' })).toBeVisible();
   async function download(name: string) {

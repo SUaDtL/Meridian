@@ -88,6 +88,7 @@ test('resumes reviewed OpenAPI operations and keeps precise provenance without t
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: info.outputPath('openapi-review-mobile.png') });
   await dialog.getByRole('button', { name: 'Create new diagram' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'Pet operation reference' });
   await expect(live.getByRole('img', { name: 'Diagram preview for Pet operation reference' })).toBeVisible();
   const [download] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
@@ -135,6 +136,7 @@ test('recovers from invalid YAML and creates a reviewed operation diagram from o
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: info.outputPath('openapi-yaml-mobile.png') });
   await dialog.getByRole('button', { name: 'Create new diagram' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'Entry operations' });
   await expect(live.getByRole('img', { name: 'Diagram preview for Entry operations' })).toBeVisible();
   const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
@@ -217,6 +219,7 @@ test('reviews same-file OpenAPI schema references with exact provenance and no e
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: info.outputPath('openapi-schema-mobile.png') });
   await dialog.getByRole('button', { name: 'Create new diagram' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'OpenAPI schema relationships' });
   const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
   const path = await file.path();
@@ -274,6 +277,7 @@ test('requires reviewed distinct virtual paths and retains provenance across sup
   await expect(dialog.getByRole('img', { name: 'Proposed OpenAPI schema diagram' })).toBeVisible();
   await expect(dialog.getByText('2 nodes · 2 connections · 0 schemas omitted')).toBeVisible();
   await dialog.getByRole('button', { name: 'Create new diagram' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'OpenAPI schema relationships' });
   const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
   const path = await file.path();
@@ -306,10 +310,11 @@ test('re-imports changed OpenAPI facts as an independent project after a manual 
     await wizard.getByRole('button', { name: 'Preview diagram' }).click();
     await expect(wizard.getByRole('img', { name: 'Proposed OpenAPI operation diagram' })).toBeVisible();
     await wizard.getByRole('button', { name: 'Create new diagram' }).click();
+    await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
     return page.getByRole('dialog', { name: title });
   }
 
-  const savedProjects = page.getByRole('dialog', { name: 'Project migration and recovery' });
+  const savedProjects = page.getByRole('dialog', { name: 'Your projects' });
   const firstTitle = 'Original account routes';
   const nextTitle = 'Latest account routes';
   const first = await createDiagram(firstTitle, '/old-accounts', 'readAccounts');
@@ -336,8 +341,7 @@ test('re-imports changed OpenAPI facts as an independent project after a manual 
     ...original, source: edited, revision: original.revision + 1, updatedAt: authored.updatedAt,
   });
 
-  await first.getByRole('button', { name: 'Back to v3 projects' }).click();
-  await savedProjects.getByRole('button', { name: 'Close dialog' }).click();
+  await first.getByRole('button', { name: 'Back to projects' }).click();
   await page.getByRole('dialog', { name: 'Your projects' }).getByRole('button', { name: 'Close dialog' }).click();
   const second = await createDiagram(nextTitle, '/new-accounts', 'listAccounts');
   const newer = JSON.parse(await downloadProject(nextTitle));
@@ -347,8 +351,9 @@ test('re-imports changed OpenAPI facts as an independent project after a manual 
     virtualPath: 'api/account.json', pointer: '/paths/~1new-accounts/get',
   }));
   expect(newer.source).not.toContain('Manually added routing note');
-  await second.getByRole('button', { name: 'Back to v3 projects' }).click();
-  await savedProjects.getByRole('button', { name: `Open v3 project ${firstTitle}` }).click();
+  await second.getByRole('button', { name: 'Back to projects' }).click();
+  await savedProjects.getByRole('button', { name: new RegExp(firstTitle) }).click();
+  await page.getByRole('button', { name: 'Authoring tools' }).click();
   expect(await downloadProject(firstTitle)).toBe(firstBytes);
   expect(await readDrafts(page)).toEqual([]);
 });

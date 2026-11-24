@@ -31,11 +31,14 @@ interface Props {
   result: RenderResult | null;
   document: StudioDocument;
   selectedKey: string | null;
+  onRename?: (key: string) => void;
+  targetTable?: import("../lib/authoring/project-render").RenderTargetTable | null;
   onSelect: (key: string | null) => void;
   replayKey: number;
   present: boolean;
   motionPaused: boolean;
   fitRequest: number;
+  selectionRequest?: number;
   storyPreview?: boolean;
   reducedMotion?: boolean;
   onStoryController?: (controller: StoryboardController | null) => void;
@@ -45,7 +48,7 @@ interface Props {
   error?: string;
 }
 
-function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, present, motionPaused, fitRequest, storyPreview = false, reducedMotion = false, onStoryController, onStoryPlayback, onEditHeading, loading = false, error = ''}: Props) {
+function DiagramStage({result, document: doc, selectedKey, onSelect, onRename, targetTable, replayKey, present, motionPaused, fitRequest, selectionRequest = 0, storyPreview = false, reducedMotion = false, onStoryController, onStoryPlayback, onEditHeading, loading = false, error = ''}: Props) {
   const viewport = useRef<HTMLDivElement>(null);
   const drawing = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -91,6 +94,7 @@ function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, 
     [result, doc.title, doc.subtitle, doc.settings.theme, doc.settings.font, doc.settings.padding, doc.settings.frame, doc.settings.showTitle, doc.settings.showBrand, doc.settings.background, doc.settings.ambient]);
   const { svg } = frame;
   const dimensions = frame;
+  const markup = useMemo(() => ({ __html: svg }), [svg]);
 
   useEffect(() => {
     if (!storyPreview || !doc.storyboard?.scenes.length) {
@@ -103,6 +107,7 @@ function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, 
     root.querySelectorAll('.studio-selected,.studio-dimmed,.studio-edge-dimmed').forEach(element=>element.classList.remove('studio-selected','studio-dimmed','studio-edge-dimmed'));
     const resume = previousPlayback.current?.documentId === doc.id ? previousPlayback.current.state : null;
     const controller = createStoryboardPlayer(root, doc.storyboard, {
+      targetTable: targetTable ?? undefined,
       initialTime: resume?.time,
       initialPreview: resume?.preview ? resume.sceneIndex : undefined,
       reducedMotion,
@@ -157,6 +162,47 @@ function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, 
     observer.observe(el); window.addEventListener('scroll', invalidateBounds, true);
     return () => { observer.disconnect(); window.removeEventListener('scroll', invalidateBounds, true); };
   }, [fit]);
+
+  const viewStack = useRef<{ zoom: number; pan: Point; fitted: boolean }[]>([]);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const focusSelection = useCallback((neighbors = false) => {
+    const el = viewport.current;
+    const chosen = selectedKey && elementIndex.get(selectedKey);
+    if (!el || !chosen || !("diagramScale" in frame)) return;
+    const ids = new Set([chosen.key]);
+    if (neighbors) for (const item of elementIndex.values()) {
+      if (item.from === chosen.key || item.to === chosen.key || item.key === chosen.key) {
+        ids.add(item.key);
+        if (item.from) ids.add(item.from);
+        if (item.to) ids.add(item.to);
+      }
+    }
+    const boxes = [...ids].flatMap(key => elementIndex.get(key)?.bounds ?? []);
+    if (!boxes.length) return;
+    const left = Math.min(...boxes.map(box => box.x)), top = Math.min(...boxes.map(box => box.y));
+    const right = Math.max(...boxes.map(box => box.x + box.width)), bottom = Math.max(...boxes.map(box => box.y + box.height));
+    const k = frame.diagramScale;
+    const next = clampZoom(Math.min(1.5 / k, (el.clientWidth - 60) / Math.max(1,(right-left)*k), (el.clientHeight - 110) / Math.max(1,(bottom-top)*k)));
+    if (!(next > 0)) return;
+    const centerX = frame.diagramOrigin.x + (left + right)*k/2 - frame.width/2;
+    const centerY = frame.diagramOrigin.y + (top + bottom)*k/2 - frame.height/2;
+    viewStack.current = [...viewStack.current.slice(-9), { ...camera.current, fitted: isFitted.current }];
+    setCanGoBack(true); isFitted.current = false;
+    updateCamera(next, { x: -centerX*next, y: -centerY*next });
+  }, [frame, elementIndex, selectedKey, updateCamera]);
+  const handledSelection = useRef(0);
+  useEffect(() => {
+    if (selectionRequest === handledSelection.current) return;
+    handledSelection.current = selectionRequest;
+    focusSelection();
+  }, [selectionRequest, focusSelection]);
+  useEffect(() => { viewStack.current = []; setCanGoBack(false); }, [doc.id, doc.source]);
+  function backToView() {
+    const saved = viewStack.current.pop();
+    if (!saved) return;
+    if (saved.fitted) fit(); else { isFitted.current = false; updateCamera(saved.zoom, saved.pan); }
+    setCanGoBack(viewStack.current.length > 0);
+  }
 
   const zoomTo = useCallback((next:number) => { updateCamera(clampZoom(next), camera.current.pan); isFitted.current = false; }, [updateCamera]);
   useEffect(() => {
@@ -344,7 +390,7 @@ function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, 
       <span>{loading ? 'Preparing the layout and your chosen style.' : error ? 'The source has a syntax issue. Fix it in the editor, then render again.' : doc.source.trim() ? 'Render your source to see it here.' : 'Write or paste Mermaid source, or choose an example to begin.'}</span>
     </div> :
       <div className="drawing-position" style={{width:dimensions.width,height:dimensions.height,transform:`translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`}}>
-        <div key={replayKey} ref={drawing} className={`drawing ${replayKey>0?'replay':''}`} data-testid="rendered-diagram" dangerouslySetInnerHTML={{__html:svg}}
+        <div key={replayKey} ref={drawing} className={`drawing ${replayKey>0?'replay':''}`} data-testid="rendered-diagram" dangerouslySetInnerHTML={markup}
           onClick={(e) => {
             if (Date.now() < suppressClickUntil.current) { e.preventDefault(); e.stopPropagation(); return; }
             const field = headingField(e.target);
@@ -361,12 +407,13 @@ function DiagramStage({result, document: doc, selectedKey, onSelect, replayKey, 
             if (key) { e.preventDefault(); onSelect(key); }
           }} />
       </div>}
-    {!storyPreview && selectedKey && <div className="selection-toolbar"><span>{elementIndex.get(selectedKey)?.label||selectedKey}</span><button className={focused?'active':''} onClick={()=>setFocused(!focused)} title="Spotlight this element" aria-pressed={focused}><Focus size={15}/>Spotlight</button><button className="icon-button" aria-label="Clear selected node" onClick={()=>onSelect(null)}><X size={15}/></button></div>}
-    <div className="canvas-controls">
+    {!present && !storyPreview && selectedKey && <div className="selection-toolbar"><span>{elementIndex.get(selectedKey)?.label||selectedKey}</span>{onRename && elementIndex.get(selectedKey)?.kind === "node" && <button onClick={() => onRename(selectedKey)}>Rename</button>}<button onClick={() => focusSelection()}>Zoom to selection</button><button onClick={() => focusSelection(true)}>Neighbors</button><button className={focused?'active':''} onClick={()=>setFocused(!focused)} title="Spotlight this element" aria-pressed={focused}><Focus size={15}/>Spotlight</button><button className="icon-button" aria-label="Clear selected node" onClick={()=>onSelect(null)}><X size={15}/></button></div>}
+    {!present && <div className="canvas-controls">
+      {canGoBack && <button className="button quiet" onClick={backToView}>Previous view</button>}
       <div className="control-group tool-buttons"><button className={tool==='select'?'active':''} onClick={()=>setTool('select')} aria-label="Select diagram elements" aria-pressed={tool==='select'} title="Select diagram elements"><MousePointer2 size={17}/></button><button className={tool==='pan'?'active':''} onClick={()=>setTool('pan')} aria-label="Pan canvas" aria-pressed={tool==='pan'} title="Pan canvas"><Move size={17}/></button></div>
-      <div className="control-group"><button onClick={()=>zoomTo(zoom/1.2)} aria-label="Zoom out"><Minus size={17}/></button><button className="zoom-value" onClick={()=>zoomTo(1)} title="Actual size">{Math.round(zoom*100)}%</button><button onClick={()=>zoomTo(zoom*1.2)} aria-label="Zoom in"><Plus size={17}/></button><span className="control-separator"/><button onClick={fit} aria-label="Fit diagram to view" title="Fit to view"><Maximize size={17}/></button></div>
-    </div>
-    <div className="canvas-hint"><RotateCcw size={12}/><span>Drag to pan · Pinch or scroll to zoom · Double-click to fit</span></div>
+      <div className="control-group"><button onClick={()=>zoomTo(zoom/1.2)} aria-label="Zoom out"><Minus size={17}/></button><button className="zoom-value" onClick={()=>zoomTo(1)} aria-label={`Zoom ${Math.round(zoom*100)} percent. Reset to 100 percent`} title="Reset zoom to 100%">{Math.round(zoom*100)}%</button><button onClick={()=>zoomTo(zoom*1.2)} aria-label="Zoom in"><Plus size={17}/></button><span className="control-separator"/><button onClick={fit} aria-label="Fit diagram to view" title="Fit to view"><Maximize size={17}/></button></div>
+    </div>}
+    {!present && <div className="canvas-hint"><RotateCcw size={12}/><span>Drag to pan · Pinch or scroll to zoom · Double-click to fit</span></div>}
   </div>;
 }
 

@@ -16,7 +16,7 @@ import { listRelationshipCheckpoints, makeRelationshipCheckpoint, normalizedRela
 import { openWorkspaceDatabase, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import { downloadText } from "../lib/storage";
 
-type Column = keyof RelationshipColumns;
+type Column = "label" | "id" | "role" | "source" | "target";
 type Columns = Record<Column, number | null>;
 const names: Record<Column, string> = { label: "System label", id: "System ID", role: "Role", source: "Relationship source", target: "Relationship target" };
 const emptyColumns: Columns = { label: null, id: null, role: null, source: null, target: null };
@@ -26,6 +26,8 @@ export type RelationshipTableDraft = {
   text: string;
   delimiter: TableDelimiter;
   header: boolean;
+  edgeList?: boolean;
+  edgeLabel?: number | null;
   rows?: DelimitedRow[];
   columns?: Columns;
   checkpoint?: RelationshipCheckpoint;
@@ -125,14 +127,22 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
       const rows = await readRelationshipTable(draft.text, draft.delimiter, signal, extended);
       signal.throwIfAborted();
       if (!rows.length) throw new Error("Enter at least one row of table data.");
-      onDraft(current => ({ ...current, rows, recovered: undefined }));
+      const headings = rows[0].cells.map(cell => cell.trim().toLowerCase());
+      const source = headings.findIndex(cell => cell === "source" || cell === "from");
+      const target = headings.findIndex(cell => cell === "target" || cell === "to");
+      const label = headings.indexOf("label");
+      const edgeList = draft.header && source >= 0 && target >= 0 && !headings.includes("id");
+      onDraft(current => ({ ...current, rows, recovered: undefined, edgeList, edgeLabel: label < 0 ? null : label,
+        columns: edgeList ? { ...emptyColumns, source, target } : undefined }));
       setInputVisible(false);
       setRetry(undefined);
     }, extended);
   }
 
   async function prepare(signal: AbortSignal, extended: boolean) {
-    const chosen = columns.label === null ? undefined : { ...columns, label: columns.label };
+    const chosen: RelationshipColumns | undefined = draft.edgeList && columns.source !== null && columns.target !== null
+      ? { ...emptyColumns, mode: "edges", edgeLabel: draft.edgeLabel ?? null, source: columns.source, target: columns.target }
+      : columns.label === null ? undefined : { ...columns, label: columns.label };
     const mapped = recovered ?? (draft.rows && chosen ? {
       columns: chosen, graph: await mapTableInWorker(draft.rows, chosen, draft.header, signal, extended),
     } : undefined);
@@ -238,7 +248,8 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
           onChange={event => editInput({ delimiter: event.target.value === "\t" ? "\t" : "," })}>
           <option value=",">Comma</option><option value={"\t"}>Tab</option>
         </select></label>
-        <p>Use one row per system. To include relationships, provide system IDs and source and target columns.</p>
+        <p>Use one row per system or one row per connection. Connection lists create each endpoint once.</p>
+        <button type="button" className="button quiet" onClick={() => downloadText("source,target,label\nIntake,Review,submit\nReview,Publish,approve\nReview,Intake,revise\n", "connections.csv", "text/csv")}>Download sample connections CSV</button>
         <div className="dialog-actions">
           <button type="button" className="button primary" disabled={!!busy || !draft.text || retry === "narrow"}
             onClick={() => void read(retry === "once")}>{retry === "once" ? "Retry for five seconds" : "Read table"}</button>
@@ -247,7 +258,7 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
       {!inputVisible && !review && recovered && <div>
         <h3 ref={stageHeading} tabIndex={-1}>{target ? "Review mapped systems" : "Resume mapped systems"}</h3>
         <p>{recovered.graph.nodes.length} systems · {recovered.graph.edges.length} relationships</p>
-        <ul>{(Object.keys(names) as Column[]).map(key => {
+        <ul>{(recovered.columns.mode === "edges" ? ["source", "target"] as Column[] : Object.keys(names) as Column[]).map(key => {
           const column = recovered.columns[key];
           return <li key={key}>{names[key]} {column === null ? "was left unmapped" : `uses column ${column + 1}`}</li>;
         })}</ul>
@@ -264,6 +275,9 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
       </div>}
       {!inputVisible && !review && !draft.recovered && <div className="heading-form">
         <h3 ref={stageHeading} tabIndex={-1}>Map table columns</h3>
+        <label>Table mode<select value={draft.edgeList ? "edges" : "nodes"} disabled={!!busy}
+          onChange={event => onDraft(current => ({ ...current, edgeList: event.target.value === "edges" }))}>
+          <option value="nodes">Nodes table</option><option value="edges">Connections table</option></select></label>
         <label className="check-label"><input type="checkbox" checked={draft.header} disabled={!!busy}
           onChange={event => { setRetry(undefined); onDraft(current => ({ ...current, header: event.target.checked })); }} /> First row contains column names</label>
         <div className="relationship-table-sample">
@@ -272,7 +286,7 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
             <tbody>{sample.map(row => <tr key={row.line}>{headers.map((_, index) => <td key={index}>{row.cells[index]}</td>)}</tr>)}</tbody>
           </table>
         </div>
-        {(Object.keys(names) as Column[]).map(column => <label key={column}>{names[column]}
+        {(draft.edgeList ? ["source", "target"] as Column[] : Object.keys(names) as Column[]).map(column => <label key={column}>{names[column]}
           <select value={columns[column] ?? ""} disabled={!!busy} onChange={event => {
             const chosen = event.target.value === "" ? null : Number(event.target.value);
             setRetry(undefined);
@@ -282,9 +296,12 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
             {headers.map((header, index) => <option key={index} value={index}>Column {index + 1}{draft.header && header ? ` · ${header}` : ""}</option>)}
           </select>
         </label>)}
+        {draft.edgeList && <label>Connection label<select value={draft.edgeLabel ?? ""} onChange={event =>
+          onDraft(current => ({ ...current, edgeLabel: event.target.value === "" ? null : Number(event.target.value) }))}>
+          <option value="">Leave unmapped</option>{headers.map((header, i) => <option key={i} value={i}>{header || "Column " + (i + 1)}</option>)}</select></label>}
         <div className="dialog-actions">
           <button type="button" className="button quiet" disabled={!!busy} onClick={() => { setError(""); setInputVisible(true); }}>Back to table input</button>
-          <button type="button" className="button primary" disabled={!!busy || columns.label === null || retry === "narrow"}
+          <button type="button" className="button primary" disabled={!!busy || (draft.edgeList ? columns.source === null || columns.target === null : columns.label === null) || retry === "narrow"}
             onClick={() => void preview()}>{retry === "once" ? "Retry for five seconds"
               : target ? "Review mapped relationships" : "Preview relationships"}</button>
         </div>
@@ -295,7 +312,7 @@ export default function GuidedRelationshipTableDialog({ draft, onDraft, onCreate
         <ul aria-label="Reviewed relationships">{review.graph.edges.map((edge, index) => {
           const from = review.graph.nodes.find(node => node.key === edge.from)!;
           const to = review.graph.nodes.find(node => node.key === edge.to)!;
-          return <li key={index}>{from.label} (row {from.sourceRow}) → {to.label} (row {to.sourceRow})</li>;
+          return <li key={index}>{from.label} (row {from.sourceRow}) → {to.label} (row {to.sourceRow}) {edge.label && " · " + edge.label}</li>;
         })}</ul>
         {target && <GuidedAttachmentSummary target={target} draftNodes={draftNodes} />}
         <img src={review.url} alt="Proposed systems diagram" onLoad={() => setPainted(true)} onError={() => setError("The preview image could not be displayed.")} />

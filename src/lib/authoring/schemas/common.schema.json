@@ -598,6 +598,10 @@
           "type": "string",
           "maxLength": 120
         },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
         "duration": {
           "type": "number",
           "minimum": 0.5,
@@ -719,6 +723,10 @@
               "title": {
                 "type": "string",
                 "maxLength": 120
+              },
+              "notes": {
+                "type": "string",
+                "maxLength": 2000
               },
               "duration": {
                 "type": "number",

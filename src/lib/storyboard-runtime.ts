@@ -81,7 +81,9 @@ export function createStoryboardRuntime() {
     const baseMotion = Array.from(root.querySelectorAll<SVGElement>('[data-studio-motion]')).map(element => ({ element, style: element.getAttribute('style') }));
     for (const item of baseMotion) item.element.style.setProperty('display', 'none', 'important');
     const flowPaths: Array<{ key: string; path: SVGPathElement; display: boolean; opacity: string; offset: string; direction: number }> = [];
+    const requestedFlow = new Set(storyboard.scenes.flatMap(scene => scene.flow));
     for (const [key, element] of primary) {
+      if (!requestedFlow.has(key)) continue;
       const target = typed?.get(key);
       if ((target?.elementKind ?? element.getAttribute('data-element-kind')) !== 'edge' || target?.direction === 'none') continue;
       const edge = element.localName === 'path' ? element as SVGPathElement : element.querySelector<SVGPathElement>('path:not([data-studio-motion])');

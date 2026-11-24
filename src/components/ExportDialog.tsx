@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Check,
   CircleAlert,
@@ -62,6 +62,8 @@ export default function ExportDialog({
   onClose: () => void;
 }) {
   const [format, setFormat] = useState<Format>("png");
+  const [target, setTarget] = useState<NonNullable<ExportFrameOptions["target"]>>("current");
+  const [previewUrl, setPreviewUrl] = useState("");
   const [scale, setScale] = useState(2);
   const [transparent, setTransparent] = useState(false);
   const [includeFrame, setIncludeFrame] = useState(true);
@@ -78,14 +80,25 @@ export default function ExportDialog({
     () =>
       visual && valid && result
         ? buildExportFrame(result, document, {
-            transparent,
+            target, transparent,
             includeFrame,
             animated: format === "html",
           })
         : null,
-    [visual, valid, result, document, transparent, includeFrame, format],
+    [visual, valid, result, document, transparent, includeFrame, format, target],
   );
   const size = frame ? pngDimensions(frame.width, frame.height, scale) : null;
+  useEffect(() => {
+    if (!frame) { setPreviewUrl(""); return; }
+    const url = URL.createObjectURL(new Blob([frame.svg], { type: "image/svg+xml" }));
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [frame]);
+  const viewingScale = frame && target === "slide" ? Math.min(1280 / frame.width, 720 / frame.height)
+    : frame && target === "figure" ? 640 / frame.width : 1;
+  const sizes = (result?.elements ?? []).flatMap(element => element.appearance?.labelSizeInDiagram ? [element.appearance.labelSizeInDiagram] : []);
+  const smallest = frame && sizes.length ? Math.min(...sizes) * frame.diagramScale * viewingScale : null;
+  const occupancy = frame && result ? Math.min(result.width * frame.diagramScale / frame.width, result.height * frame.diagramScale / frame.height) : 1;
   const filename = safeFilename(document.title);
   const download = async () => {
     setBusy(true);
@@ -109,7 +122,7 @@ export default function ExportDialog({
         downloadSvg(frame.svg, `${filename}.svg`);
         report("SVG downloaded.");
       } else if (format === "html") {
-        await presentation.download(frame.svg, { transparent, includeFrame });
+        await presentation.download(frame.svg, { target, transparent, includeFrame });
         report("Offline HTML presentation downloaded.");
       } else {
         const pixels = await exportPng(frame.svg, `${filename}.png`, scale);
@@ -158,6 +171,16 @@ export default function ExportDialog({
       </div>
       {visual && (
         <fieldset className="export-options" disabled={busy}>
+          <label>Output target<select value={target} onChange={event => { setTarget(event.target.value as typeof target); setIncludeFrame(true); }}>
+            <option value="current">Current frame · native size</option>
+            <option value="slide">Widescreen slide · review at 1280 × 720</option>
+            <option value="figure">Document figure · review at 640 px wide</option>
+          </select></label>
+          {previewUrl && frame && <figure className="export-proof"><img src={previewUrl} alt="Preview of the export frame" /></figure>}
+          {frame && <p className="muted-note">{smallest === null ? "Label sizes unavailable for this diagram." :
+            `Smallest measured label at this viewing size: ${smallest.toFixed(1)} px.`}
+            {smallest !== null && smallest < 14 && " Labels may be hard to read. Try a tighter figure, a different orientation, or a focused scene."}
+            {occupancy < .45 && " The graph fills less than 45% of one frame dimension. Try the document figure target or turn off the presentation frame."}</p>}
           {format === "png" && (
             <label>
               Resolution

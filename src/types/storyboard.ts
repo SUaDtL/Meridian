@@ -5,6 +5,7 @@ export type StoryEasing = 'linear' | 'ease-in-out' | 'ease-out';
 export interface StoryScene {
   id: string;
   title: string;
+  notes?: string;
   /** Total scene time, including its entrance transition, in seconds. */
   duration: number;
   transition: number;

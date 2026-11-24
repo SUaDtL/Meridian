@@ -64,7 +64,7 @@ function number(value: unknown, label: string, min: number, max: number): number
   return value;
 }
 
-function validateSettings(value: unknown): StudioSettings {
+export function validateSettings(value: unknown): StudioSettings {
   const s = record(value, 'Settings');
   checkKeys(s, SETTING_KEYS, 'Settings');
   return {
@@ -232,4 +232,8 @@ export function normalizeSource(source: string): string {
   const closing = new RegExp(`^[ \\t]*${match[1][0]}{${match[1].length},}[ \\t\\r]*$`, 'm');
   if (closing.test(match[2])) return source;
   return match[2];
+}
+
+export function importedTitle(title: string) {
+  return (title || "Untitled project").slice(0, 109) + " (imported)";
 }

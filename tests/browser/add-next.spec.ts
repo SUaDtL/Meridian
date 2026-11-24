@@ -17,6 +17,7 @@ test('adds one connected node with an explicit direction and role in one reversi
   await guidance.getByRole('button', { name: 'Review connections' }).click();
   await guidance.getByRole('button', { name: 'Preview process' }).click();
   await guidance.getByRole('button', { name: 'Create process' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'Add next workflow' });
   await expect(live.getByRole('img', { name: 'Diagram preview for Add next workflow' })).toBeVisible();
   const original = await downloadProject(page, live);

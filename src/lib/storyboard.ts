@@ -112,7 +112,7 @@ export function validateStoryboard(value: unknown): StoryboardState {
   if (!Array.isArray(s.scenes) || s.scenes.length > 50) throw new Error('A storyboard can contain at most 50 scenes.');
   const scenes: StoryScene[] = s.scenes.map((candidate, index) => {
     const label = `Scene ${index + 1}`;
-    const scene = object(candidate, ['id', 'title', 'duration', 'transition', 'easing', 'visible', 'reveal', 'highlight', 'flow', 'camera'], label);
+    const scene = object(candidate, ['id', 'title', 'notes', 'duration', 'transition', 'easing', 'visible', 'reveal', 'highlight', 'flow', 'camera'], label);
     const id = text(scene.id, 120, `${label} ID`);
     if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error(`${label} has an invalid ID.`);
     const duration = numeric(scene.duration, 0.5, 120, `${label} duration`);
@@ -124,6 +124,7 @@ export function validateStoryboard(value: unknown): StoryboardState {
     const flow = keys(scene.flow, `${label} flow`);
     if (flow.some(key => !key.startsWith('edge:'))) throw new Error(`${label} flow must refer to connectors.`);
     return {
+      ...(scene.notes !== undefined ? { notes: text(scene.notes, 2000, `${label} notes`) } : {}),
       id, title: text(scene.title, 120, `${label} title`), duration, transition,
       easing: scene.easing as StoryScene['easing'], reveal: scene.reveal as StoryScene['reveal'],
       visible: scene.visible === null ? null : keys(scene.visible, `${label} visible elements`),

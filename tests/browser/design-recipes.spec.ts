@@ -146,6 +146,7 @@ test('applies the reviewed paint recipe only to nodes of one explicit role', asy
   await systems.getByRole('button', { name: 'Review relationships' }).click();
   await systems.getByRole('button', { name: 'Preview systems diagram' }).click();
   await systems.getByRole('button', { name: 'Create systems project' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'Role recipe' });
   await expect(live.getByRole('img', { name: 'Diagram preview for Role recipe' })).toBeVisible();
   const before = await downloadProject(page, live);

@@ -4,6 +4,12 @@ import { solidContrast } from '../../src/lib/authoring/solid-text-color';
 import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
 import type { StudioDocument } from '../../src/types';
 
+async function showCoverage(check: import('@playwright/test').Locator) {
+  const summary = check.getByText('Measurement coverage', { exact: true });
+  await expect(summary).toBeVisible();
+  if (!(await summary.evaluate(el => el.closest('details')!.open))) await summary.click();
+}
+
 async function openProject(page: Page, project: StudioDocument) {
   await page.addInitScript(({ key, project }) => localStorage.setItem(key, JSON.stringify({ version: 2, activeId: project.id, documents: [project] })),
     { key: STORAGE_KEY, project });
@@ -34,6 +40,7 @@ test('checks the accepted drawing and shows the exact finding targets without ed
   await expect(check.getByText('300 × 180 CSS pixels · 10 pixels of padding · Project revision 0')).toBeVisible();
   await check.getByRole('button', { name: 'Check diagram' }).click();
   const report = check.getByRole('region', { name: 'Readability results' });
+  await showCoverage(check);
   await expect(report.getByText('Viewed label size · 3 measured · 0 unknown · 1 not applicable')).toBeVisible();
   await expect(report.getByText(/Service measures .* CSS pixels/).first()).toBeVisible();
   await expect(report.getByText(/2 distinct elements share the name Service/)).toBeVisible();
@@ -114,6 +121,7 @@ test('reports measured route candidates and opens the normal layout review', asy
   const check = page.getByRole('dialog', { name: 'Check readability' });
   await check.getByRole('button', { name: 'Check diagram' }).click();
   const report = check.getByRole('region', { name: 'Readability results' });
+  await showCoverage(check);
   await expect(report.getByText('Crossing candidates · 4 measured · 0 unknown · 4 not applicable')).toBeVisible();
   await expect(report.getByText(/cross approximately once within the measured routes/).first()).toBeVisible();
   await report.getByRole('button', { name: 'Compare layouts' }).first().click();
@@ -133,6 +141,7 @@ test('reports an ELK bridge arc as unknown route geometry', async ({ page }) => 
   await live.getByRole('button', { name: 'Check readability', exact: true }).click();
   const check = page.getByRole('dialog', { name: 'Check readability' });
   await check.getByRole('button', { name: 'Check diagram' }).click();
+  await showCoverage(check);
   await expect(check.getByRole('region', { name: 'Readability results' })
     .getByText('Crossing candidates · 3 measured · 1 unknown · 4 not applicable')).toBeVisible();
 });
@@ -193,6 +202,7 @@ test('compares verified solid text and leaves the gradient node unmeasured', asy
   await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('presentation');
   await check.getByRole('button', { name: 'Check diagram' }).click();
   const report = check.getByRole('region', { name: 'Readability results' });
+  await showCoverage(check);
   await expect(report.getByText('Solid text contrast · 1 measured · 1 unknown · 0 not applicable')).toBeVisible();
   await expect(report.getByText(/Low contrast has a contrast ratio of 1\.16\d+ to 1/)).toBeVisible();
   await expect(report.getByText(/Gradient surface has a contrast ratio/)).toHaveCount(0);
@@ -208,6 +218,7 @@ test('compares verified solid text and leaves the gradient node unmeasured', asy
   await live.getByRole('button', { name: 'Check readability', exact: true }).click();
   await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('presentation');
   await check.getByRole('button', { name: 'Check diagram' }).click();
+  await showCoverage(check);
   await expect(report.getByText('Solid text contrast · 1 measured · 1 unknown · 0 not applicable')).toBeVisible();
   await expect(report.getByRole('button', { name: /Preview text contrast fix/ })).toHaveCount(0);
   await check.getByRole('button', { name: 'Close dialog' }).click();
@@ -230,6 +241,7 @@ test('reviews and undoes a measured stroke color on an exposed solid canvas', as
   const check = page.getByRole('dialog', { name: 'Check readability' });
   await check.getByRole('button', { name: 'Check diagram' }).click();
   const report = check.getByRole('region', { name: 'Readability results' });
+  await showCoverage(check);
   await expect(report.getByText('Connector contrast · 1 measured · 0 unknown · 2 not applicable')).toBeVisible();
   await expect(report.getByText(/Input – Output measures 1 to 1 at the center/)).toBeVisible();
   await report.getByRole('button', { name: 'Preview stroke contrast fix for Input – Output' }).click();
@@ -256,6 +268,7 @@ test('keeps the connector contrast unknown when there is an arrowhead', async ({
   const check = page.getByRole('dialog', { name: 'Check readability' });
   await check.getByRole('button', { name: 'Check diagram' }).click();
   const report = check.getByRole('region', { name: 'Readability results' });
+  await showCoverage(check);
   await expect(report.getByText('Connector contrast · 0 measured · 1 unknown · 2 not applicable')).toBeVisible();
   await expect(report.getByRole('button', { name: /Preview stroke contrast fix/ })).toHaveCount(0);
 });
@@ -272,6 +285,7 @@ test('measures rectangular label spill in a fixed viewing area at either pixel d
     await check.getByRole('combobox', { name: 'Viewing profile' }).selectOption('presentation');
     await check.getByRole('button', { name: 'Check diagram' }).click();
     const report = check.getByRole('region', { name: 'Readability results' });
+    await showCoverage(check);
     await expect(report.getByText('Label containment · 2 measured · 1 unknown · 1 not applicable')).toBeVisible();
     const finding = report.getByText(/This label exceeds its backing \(A\) extends [\d.]+ CSS pixels beyond its rectangular shape/);
     await expect(finding).toBeVisible();
@@ -425,6 +439,7 @@ test('keeps fixed-profile findings identical across canvas zoom and PNG density'
     await width.fill('125');
     await expect(check.getByText('125 CSS pixels allocated · Fits width · Project revision 0')).toBeVisible();
     await check.getByRole('button', { name: 'Check diagram' }).click();
+    await showCoverage(check);
     await expect(report.getByText('Viewed label size · 2 measured · 0 unknown · 1 not applicable')).toBeVisible();
     const finding = report.getByText(/Service measures [\d.]+ CSS pixels in this viewing area/);
     await expect(finding).toBeVisible();

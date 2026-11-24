@@ -88,6 +88,7 @@ test('resumes a reviewed Terraform scope with declared references and address-on
   await expect(dialog.getByRole('img', { name: 'Proposed Terraform inventory' })).toBeVisible();
   await expect(dialog.getByText(/numeric instance indexes with full-width brackets/)).toBeVisible();
   await dialog.getByRole('button', { name: 'Create inventory project' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'Terraform planned resource inventory' });
   const [file] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);
   const path = await file.path();

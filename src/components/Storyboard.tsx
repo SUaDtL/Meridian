@@ -147,6 +147,7 @@ const SceneEditor = memo(function SceneEditor({ scene, index, count, elements, s
     <fieldset className="sb-fieldset" disabled={playing}>
       <label className="sb-field" htmlFor={`${id}-title`}>Scene title<input id={`${id}-title`} type="text" maxLength={120} value={scene.title} onChange={event => onPatch({ title: event.target.value })} placeholder={`Scene ${index + 1}`} /></label>
       <button type="button" className="sb-preview-scene" aria-label="Preview this scene" onClick={onPreview} disabled={!!disabledReason}><Play size={14} />Preview this scene<span>Show its finished view</span></button>
+      <label className="sb-field">Presenter notes<textarea className="notes-editor" rows={2} maxLength={2000} value={scene.notes ?? ""} onChange={event => onPatch({ notes: event.target.value })}/></label>
       <Section title="Timing" icon={<RotateCcw size={15} />} summary={`${scene.duration}s · ${scene.transition ? `${scene.transition}s entrance` : 'Cut'}`} initialOpen>
         <TimingField id={`${id}-duration`} label="Duration" value={scene.duration} min={0.5} max={120} step={0.5} presets={[3, 5, 10]} onCommit={value => onPatch({ duration: value, transition: Math.min(scene.transition, value) })} />
         <TimingField id={`${id}-transition`} label="Transition" value={scene.transition} min={0} max={Math.min(10, scene.duration)} step={0.1} presets={[0, 0.3, 0.7, 1.2]} onCommit={value => onPatch({ transition: value })} />

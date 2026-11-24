@@ -65,6 +65,7 @@ test('maps a local relationship table and exports distinct identities for duplic
   await dialog.getByRole('button', { name: 'Preview relationships' }).click();
   await expect(dialog.getByRole('img', { name: 'Proposed systems diagram' })).toBeVisible();
   await dialog.getByRole('button', { name: 'Create systems diagram' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const project = page.getByRole('dialog', { name: 'Mapped systems' });
   await expect(project.getByText('Saved in this browser.')).toBeVisible();
   const pendingDownload = page.waitForEvent('download');

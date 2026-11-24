@@ -15,23 +15,26 @@ export function makeRelationshipCheckpoint(title: string, graph: RelationshipGra
     if (!Number.isInteger(column) || column < 0 || column >= tableInputLimits.columns) throw new Error('A table column is out of bounds.');
     return `column-${column + 1}`;
   }
-  if (columns.label === null || (columns.source === null) !== (columns.target === null)
-    || (columns.source !== null && columns.id === null)) throw new Error('The table mapping is incomplete.');
+  const edgeList = columns.mode === 'edges';
+  if (edgeList && (columns.source === null || columns.target === null || columns.source === columns.target)) throw new Error('Map both endpoints.');
+  if (!edgeList && (columns.label === null || (columns.source === null) !== (columns.target === null)
+    || (columns.source !== null && columns.id === null))) throw new Error('The table mapping is incomplete.');
 
   let lastRow = 0;
   const nodeIds = new Set<string>();
-  const nodes = graph.nodes.map(({ key, label, role, sourceRow }) => {
-    if (!Number.isInteger(sourceRow) || sourceRow <= lastRow || sourceRow > tableInputLimits.rows
-      || key !== `row-${sourceRow}` || typeof label !== 'string' || !label.trim()
+  const nodes = graph.nodes.map(({ key, label, role, sourceRow }, index) => {
+    if (!Number.isInteger(sourceRow) || (edgeList ? sourceRow < Math.max(1, lastRow) : sourceRow <= lastRow) || sourceRow > tableInputLimits.rows
+      || key !== (edgeList ? `endpoint-${index + 1}` : `row-${sourceRow}`) || typeof label !== 'string' || !label.trim()
       || (role !== null && !systemRoles.includes(role))) throw new Error('A normalized system row is invalid.');
     encodeMermaidLabel(label);
     lastRow = sourceRow;
     nodeIds.add(key);
     return { id: key, label, role, shape: 'rect' as const, sourceRow };
   });
-  const edges = graph.edges.map(({ from, to }, index) => {
+  const edges = graph.edges.map(({ from, to, label }, index) => {
     if (!nodeIds.has(from) || !nodeIds.has(to)) throw new Error('A draft relationship points to a missing system.');
-    return { id: `connection-${index + 1}`, sourceId: from, targetId: to, label: '', direction: 'forward' as const, review: 'accepted' as const };
+    if (label) encodeMermaidLabel(label);
+    return { id: `connection-${index + 1}`, sourceId: from, targetId: to, label: label ?? '', direction: 'forward' as const, review: 'accepted' as const };
   });
   return {
     schema: 'meridian-draft/v1' as const, id, feature: 'guided' as const, baseToken: null,
@@ -41,7 +44,8 @@ export function makeRelationshipCheckpoint(title: string, graph: RelationshipGra
       title, subtitle: '', direction: 'LR' as const, destination: { mode: 'new' as const, targetProjectId: null },
       nodes, edges, groups: [], terminalNodeIds: [],
       mapping: { id: mapped(columns.id), label: mapped(columns.label), role: mapped(columns.role),
-        source: mapped(columns.source), target: mapped(columns.target) },
+        source: mapped(columns.source), target: mapped(columns.target),
+        ...(edgeList && { mode: "edges" as const, edgeLabel: mapped(columns.edgeLabel ?? null) }) },
     },
   };
 }
@@ -51,7 +55,7 @@ export type RelationshipCheckpoint = ReturnType<typeof makeRelationshipCheckpoin
 export function normalizedRelationshipDraft({ payload }: RelationshipCheckpoint) {
   const graph: RelationshipGraph = {
     nodes: payload.nodes.map(({ id, label, role, sourceRow }) => ({ key: id, label, role, sourceRow })),
-    edges: payload.edges.map(({ sourceId, targetId }) => ({ from: sourceId, to: targetId })),
+    edges: payload.edges.map(({ sourceId, targetId, label }) => ({ from: sourceId, to: targetId, ...(label ? { label } : {}) })),
   };
   function column(value: string | null) {
     if (value === null) return null;
@@ -60,8 +64,8 @@ export function normalizedRelationshipDraft({ payload }: RelationshipCheckpoint)
   }
   const mapping = payload.mapping;
   const label = column(mapping.label);
-  if (label === null) throw new Error('The system label column is missing.');
-  const columns: RelationshipColumns = { label, id: column(mapping.id), role: column(mapping.role),
+  if (mapping.mode !== 'edges' && label === null) throw new Error('The system label column is missing.');
+  const columns: RelationshipColumns = { ...(mapping.mode === "edges" && { mode: "edges", edgeLabel: column(mapping.edgeLabel ?? null) }), label, id: column(mapping.id), role: column(mapping.role),
     source: column(mapping.source), target: column(mapping.target) };
   return { graph, columns };
 }

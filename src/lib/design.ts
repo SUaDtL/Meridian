@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS, getTheme } from './themes';
 import { boxesOverlap, measureSolidNodeText, svgTextFragments, type MeasuredSolidText } from './authoring/measure-solid-text';
 import { measureLabelOverflow } from './authoring/measure-label-containment';
 import { measureSolidConnectors } from './authoring/measure-solid-connector';
-import { readSrgbPaint } from './authoring/solid-text-color';
+import { readSrgbPaint, solidContrast } from './authoring/solid-text-color';
 import { flattenRoute, routeSegmentLimit } from './authoring/route-geometry';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -250,7 +250,15 @@ function decorate(svg: SVGSVGElement, target: SVGElement, item: RenderElement, s
   if (style.stroke) setProperty(shapes, 'stroke', style.stroke);
   if (style.strokeWidth !== undefined) setProperty(shapes, 'stroke-width', `${style.strokeWidth}px`);
   if (style.lineStyle) setProperty(shapes, 'stroke-dasharray', style.lineStyle === 'solid' ? 'none' : style.lineStyle === 'dashed' ? '7 5' : '2 4');
-  if (style.color) { setProperty(texts, 'fill', style.color); setProperty(texts, 'color', style.color); }
+  let textColor = style.color;
+  if (!textColor && item.kind === 'node' && style.fill) {
+    const backing = readSrgbPaint(style.fill);
+    const inherited = readSrgbPaint(theme.text);
+    if (backing && inherited && backing.opacity === 1 && solidContrast(inherited, backing.channels) < 4.5) {
+      textColor = solidContrast({ channels: [0, 0, 0], opacity: 1 }, backing.channels) >= 4.5 ? '#000000' : '#ffffff';
+    }
+  }
+  if (textColor) { setProperty(texts, 'fill', textColor); setProperty(texts, 'color', textColor); }
   if (style.font) setProperty(texts, 'font-family', FONTS[style.font]);
   if (style.fontSize !== undefined) setProperty(texts, 'font-size', `${style.fontSize}px`);
   if (style.fontWeight) setProperty(texts, 'font-weight', style.fontWeight);

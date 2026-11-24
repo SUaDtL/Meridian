@@ -1,3 +1,7 @@
+import { authoringCommands } from "../lib/authoring/command-catalog";
+import { StudioWorkspace, type StudioNavigation } from "../Studio";
+import type { DocumentPatch } from "../lib/workspace";
+import type { StudioDocument } from "../types";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import BulkTextColorDialog from "./BulkTextColorDialog";
 import HeadingEditor from "./HeadingEditor";
@@ -61,15 +65,18 @@ const emptyGuidedTable: RelationshipTableDraft = { title: "Relationship table dr
 const workspacePanels = ["Build", "Canvas", "Design", "Story"] as const;
 type WorkspacePanel = typeof workspacePanels[number];
 
-function measureCanvas(image: HTMLImageElement | null): ViewingProfile | undefined {
+function measureCanvas(image: Element | null): ViewingProfile | undefined {
   const bounds = image?.getBoundingClientRect();
   return bounds && bounds.width >= 100 && bounds.height >= 100
     ? { width: Math.floor(bounds.width), height: Math.floor(bounds.height), padding: 0 } : undefined;
 }
 
-export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
+export default function V3ProjectSession({ id, onBack, onOpenCopy, navigation, initialCommand }: {
+  navigation?: StudioNavigation; initialCommand?: string;
   id: string; onBack: () => void; onOpenCopy: (id: string) => void;
 }) {
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const initialAction = useRef(initialCommand);
   const connection = useRef<IDBDatabase | undefined>(undefined);
   const editor = useRef<Editor | undefined>(undefined);
   const inFlight = useRef(false);
@@ -181,7 +188,6 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     if (!project) return;
     const controller = new AbortController();
     let url: string | undefined;
-    setFrame(undefined);
     setFramedTargets(undefined);
     setRenderError("");
     void renderMermaidProject(project, controller.signal).then(rendered => {
@@ -398,7 +404,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     : !targetTable || !componentSourceSupported ? "Open a rendered flowchart with explicit node declarations." : undefined;
 
   useEffect(() => {
-    if (!project || busy || commandsOpen || outlineOpen || orphanReviewOpen || readabilityOpen || comparison || storyOpen || savedScenesOpen
+    if ((navigation && !toolsOpen) || !project || busy || commandsOpen || outlineOpen || orphanReviewOpen || readabilityOpen || comparison || storyOpen || savedScenesOpen
       || editHeading || editFlowchart || editSource || detachOpen || insertOpen || assistOpen
       || bulkTextHidden !== undefined || componentHidden !== undefined) return;
     const openCommands = (event: KeyboardEvent) => {
@@ -409,19 +415,20 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
     };
     window.addEventListener("keydown", openCommands);
     return () => window.removeEventListener("keydown", openCommands);
-  }, [project, busy, commandsOpen, outlineOpen, orphanReviewOpen, readabilityOpen, comparison, storyOpen, savedScenesOpen, editHeading,
+  }, [navigation, toolsOpen, project, busy, commandsOpen, outlineOpen, orphanReviewOpen, readabilityOpen, comparison, storyOpen, savedScenesOpen, editHeading,
     editFlowchart, editSource, detachOpen, insertOpen, assistOpen, bulkTextHidden, componentHidden]);
 
   function openHeading() { setOutcome(undefined); setEditHeading(true); }
   function openReadability() {
     const previous = measuredCanvas.current;
-    const fit = measureCanvas(previewImage.current) ?? (previous && previous.url === previewUrl
+    const fit = measureCanvas(previewImage.current ?? document.querySelector(".studio .diagram-viewport")) ?? (previous && previous.url === previewUrl
       && previous.viewport === `${window.innerWidth}x${window.innerHeight}` ? previous.profile : undefined);
     setCanvasProfile(fit);
     setReadabilityViewing(current => current ?? initialReadabilityProfile(fit));
     setReadabilityOpen(true);
   }
   function showSource() {
+    if (navigation && !toolsOpen) { setEditSource(true); return; }
     if (!sourceDetails.current) return;
     setMobilePanel("Build");
     sourceDetails.current.open = true;
@@ -433,13 +440,13 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   }
 
   function jumpToSource(location: OutlineSourceLocation, view?: OutlineView) {
-    if (!source || !sourceDetails.current) return;
+    if (!source) return;
+    if (!sourceDetails.current && navigation) setToolsOpen(true);
     setOutlineOpen(false);
     setHighlight({ ...location, source });
     setOutlineReturn(view ? { source, view } : undefined);
     setMobilePanel("Build");
-    sourceDetails.current.open = true;
-    requestAnimationFrame(() => sourceMark.current?.focus());
+    requestAnimationFrame(() => { if (sourceDetails.current) sourceDetails.current.open = true; sourceMark.current?.focus(); });
   }
   function closeStructureEditor() {
     setEditFlowchart(undefined);
@@ -466,6 +473,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
       const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
       setFramedTargets({ frame: currentFrame, url, count: ids.length });
       if (closeOutline) {
+        if (navigation) setToolsOpen(true);
         setMobilePanel("Canvas");
         setOutlineOpen(false);
         requestAnimationFrame(() => fitDiagram.current?.focus());
@@ -583,92 +591,143 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
   }
 
   const commands: WorkspaceCommand[] = [
-    { id: "insert-guided-systems", title: "Insert systems diagram", category: "Diagram", synonyms: ["guided systems", "add systems"],
+    { ...authoringCommands["insert-guided-systems"],
       unavailable: busy || !targetTable || !componentSourceSupported ? "Open a supported flowchart before inserting systems." : undefined,
       run: () => setGuidedKind("systems") },
-    { id: "insert-guided-process", title: "Insert process diagram", category: "Diagram", synonyms: ["guided process", "add process steps"],
+    { ...authoringCommands["insert-guided-process"],
       unavailable: busy || !targetTable || !componentSourceSupported ? "Open a supported flowchart before inserting a process." : undefined,
       run: () => setGuidedKind("process") },
-    { id: "insert-guided-table", title: "Insert relationship table", category: "Diagram", synonyms: ["add CSV systems", "insert TSV"],
+    { ...authoringCommands["insert-guided-table"],
       unavailable: busy || !targetTable || !componentSourceSupported ? "Open a supported flowchart before inserting a table." : undefined,
       run: () => setGuidedKind("table") },
-    { id: "export-diagram", title: "Export diagram", category: "Export", synonyms: ["PNG", "SVG", "Mermaid"],
+    { ...authoringCommands["export-diagram"],
       run: () => setExportOpen(true) },
-    { id: "external-assistant", title: "External assistant file exchange", category: "Advanced", synonyms: ["request file", "import AI proposal"],
+    { ...authoringCommands["external-assistant"],
       unavailable: busy ? "Wait for the current action to finish." : flatFlowchart && targetTable ? undefined : "Open a supported flat flowchart.",
       run: () => setAssistOpen(true) },
-    { id: "edit-heading", title: "Edit heading", category: "Project", synonyms: ["title", "rename project"], run: openHeading },
-    { id: "show-source", title: "Show Mermaid source", category: "Project", synonyms: ["open source", "code"], run: showSource },
-    { id: "edit-source", title: "Edit Mermaid source", category: "Project", synonyms: ["update source", "code"],
+    { ...authoringCommands["edit-heading"], run: openHeading },
+    { ...authoringCommands["show-source"], run: showSource },
+    { ...authoringCommands["edit-source"],
       unavailable: busy ? "Wait for the current action to finish." : targetTable ? undefined : "Open a verified flowchart before editing its source.", run: () => setEditSource(true) },
-    { id: "insert-component", title: "Insert component", category: "Diagram", synonyms: ["add reusable pattern", "component library"],
+    { ...authoringCommands["insert-component"],
       unavailable: busy ? "Wait for the current action to finish." : targetTable && componentSourceSupported ? undefined
         : "Open a rendered flowchart with supported declarations and group membership.",
       run: () => setInsertOpen(true) },
-    { id: "detach-component", title: "Detach component", category: "Diagram", synonyms: ["component instance"],
+    { ...authoringCommands["detach-component"],
       unavailable: busy ? "Wait for the current action to finish." : project?.componentInstances.length ? undefined : "This project has no component instances.",
       run: () => setDetachOpen(true) },
-    { id: "review-orphan-annotations", title: "Review unresolved annotations", category: "Diagram",
-      synonyms: ["retained annotations", "orphan records", "cleanup"],
+    { ...authoringCommands["review-orphan-annotations"],
       unavailable: project?.identity.orphans.length ? undefined : "This project has no unresolved annotations.",
       run: () => setOrphanReviewOpen(true) },
-    { id: "find-element", title: "Find element", category: "Diagram", synonyms: ["outline", "relationships"],
+    { ...authoringCommands["find-element"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to show its elements.", run: () => openOutline() },
-    { id: "check-readability", title: "Check readability", category: "Design", synonyms: ["quality", "label size"],
+    { ...authoringCommands["check-readability"],
       unavailable: targetTable?.targets.length ? undefined : "A verified flowchart is needed for readability checks.", run: openReadability },
-    { id: "explore-designs", title: "Explore designs", category: "Design", synonyms: ["design recipes", "compare styles"],
+    { ...authoringCommands["explore-designs"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to compare designs.", run: () => setComparison("design") },
-    { id: "compare-layouts", title: "Compare layouts", category: "Design", synonyms: ["direction", "spacing", "layout alternatives"],
+    { ...authoringCommands["compare-layouts"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to compare layouts.", run: () => setComparison("layout") },
-    { id: "suggest-scenes", title: "Suggest scenes", category: "Story", synonyms: ["group story", "storyboard"],
+    { ...authoringCommands["suggest-scenes"],
       unavailable: outlineAvailable ? undefined : "A verified flowchart is needed to suggest scenes.", run: () => setStoryOpen(true) },
-    { id: "preview-saved-story", title: "Preview saved story", category: "Story", synonyms: ["play storyboard", "play saved scenes"],
+    { ...authoringCommands["preview-saved-story"],
       unavailable: currentFrame?.rendered.targetTable && project?.storyboard.scenes.length ? undefined : "Open a verified diagram with saved scenes.",
       run: () => setSavedStoryOpen(true) },
-    { id: "edit-saved-scenes", title: "Edit saved scenes", category: "Story", synonyms: ["scene properties", "storyboard"],
+    { ...authoringCommands["edit-saved-scenes"],
       unavailable: outlineAvailable && project?.storyboard.scenes.length ? undefined : "Open a verified diagram with saved scenes.",
       run: () => setSavedScenesOpen("edit") },
-    { id: "create-scene", title: "Create overview scene", category: "Story", synonyms: ["new scene", "manual scene"],
+    { ...authoringCommands["create-scene"],
       unavailable: !outlineAvailable ? "Open a verified diagram before creating a scene."
         : project && project.storyboard.scenes.length >= 50 ? "A storyboard can contain at most 50 scenes." : undefined,
       run: () => setSavedScenesOpen("create") },
-    { id: "add-node", title: "Add node", category: "Diagram", unavailable: editingUnavailable, run: () => setEditFlowchart("addNode") },
-    { id: "add-next", title: "Add next", category: "Diagram", synonyms: ["connected step", "new connected node"],
+    { ...authoringCommands["add-node"], unavailable: editingUnavailable, run: () => setEditFlowchart("addNode") },
+    { ...authoringCommands["add-next"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose a current node to connect." : undefined), run: () => setEditFlowchart("addNext") },
-    { id: "add-decision", title: "Add decision", category: "Diagram", synonyms: ["branch", "diamond"],
+    { ...authoringCommands["add-decision"],
       unavailable: editingUnavailable, run: () => setEditFlowchart("addDecision") },
-    { id: "rename-node", title: "Rename node", category: "Diagram", unavailable: labelEditingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
-    { id: "connect-nodes", title: "Connect nodes", category: "Diagram", synonyms: ["add edge", "add connection"],
+    { ...authoringCommands["rename-node"], unavailable: labelEditingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: () => setEditFlowchart("setNodeLabel") },
+    { ...authoringCommands["connect-nodes"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Wait for the diagram's nodes." : undefined), run: openConnection },
-    { id: "create-group", title: "Create group", category: "Diagram", synonyms: ["group nodes", "add subgraph"],
+    { ...authoringCommands["create-group"],
       unavailable: editingUnavailable ?? (!nodes.length ? "Choose current node declarations." : undefined), run: () => setEditFlowchart("addGroup") },
-    { id: "ungroup", title: "Ungroup", category: "Diagram", synonyms: ["remove container", "keep group members"],
+    { ...authoringCommands["ungroup"],
       unavailable: busy ? "Wait for the current action to finish." : ungroupableGroups.size ? undefined : "Choose a supported group in a rendered flowchart.",
       run: () => removableGroup ? setEditFlowchart("removeGroup") : openOutline() },
-    { id: "delete-group-contents", title: "Delete group and contents", category: "Diagram",
+    { ...authoringCommands["delete-group-contents"],
       unavailable: busy ? "Wait for the current action to finish." : groupDeletions.size ? undefined
         : "Choose a supported group in a rendered flowchart.",
       run: () => defaultGroupDeletion && !defaultGroupDeletion.unavailable ? setEditFlowchart("removeGroupContents") : openOutline() },
-    { id: "move-into-group", title: "Move node into group", category: "Diagram",
+    { ...authoringCommands["move-into-group"],
       unavailable: busy ? "Wait for the current action to finish." : groupMoveOptions.size ? undefined
         : "Choose a group with an eligible standalone node to move into it.",
       run: () => defaultMoveAvailable ? setEditFlowchart("moveToGroup") : openOutline() },
-    { id: "rename-connection", title: "Edit connection label", category: "Diagram", synonyms: ["rename edge", "label relationship"],
+    { ...authoringCommands["rename-connection"],
       unavailable: labelEditingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined),
       run: () => setEditFlowchart("setEdgeLabel") },
-    { id: "remove-connection", title: "Delete connection", category: "Diagram", synonyms: ["remove edge", "delete edge"],
+    { ...authoringCommands["remove-connection"],
       unavailable: editingUnavailable ?? (!edges.some(edge => edge.explicit) ? "Choose a connection with an explicit source ID." : undefined), run: () => setEditFlowchart("removeEdge") },
-    { id: "remove-node", title: "Delete node", category: "Diagram", synonyms: ["remove step", "delete step"],
+    { ...authoringCommands["remove-node"],
       unavailable: editingUnavailable ?? (nodes.length < 2 ? "Keep at least one node in the diagram." : undefined), run: () => setEditFlowchart("removeNode") },
-    { id: "undo", title: "Undo", category: "History", unavailable: editor.current?.canUndo() ? undefined : "There are no changes to undo.", run: () => changeHistory("undo") },
-    { id: "redo", title: "Redo", category: "History", unavailable: editor.current?.canRedo() ? undefined : "There are no changes to redo.", run: () => changeHistory("redo") },
-    { id: "download-project", title: "Download v3 project", category: "Export", synonyms: ["export", "backup", "save project"], run: downloadProject },
-    { id: "download-presentation", title: "Download HTML presentation", category: "Export", synonyms: ["export", "offline story"],
+    { ...authoringCommands["undo"], unavailable: editor.current?.canUndo() ? undefined : "There are no changes to undo.", run: () => changeHistory("undo") },
+    { ...authoringCommands["redo"], unavailable: editor.current?.canRedo() ? undefined : "There are no changes to redo.", run: () => changeHistory("redo") },
+    { ...authoringCommands["download-project"], run: downloadProject },
+    { ...authoringCommands["download-presentation"],
       unavailable: currentFrame?.rendered.targetTable ? undefined : "A verified diagram is needed to export the presentation.", run: downloadPresentation },
   ];
+  useEffect(() => {
+    if (!currentFrame || !initialAction.current) return;
+    const command = commands.find(item => item.id === initialAction.current);
+    initialAction.current = undefined;
+    if (command?.unavailable) navigation?.notify(command.unavailable, "error");
+    else command?.run();
+  }, [currentFrame]);
+
+  const studioDoc = useMemo<StudioDocument | undefined>(() => project ? {
+    schema: "meridian/v2", id: project.id, title: project.title, subtitle: project.subtitle, source: project.source,
+    updatedAt: project.updatedAt, settings: project.settings, design: { elements: project.design.elements, preset: project.design.preset },
+    nodeAccents: {}, storyboard: { ...project.storyboard, version: 1 },
+  } : undefined, [project]);
+
+  const renderKey = useMemo(() => project ? JSON.stringify([project.source, project.settings, project.design]) : "",
+    [project?.source, project?.settings, project?.design]);
+  function patchStudio(patch: DocumentPatch) {
+    if (!project || !editor.current) return;
+    try {
+      const status = editor.current.updateStudioDesign(project, {
+        ...(patch.settings && { settings: patch.settings }), ...(patch.design && { design: patch.design }),
+        ...(patch.storyboard && { storyboard: { ...patch.storyboard, version: 2 } }),
+      });
+      if (status !== "applied" && status !== "unchanged") throw new Error("This edit could not be applied. Reopen the current project to retry.");
+      setProject(editor.current.snapshot());
+    } catch (reason) { navigation?.notify(reason instanceof Error ? reason.message : "The edit could not be saved.", "error"); }
+  }
+  function navigate(action: () => void) {
+    void run(async () => {
+      await editor.current?.flush();
+      if (editor.current?.saveState().phase !== "saved") { setToolsOpen(true); throw new Error("Keep a copy of the unsaved changes before leaving."); }
+      action();
+    });
+  }
   return (
     <>
-      <Modal title={project ? title : "Open v3 project"} wide onClose={close} busy={busy}>
+      {navigation && studioDoc && project && <StudioWorkspace key={project.id}
+        {...navigation} onHome={() => navigate(navigation.onHome)} onProjects={() => navigate(navigation.onProjects)}
+        onNew={() => navigate(navigation.onNew)} onExamples={() => navigate(navigation.onExamples)} onImport={() => navigate(navigation.onImport)}
+        document={studioDoc} onDownload={downloadProject} extraCommands={commands}
+        diagram={{ result: (currentFrame ?? frame)?.rendered.result ?? null, error: renderError,
+          rendering: !currentFrame && !renderError, stale: !currentFrame, blank: !project.source.trim(),
+          fingerprint: renderKey,
+          stageDocument: studioDoc, live: true, setLive: () => {}, renderNow: () => setDrawingAttempt(value => value + 1) }}
+        workspace={{ patch: patchStudio, settings: patch => patchStudio({ settings: { ...project.settings, ...patch } }),
+          revision: project.revision, proposalOutcome: outcome, applyProposal: applyHeading,
+          undo: () => changeHistory("undo"), redo: () => changeHistory("redo"),
+          undoLabel: editor.current?.canUndo() ? "project edit" : undefined, redoLabel: editor.current?.canRedo() ? "project edit" : undefined,
+          autosave: !needsRecovery, saveState: needsRecovery ? "error" : save?.phase === "saved" ? "saved" : "saving" }}
+        native={{ original: project, restore: snapshot => {
+          if (editor.current?.restoreCheckpoint(project,snapshot) !== "applied") throw new Error("The checkpoint could not be restored with Undo.");
+          setProject(editor.current.snapshot());
+        }, editSource: targetTable ? () => setEditSource(true) : undefined, editHeading: openHeading, export: () => setExportOpen(true),
+          tools: () => setToolsOpen(true), select: key => setOutlineSelection(new Set(key ? [key] : [])), rename: renameNode, table: targetTable }} />}
+      {(!navigation || toolsOpen || !project || needsRecovery) && <Modal title={project ? title : "Open v3 project"} wide onClose={navigation && project && !needsRecovery ? () => setToolsOpen(false) : close} busy={busy}>
         {!project && !error && <p role="status">Checking the saved project…</p>}
         {project && (
           <>
@@ -721,6 +780,7 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                 </>}
               </section>
               <section data-v3-panel="Build" aria-label="Build tools">
+                <h3>Build</h3>
                 <div className="migration-preview">
                   <details ref={sourceDetails}><summary>Mermaid source</summary>
                     {outlineAvailable && outlineReturn && outlineReturn.source === source && <div className="recovery-actions">
@@ -763,11 +823,13 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
                 </div>
               </section>
               <section data-v3-panel="Design" aria-label="Design tools" className="recovery-actions">
+                <h3>Design</h3>
                 {!!targetTable?.targets.length && <button className="button secondary" disabled={busy} onClick={openReadability}>Check readability</button>}
                 {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("design")}>Explore designs</button>}
                 {outlineAvailable && <button className="button secondary" disabled={busy} onClick={() => setComparison("layout")}>Compare layouts</button>}
               </section>
               <section data-v3-panel="Story" aria-label="Story tools" className="recovery-actions">
+                <h3>Story</h3>
                 {currentFrame?.rendered.targetTable && project.storyboard.scenes.length > 0 &&
                   <button className="button secondary" disabled={busy} onClick={() => setSavedStoryOpen(true)}>Preview saved story</button>}
                 {outlineAvailable && <button ref={suggestScenesButton} className="button secondary" disabled={busy} onClick={() => setStoryOpen(true)}>Suggest scenes</button>}
@@ -822,9 +884,9 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy }: {
         )}
         {error && <p role="alert">{error}</p>}
         <div className="recovery-actions">
-          <button className="button quiet" disabled={busy} onClick={close}>Back to v3 projects</button>
+          <button className="button quiet" disabled={busy} onClick={close}>{navigation ? "Back to projects" : "Back to v3 projects"}</button>
         </div>
-      </Modal>
+      </Modal>}
       {exportOpen && project && (
         <Suspense fallback={<p role="status">Opening export…</p>}>
           <ExportDialog document={project} result={currentFrame?.rendered.result ?? null} stale={!currentFrame}
