@@ -193,6 +193,16 @@ export function pngDimensions(naturalWidth: number, naturalHeight: number, scale
 export async function exportPng(svg: string, name: string, scale: number): Promise<{ width: number; height: number }> {
   const parsed = parseSvg(svg);
   const { width, height } = pngDimensions(parseFloat(parsed.getAttribute('width') ?? ''), parseFloat(parsed.getAttribute('height') ?? ''), scale);
+  const canvas = await drawSvgToCanvas(svg, width, height);
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    try { canvas.toBlob((value) => value ? resolve(value) : reject(new Error('PNG export exceeded the browser memory limit. Try 1× scale.')), 'image/png'); }
+    catch { reject(new Error('The browser blocked PNG export. Use a diagram without external resources.')); }
+  });
+  downloadBlob(blob, filename(name, 'png'));
+  return { width, height };
+}
+
+export async function drawSvgToCanvas(svg: string, width: number, height: number, background?: string): Promise<HTMLCanvasElement> {
   const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
   try {
     const image = new Image();
@@ -201,13 +211,9 @@ export async function exportPng(svg: string, name: string, scale: number): Promi
     canvas.width = width; canvas.height = height;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('PNG export is not supported in this browser. Use SVG export instead.');
+    if (background) { context.fillStyle = background; context.fillRect(0, 0, width, height); }
     context.drawImage(image, 0, 0, width, height);
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      try { canvas.toBlob((value) => value ? resolve(value) : reject(new Error('PNG export exceeded the browser memory limit. Try 1× scale.')), 'image/png'); }
-      catch { reject(new Error('The browser blocked PNG export. Use a diagram without external resources.')); }
-    });
-    downloadBlob(blob, filename(name, 'png'));
-    return { width, height };
+    return canvas;
   } finally { URL.revokeObjectURL(url); }
 }
 

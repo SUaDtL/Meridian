@@ -1,3 +1,5 @@
+import { downloadBlob } from "../lib/download";
+import { getTheme } from "../lib/themes";
 import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from "react";
 import Modal from "./Modal";
 import ChartFigure, { describeChart } from "./ChartFigure";
@@ -440,7 +442,7 @@ export default function ChartProjectDialog({ onBack, onClose, onOpened, initialI
     } });
   }
 
-  function download(kind: "json" | "svg" | "html") {
+  function download(kind: "json" | "svg" | "html" | "pdf" | "pptx") {
     if (!candidate || !svg.current) return;
     const { project, projection } = candidate;
     const name = safeFilename(project.title);
@@ -448,6 +450,15 @@ export default function ChartProjectDialog({ onBack, onClose, onOpened, initialI
     const serialized = new XMLSerializer().serializeToString(svg.current);
     if (kind === "svg") return downloadText(serialized, `${name}.svg`, "image/svg+xml;charset=utf-8");
     const { description } = describeChart(project, projection);
+    if (kind === "pdf" || kind === "pptx") {
+      void perform({ label: "Preparing chart download", async run(signal) {
+        const { briefingFile } = await import("../lib/briefing-export");
+        const file = await briefingFile(kind, project.title, [{ title: description, svg: () => serialized }],
+          getTheme(project.frame.theme).canvas, undefined, signal);
+        signal.throwIfAborted(); downloadBlob(file, name + "." + kind);
+      } });
+      return;
+    }
     void perform({ label: "Preparing accessible HTML", async run(signal) {
       const html = await chartHtml(project.title, serialized, description, projection);
       signal.throwIfAborted();
@@ -698,6 +709,8 @@ export default function ChartProjectDialog({ onBack, onClose, onOpened, initialI
         <div className="dialog-actions">
           <button className="button quiet" onClick={() => download("json")}>Download chart project</button>
           <button className="button quiet" onClick={() => download("svg")}>Download SVG</button>
+          <button className="button quiet" disabled={!!busy} onClick={() => download("pdf")}>Download PDF</button>
+          <button className="button quiet" disabled={!!busy} onClick={() => download("pptx")}>Download PowerPoint</button>
           <button className="button primary" onClick={() => download("html")}>Download accessible HTML</button>
         </div>
       </>}

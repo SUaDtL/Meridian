@@ -14,6 +14,7 @@ This is the independent repository **SUaDtL/Meridian**. Its GitHub Pages workflo
 - Browser-local projects, autosave, `.mmd` import, and portable `.meridian.json` project files.
 - A storyboard composer with named scenes, progressive reveals, selected connector flow, camera regions, timing, and playback.
 - SVG, high-resolution PNG, and standalone HTML presentations with offline scene playback.
+- Download a widescreen PDF or PowerPoint deck with the full diagram or one page per storyboard scene. Each page contains a fixed image. Scene visibility and camera framing carry over, and private presenter notes stay local. Charts also export as single-page PDFs and PowerPoint slides.
 - Mobile Canvas, Source, Style, and Story panels and reduced-motion support.
 - No backend, accounts, API keys, telemetry, runtime CDNs, or external runtime assets.
 
