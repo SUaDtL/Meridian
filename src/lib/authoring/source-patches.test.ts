@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySourcePatches, groupContentsDeletionScopes, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupContentsRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, supportedGroupMoves } from './source-patches';
+import { rankSpanOffsets, applySourcePatches, groupContentsDeletionScopes, planEdgeAddition, planEdgeLabel, planEdgeRemoval, planGroupContentsRemoval, planGroupCreation, planGroupRemoval, planMoveToGroup, planNodeAddition, planNodeLabel, planNodeRemoval, supportedGroupMoves } from './source-patches';
 
 it('wraps a consecutive authored range and leaves comments and relationship lines byte-exact', () => {
   const source = '\uFEFFflowchart LR\r\n  A[First]\r\n  %% Between declarations\r\n  B[Second] %% Keep this comment\r\n  C[Last]\r\n  A first@--> B\r\n  B second@--> C\r\n';
@@ -179,4 +179,13 @@ it('edits only the explicit connection label token and keeps comments and spacin
   expect(applySourcePatches(source, planEdgeLabel(source, 'second', 'Added'))).toBe(source.replace('second@-->', 'second@-->|"Added"|'));
   expect(planEdgeLabel(source, 'second', '')).toEqual([]);
   expect(() => planEdgeLabel(source, 'unknown', 'Label')).toThrow('explicit source ID');
+});
+
+it('rank spans use exact connector tokens after matching the parsed edge order and endpoints', () => {
+  const source = 'flowchart LR\r\n A["A --> B"] m1@-->|"x --> y"| B[Finish]; B ---> C %% C --> A\r\n C --> C';
+  const model = [{ start: 'A', end: 'B', id: 'm1', isUserDefinedId: true }, {start: 'B', end: 'C'}, {start: 'C', end: 'C'}];
+  expect(rankSpanOffsets(source, model)).toEqual([source.indexOf('m1@-->') + 5, source.indexOf('--->') + 3, undefined]);
+  expect(rankSpanOffsets(source, [model[1], model[0], model[2]])).toEqual([]);
+  expect(rankSpanOffsets(source, [{ ...model[0], id: 'other' }, ...model.slice(1)])).toEqual([]);
+  expect(rankSpanOffsets('flowchart LR\n A --> B --> C', model.slice(0, 2))).toEqual([]);
 });

@@ -6,7 +6,7 @@ import { validateMermaidProject } from './validate-mermaid-project';
 export const styleFieldLabels: Record<keyof ElementStyle, string> = {
   fill: 'Fill', color: 'Text color', stroke: 'Stroke', strokeWidth: 'Stroke width', lineStyle: 'Line style',
   font: 'Font', fontSize: 'Font size', fontWeight: 'Font weight', shape: 'Shape', shadow: 'Shadow',
-  glow: 'Glow', emphasis: 'Emphasis', routing: 'Routing', arrowhead: 'Arrowheads',
+  glow: 'Glow', emphasis: 'Emphasis', rankSpan: 'Minimum connector span', routing: 'Routing', arrowhead: 'Arrowheads',
 };
 
 export type DesignReset = { layer: 'user'; field: keyof ElementStyle } | { layer: 'recipe' };

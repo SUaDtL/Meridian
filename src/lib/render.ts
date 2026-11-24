@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify';
 import type { RenderNode, RenderResult, StudioSettings } from '../types';
 import { getTheme } from './themes';
 import type { DesignState } from '../types/design';
+import { rankSpanOffsets } from './authoring/source-patches';
 import { createDesign, decorateDesign, designRenderSource, edgeIdentities, measureDesignElements, type FlowModel } from './design';
 import { SourceDiagnosticError } from './authoring/source-diagnostics';
 import { RenderCache, renderMemoryBudget, renderMemoryLimit } from './render-cache';
@@ -13,7 +14,7 @@ const MAX_SOURCE = 100_000;
 let serial = 0;
 const LAYOUT_SETTINGS = ['theme', 'layout', 'curve', 'spacing', 'font'] as const;
 const DECORATION_SETTINGS = ['finish', 'shadow', 'glow', 'motion', 'speed', 'edgeWidth'] as const;
-const GEOMETRY_STYLES = new Set(['shape', 'font', 'fontSize', 'fontWeight', 'routing']);
+const GEOMETRY_STYLES = new Set(['shape', 'font', 'fontSize', 'fontWeight', 'routing', 'rankSpan']);
 
 function orderedEntries(value: Record<string, unknown>): Array<[string, unknown]> {
   return Object.keys(value).sort().map(key => [key, value[key]]);
@@ -306,6 +307,10 @@ async function performRender({ settings, nodeAccents, design: inputDesign, prepa
           defaultStyle: edges.defaultStyle?.slice(),
           defaultInterpolate: edges.defaultInterpolate,
         };
+        if (settings.layout === 'dagre') {
+          const offsets = rankSpanOffsets(text, model.edges);
+          model.edges.forEach((edge, i) => { edge.rankInsertion = offsets[i]; });
+        }
         modelBytes = JSON.stringify({ ...model, vertices: [...model.vertices] }).length * 2;
       }
       if (projection) {

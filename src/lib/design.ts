@@ -101,6 +101,8 @@ export function validateDesign(value: unknown): DesignState {
         if (typeof setting !== 'string' || !/^#[0-9a-f]{6}$/i.test(setting)) throw new Error('Element colors must contain six hexadecimal digits.');
       } else if (BOOLEANS.includes(property)) {
         if (typeof setting !== 'boolean') throw new Error('Element effects must be true or false.');
+      } else if (property === 'rankSpan') {
+        if (setting !== 2 && setting !== 3 && setting !== 4) throw new Error('Choose a minimum connector span of 2, 3 or 4 ranks.');
       } else if (property === 'strokeWidth' || property === 'fontSize') {
         const [min, max] = property === 'strokeWidth' ? [.5, 6] : [10, 40];
         if (typeof setting !== 'number' || !Number.isFinite(setting) || setting < min || setting > max) throw new Error(`${property} must be between ${min} and ${max}.`);
@@ -115,6 +117,7 @@ export function validateDesign(value: unknown): DesignState {
 }
 
 export interface FlowEdgeModel {
+  rankInsertion?: number;
   id?: string; isUserDefinedId?: boolean; start: string; end: string; text?: string; style?: string[];
   type?: string; length?: number; stroke?: string; labelType?: string; interpolate?: string; classes?: string[];
 }
@@ -163,6 +166,7 @@ function typography(style: ElementStyle): string[] {
 /** Shape and font overrides are measured by Mermaid before its layout pass. */
 export function designRenderSource(source: string, design: DesignState, model: FlowModel): string {
   const commands: string[] = [];
+  const spans: { at: number; extra: number }[] = [];
   const safeId = (id: string) => /^[a-zA-Z_\u0080-\uffff][a-zA-Z0-9_\u0080-\uffff-]*$/.test(id);
   const groupIds = new Set(model.groups.map(group => group.id));
   for (const [key, style] of Object.entries(design.elements)) {
@@ -191,6 +195,9 @@ export function designRenderSource(source: string, design: DesignState, model: F
   model.edges.forEach((edge, index) => {
     const style = design.elements[identities[index]];
     if (!style) return;
+    if (style.rankSpan && edge.rankInsertion !== undefined) {
+      spans.push({ at: edge.rankInsertion, extra: Math.max(0, style.rankSpan - (edge.length ?? 1)) });
+    }
     const declarations = typography(style);
     const curve = style.routing ? ({ smooth: 'basis', direct: 'linear', orthogonal: 'step' } as const)[style.routing] : undefined;
     if (declarations.length) {
@@ -200,6 +207,16 @@ export function designRenderSource(source: string, design: DesignState, model: F
       commands.push(`linkStyle ${index}${curve ? ` interpolate ${curve}` : ''} ${merged.join(',')}`);
     } else if (curve) commands.push(`linkStyle ${index} interpolate ${curve}`);
   });
+  // Build once in source order. Offsets always refer to the accepted text.
+  if (spans.length) {
+    const parts: string[] = [];
+    let start = 0;
+    for (const { at, extra } of spans) {
+      parts.push(source.slice(start, at), '-'.repeat(extra));
+      start = at;
+    }
+    source = parts.join('') + source.slice(start);
+  }
   return commands.length ? `${source}\n%% Meridian preview-only design overrides\n${commands.join('\n')}\n` : source;
 }
 
@@ -372,6 +389,7 @@ export function decorateDesign(svg: SVGSVGElement, renderId: string, nodes: Rend
       const capabilities: ElementCapability[] = ['stroke', 'effects', 'arrowhead'];
       if (edge.text?.trim()) capabilities.push('text', 'typography');
       if (settings.layout === 'dagre') capabilities.push('routing');
+      if (edge.rankInsertion !== undefined) capabilities.push('rankSpan');
       const labels = labelsById.get(edgeId) ?? new Set<SVGElement>();
       const sourceLabel = labelsByNode.get(edge.start) ?? model.vertices.get(edge.start)?.text ?? edge.start;
       const targetLabel = labelsByNode.get(edge.end) ?? model.vertices.get(edge.end)?.text ?? edge.end;
