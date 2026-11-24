@@ -8,7 +8,7 @@ type Target = RenderTargetTable['targets'][number];
 const capabilityFor: Record<keyof ElementStyle, ElementCapability> = {
   fill: 'fill', color: 'text', stroke: 'stroke', strokeWidth: 'stroke', lineStyle: 'stroke',
   font: 'typography', fontSize: 'typography', fontWeight: 'typography', shape: 'shape',
-  shadow: 'effects', glow: 'effects', emphasis: 'effects', routing: 'routing', arrowhead: 'arrowhead',
+  shadow: 'effects', glow: 'effects', emphasis: 'effects', rankSpan: 'rankSpan', routing: 'routing', arrowhead: 'arrowhead',
 };
 
 export function retainedAnnotationKind(document: MermaidProjectV3, record: OrphanAnnotation) {

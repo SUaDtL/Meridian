@@ -893,7 +893,8 @@ export default function V3ProjectSession({ id, onBack, onOpenCopy, navigation, i
             rendering={!currentFrame && !!project.source.trim() && !renderError} renderError={renderError}
             onEditSource={showSource} onDownload={downloadProject} onClose={() => setExportOpen(false)}
             presentation={{
-              sceneCount: project.storyboard.scenes.length,
+              scenes: project.storyboard.scenes,
+              targets: currentFrame?.rendered.targetTable,
               unavailable: currentFrame?.rendered.targetTable ? undefined : "A verified diagram is needed to export the presentation.",
               download: (_svg, options) => savePresentation(options),
             }} />

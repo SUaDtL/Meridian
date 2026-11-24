@@ -1241,7 +1241,7 @@ export function StudioWorkspace({
             onEditSource={showSource}
             onDownload={onDownload}
             presentation={{
-              sceneCount: doc.storyboard?.scenes.length ?? 0,
+              scenes: doc.storyboard?.scenes,
               download: async svg => (await import("./lib/export")).exportPresentation(svg, doc),
             }}
             notify={notify}

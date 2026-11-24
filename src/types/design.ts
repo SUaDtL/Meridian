@@ -3,7 +3,7 @@ import type { RoutePoint } from '../lib/authoring/route-geometry';
 
 export type ElementKind = 'node' | 'edge' | 'group';
 export type DesignPresetId = 'custom' | 'executive' | 'infrastructure' | 'cyberpunk' | 'minimal' | 'technical-blueprint';
-export type ElementCapability = 'fill' | 'text' | 'typography' | 'shape' | 'stroke' | 'effects' | 'routing' | 'arrowhead';
+export type ElementCapability = 'fill' | 'text' | 'typography' | 'shape' | 'stroke' | 'effects' | 'routing' | 'arrowhead' | 'rankSpan';
 
 /** Optional values inherit the source/theme. Source text remains the authority for topology. */
 export interface ElementStyle {
@@ -19,6 +19,7 @@ export interface ElementStyle {
   shadow?: boolean;
   glow?: boolean;
   emphasis?: 'normal' | 'muted' | 'highlight';
+  rankSpan?: 2 | 3 | 4;
   routing?: 'smooth' | 'direct' | 'orthogonal';
   arrowhead?: 'source' | 'none' | 'arrow' | 'both' | 'circle' | 'diamond';
 }

@@ -172,6 +172,13 @@
             "circle",
             "diamond"
           ]
+        },
+        "rankSpan": {
+          "enum": [
+            2,
+            3,
+            4
+          ]
         }
       },
       "required": [],
@@ -359,6 +366,14 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "rankSpan": {
+          "enum": [
+            2,
+            3,
+            4,
+            null
           ]
         }
       },
@@ -1069,6 +1084,13 @@
                     "both",
                     "circle",
                     "diamond"
+                  ]
+                },
+                "rankSpan": {
+                  "enum": [
+                    2,
+                    3,
+                    4
                   ]
                 }
               },

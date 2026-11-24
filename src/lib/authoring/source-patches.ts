@@ -186,6 +186,32 @@ export function componentSelectionTopology(source: string) {
   return { nodes: subsetTopology(parsed).nodes, groups: parsed.groups };
 }
 
+// A single solid connector per statement, optionally with inline node declarations.
+// Quoted labels can contain arrows. Only the captured arrow token can change.
+const rankNode = String.raw`${id}(?:(?:\(\[|\[\(|\(\(|\{\{|\[|\(|\{)(?:"[^"]*"|[A-Za-z0-9 _-]+)(?:\]\)|\)\]|\)\)|\}\}|\]|\)|\}))?`;
+const rankConnection = new RegExp(String.raw`^((${rankNode})[ \t]*(?:(${id})@)?)(<--+>|--+>|---+)(?:\|(?:"[^"]*"|[^|"\r\n]+)\|)?[ \t]*(${rankNode})$`);
+const rankId = new RegExp('^' + id);
+
+/** Return offsets only after all candidate rows agree with Mermaid's accepted edges in order. */
+export function rankSpanOffsets(source: string, model: readonly { start: string; end: string; id?: string; isUserDefinedId?: boolean }[]) {
+  if (!model.length) return [];
+  try {
+    const [first, ...records] = scanRecords(source);
+    if (!first || !header.test(first.text)) return [];
+    const offsets: (number | undefined)[] = [];
+    for (const record of records) {
+      const match = rankConnection.exec(record.text);
+      if (!match) continue;
+      const [, prefix, from, edgeId, arrow, to] = match;
+      const edge = model[offsets.length];
+      if (!edge || rankId.exec(from)?.[0] !== edge.start || rankId.exec(to)?.[0] !== edge.end
+        || edgeId !== (edge.isUserDefinedId ? edge.id : undefined)) return [];
+      offsets.push(edge.start === edge.end ? undefined : record.start + prefix.length + arrow.length - 1);
+    }
+    return offsets.length === model.length ? offsets : [];
+  } catch { return []; }
+}
+
 export function flowchartSourceLocations(source: string, allowGroups = false) {
   const { nodes, edges, groupDeclarations } = readSubset(source, allowGroups);
   const location = ({ start, end }: RecordSpan) => ({ from: start, to: end });

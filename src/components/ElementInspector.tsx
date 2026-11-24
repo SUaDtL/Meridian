@@ -77,6 +77,12 @@ export default function ElementInspector({ document, element, selectedNode, onDe
       <InspectorSelect label="Element line style" value={style.lineStyle ?? ''} onChange={value => patch({ lineStyle: value ? value as ElementStyle['lineStyle'] : undefined })} onReset={reset('lineStyle')} options={[
         { value: '', label: `Inherited · ${inheritedLine[0].toUpperCase()}${inheritedLine.slice(1)}` }, { value: 'solid', label: 'Solid' }, { value: 'dashed', label: 'Dashed' }, { value: 'dotted', label: 'Dotted' },
       ]}/>
+      {isEdge && <InspectorSelect label="Minimum connector span" value={String(style.rankSpan ?? '')}
+        disabled={!supports('rankSpan')}
+        onChange={value => patch({ rankSpan: value ? Number(value) as ElementStyle['rankSpan'] : undefined })} onReset={reset('rankSpan')}
+        hint={supports('rankSpan') ? 'Dagre leaves at least this many layout ranks between endpoints. Nearby nodes and routes may move.' :
+          'Use Dagre with one solid connector per statement. The project retains the setting when another layout is active.'}
+        options={[{ value: '', label: 'Automatic' }, ...[2, 3, 4].map(n => ({ value: String(n), label: n + ' ranks' }))]}/>}
       {isEdge && <InspectorSelect label="Route shape" value={style.routing ?? ''} disabled={!supports('routing')} onChange={value => patch({ routing: value ? value as ElementStyle['routing'] : undefined })} onReset={reset('routing')} hint={!supports('routing') ? 'ELK routes around nodes automatically. Choose Dagre in Diagram → Connections & layout to set a route.' : undefined} options={[
         { value: '', label: 'Inherited from diagram' }, { value: 'smooth', label: 'Smooth' }, { value: 'direct', label: 'Direct' }, { value: 'orthogonal', label: 'Right angles' },
       ]}/>}

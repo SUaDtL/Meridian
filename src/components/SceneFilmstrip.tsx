@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import type { StudioDocument } from "../types";
 import type { StoryScene } from "../types/storyboard";
 import type { RenderTargetTable } from "../lib/authoring/project-render";
-import { createStoryboardPlayer } from "../lib/storyboard";
+import { sceneSnapshot } from "../lib/scene-snapshot";
 
 const ScenePicture = memo(function ScenePicture({ template, scene, targets }: { template: SVGSVGElement; scene: StoryScene; targets?: RenderTargetTable | null }) {
   const host = useRef<HTMLSpanElement>(null);
@@ -16,17 +16,8 @@ const ScenePicture = memo(function ScenePicture({ template, scene, targets }: { 
       if (!entries.some(entry => entry.isIntersecting)) return;
       observer.disconnect();
       pending = requestAnimationFrame(() => {
-        const shadow = node.shadowRoot ?? node.attachShadow({ mode: "open" });
-        const root = template.cloneNode(true) as SVGSVGElement;
-        root.style.cssText = "position:absolute;width:144px;height:64px;visibility:hidden;pointer-events:none";
-        shadow.replaceChildren(root);
-        const player = createStoryboardPlayer(root, { version: 1, scenes: [scene], loop: false }, {
-          targetTable: targets ?? undefined, reducedMotion: true, initialPreview: 0,
-        });
-        root.removeAttribute("style");
-        url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(root)], { type: "image/svg+xml" }));
-        player.destroy();
-        root.remove();
+        const svg = sceneSnapshot(template, scene, targets);
+        url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
         setUrl(url);
       });
     });

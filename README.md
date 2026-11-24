@@ -12,8 +12,10 @@ This is the independent repository **SUaDtL/Meridian**. Its GitHub Pages workflo
 - Live source editing with last-known-good recovery when syntax is incomplete.
 - Ten examples, six themes, node accents and spotlight, layout controls, pan/zoom, presentation mode, and replay.
 - Browser-local projects, autosave, `.mmd` import, and portable `.meridian.json` project files.
+- Select a solid flowchart connector in Dagre and set its minimum rank span to reserve more space along the flow direction. The project retains this constraint across exports and reopening. Source text, labels, and element identities stay intact.
 - A storyboard composer with named scenes, progressive reveals, selected connector flow, camera regions, timing, and playback.
 - SVG, high-resolution PNG, and standalone HTML presentations with offline scene playback.
+- Download a widescreen PDF or PowerPoint deck with the full diagram or one page per storyboard scene. Each page contains a fixed image. Scene visibility and camera framing carry over, and private presenter notes stay local. Charts also export as single-page PDFs and PowerPoint slides.
 - Mobile Canvas, Source, Style, and Story panels and reduced-motion support.
 - No backend, accounts, API keys, telemetry, runtime CDNs, or external runtime assets.
 
