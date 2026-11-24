@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   lazy,
   memo,
   Suspense,
@@ -53,7 +54,7 @@ import { cacheThumbnail } from "./lib/persistence/project-thumbnail";
 import { buildExportFrame } from "./lib/export";
 import PresenterView from "./components/PresenterView";
 import SceneFilmstrip from "./components/SceneFilmstrip";
-import PanelSplitter from "./components/PanelSplitter";
+import PanelSplitter, { usePanelWidth } from "./components/PanelSplitter";
 import Storyboard from "./components/Storyboard";
 import HeadingEditor from "./components/HeadingEditor";
 import { prepareHeadingProposal } from "./lib/authoring/proposals";
@@ -157,6 +158,8 @@ export function StudioWorkspace({
   const [cleanAudience, setCleanAudience] = useState(false);
   const presentationFullscreen = useRef(false);
   const [present, setPresent] = useState(false);
+  const sourcePanel = usePanelWidth("source");
+  const inspectorPanel = usePanelWidth("inspector");
   const [sourceVisible, setSourceVisible] = useState(() => panelVisible("source"));
   const [jumpLine, setJumpLine] = useState<number>();
   const [focusRequest, setFocusRequest] = useState(0);
@@ -523,9 +526,9 @@ export function StudioWorkspace({
         ? "Render the current diagram to preview scenes."
         : undefined;
   const commands: WorkspaceCommand[] = [
-    { id: "source-workspace", title: "Source-focused workspace", category: "Workspace", run: () => { setInspectorVisible(false); showSource(); } },
+    { id: "source-workspace", title: "Source-focused workspace", category: "Workspace", run: () => { sourcePanel.resize("wide"); setInspectorVisible(false); showSource(); } },
     { id: "canvas-workspace", title: "Canvas-focused workspace", category: "Workspace", run: () => { setSourceVisible(false); setInspectorVisible(false); showCanvas(); } },
-    { id: "editing-workspace", title: "Show both editing panels", category: "Workspace", run: () => { setSourceVisible(true); openDesign(); } },
+    { id: "editing-workspace", title: "Show both editing panels", category: "Workspace", run: () => { sourcePanel.resize("auto"); setSourceVisible(true); openDesign(); } },
     { id: "checkpoints", title: "Named checkpoints", category: "History", synonyms: ["save version", "restore", "alternatives"], run: () => setVersions("checkpoints") },
     { id: "style-profiles", title: "Style profiles", category: "Design", synonyms: ["reusable styles", "save style"], run: () => setVersions("styles") },
     { id: "edit-heading", title: "Edit heading", category: "Project", synonyms: ["title", "rename project"], run: editTitle },
@@ -734,19 +737,25 @@ export function StudioWorkspace({
           </div>
         </>
       )}
-      <main className={`workspace mobile-${tab}`}>
+      <main className={`workspace mobile-${tab}`} style={{
+        "--source-width": sourcePanel.width === "wide" ? "62vw" : typeof sourcePanel.width === "number" ? sourcePanel.width + "px" : undefined,
+        "--inspector-width": typeof inspectorPanel.width === "number" ? inspectorPanel.width + "px" : undefined,
+      } as CSSProperties}>
         {!present && (
           <aside
             className="source-panel"
             aria-label="Source editor"
             inert={compact ? tab !== "source" : !sourceVisible}
           >
-            <PanelSplitter side="source" />
+            <PanelSplitter side="source" preference={sourcePanel} />
             <div className="panel-heading">
               <div>
                 <Code2 size={16} />
                 <strong>Source</strong>
-                <span className="language-badge">.mmd</span>
+                {!compact && <button className="source-width-toggle" type="button"
+                  onClick={() => sourcePanel.resize(sourcePanel.width === "wide" ? "auto" : "wide")}>
+                  {sourcePanel.width === "wide" ? "Auto width" : "Widen editor"}
+                </button>}
               </div>
               <button
                 hidden={!!native}
@@ -963,7 +972,7 @@ export function StudioWorkspace({
               compact ? tab !== "style" && tab !== "story" : !inspectorVisible
             }
           >
-            <PanelSplitter side="inspector" />
+            <PanelSplitter side="inspector" preference={inspectorPanel} />
             <div
               className="inspector-mode"
               role="group"
