@@ -137,3 +137,52 @@ test('a scene from a selected neighborhood supports private presenter notes and 
   const html = await readFile((await (await pending).path())!, 'utf8');
   expect(html).not.toContain('Private rehearsal note');
 });
+
+test('a named checkpoint restores the heading and can be undone', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Browse examples' }).click();
+  await page.locator('.example-card').filter({ has: page.getByRole('heading', { name: 'Edge to cloud', exact: true }) }).click();
+  const title = page.getByRole('button', { name: 'Edit diagram title', exact: true });
+  const original = await title.textContent();
+  const dialog = page.getByRole('dialog', { name: 'Named checkpoints' });
+  const open = async () => {
+    await page.getByRole('button', { name: 'Commands', exact: true }).click();
+    const search = page.getByRole('combobox', { name: 'Search commands' });
+    await search.fill('Named checkpoints'); await search.press('Enter');
+  };
+  await open();
+  await dialog.getByLabel('Checkpoint name').fill('Before briefing');
+  await dialog.getByRole('button', { name: 'Save checkpoint' }).click();
+  await expect(dialog.getByText('Before briefing')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await title.click();
+  const heading = page.getByRole('dialog', { name: 'Edit heading' });
+  await heading.getByRole('textbox', { name: /^Title/ }).fill('Revised briefing');
+  await heading.getByRole('button', { name: 'Apply heading' }).click();
+  await expect(title).toHaveText('Revised briefing');
+  await open();
+  await dialog.getByRole('button', { name: 'Restore checkpoint' }).click();
+  await expect(title).toHaveText(original!);
+  await page.keyboard.press('Control+z');
+  await expect(title).toHaveText('Revised briefing');
+});
+
+test('pasted chart data makes a chart that opens from the ordinary project manager', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Chart values' }).click();
+  const chart = page.getByRole('dialog', { name: 'Chart values' });
+  await chart.getByLabel('Paste chart data').fill('Team,Requests\nIntake,14\nReview,25');
+  await chart.getByRole('button', { name: 'Read data' }).click();
+  await chart.getByRole('group', { name: 'Requests', exact: true }).getByLabel('Type').selectOption('number');
+  await chart.getByRole('button', { name: 'Confirm columns' }).click();
+  await chart.getByLabel('Title', { exact: true }).fill('Requests by team');
+  await chart.getByRole('button', { name: 'Review chart' }).click();
+  await expect(chart.getByRole('img', { name: 'Requests by team' })).toBeVisible();
+  await chart.getByRole('button', { name: 'Create chart project' }).click();
+  await expect(chart.getByRole('button', { name: 'Download chart project' })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('dialog', { name: 'Your projects' }).getByRole('button', { name: /Requests by team/ }).click();
+  await expect(page.getByRole('table', { name: 'Displayed values' }).getByText('25', { exact: true })).toBeVisible();
+});
