@@ -147,6 +147,7 @@ const SceneEditor = memo(function SceneEditor({ scene, index, count, elements, s
     <fieldset className="sb-fieldset" disabled={playing}>
       <label className="sb-field" htmlFor={`${id}-title`}>Scene title<input id={`${id}-title`} type="text" maxLength={120} value={scene.title} onChange={event => onPatch({ title: event.target.value })} placeholder={`Scene ${index + 1}`} /></label>
       <button type="button" className="sb-preview-scene" aria-label="Preview this scene" onClick={onPreview} disabled={!!disabledReason}><Play size={14} />Preview this scene<span>Show its finished view</span></button>
+      <label className="sb-field">Presenter notes<textarea className="notes-editor" rows={2} maxLength={2000} value={scene.notes ?? ""} onChange={event => onPatch({ notes: event.target.value })}/></label>
       <Section title="Timing" icon={<RotateCcw size={15} />} summary={`${scene.duration}s · ${scene.transition ? `${scene.transition}s entrance` : 'Cut'}`} initialOpen>
         <TimingField id={`${id}-duration`} label="Duration" value={scene.duration} min={0.5} max={120} step={0.5} presets={[3, 5, 10]} onCommit={value => onPatch({ duration: value, transition: Math.min(scene.transition, value) })} />
         <TimingField id={`${id}-transition`} label="Transition" value={scene.transition} min={0} max={Math.min(10, scene.duration)} step={0.1} presets={[0, 0.3, 0.7, 1.2]} onCommit={value => onPatch({ transition: value })} />
@@ -225,6 +226,25 @@ export default function Storyboard({ storyboard, elements, selectedKey, selected
     const next = createScene(story.scenes.length, story.scenes[story.scenes.length - 1]);
     publish({ ...story, scenes: [...story.scenes, next] }, next.id); actions.current.onSelectScene(next.id);
   }, [story, publish]);
+  function addFromSelection() {
+    if (!selectedElement || disabledReason || story.scenes.length >= 50) return;
+    const members = new Set(expandStorySelection(selectedElement.key, elements));
+    const keys = new Set(members);
+    const flow: string[] = [];
+    for (const edge of elements) {
+      if (edge.kind !== 'edge' || !(members.has(edge.key) || members.has(edge.from ?? '') || members.has(edge.to ?? ''))) continue;
+      keys.add(edge.key);
+      if (edge.from) keys.add(edge.from);
+      if (edge.to) keys.add(edge.to);
+      flow.push(edge.key);
+    }
+    const visible = [...keys].slice(0, 1500);
+    const included = new Set(visible);
+    const next: StoryScene = { ...createScene(story.scenes.length), title: selectedElement.label.slice(0, 120),
+      visible, highlight: [selectedElement.key], flow: flow.filter(key => included.has(key)), camera: { mode: 'elements', keys: visible, padding: 40 } };
+    publish({ ...story, scenes: [...story.scenes, next] }, next.id);
+    actions.current.onSelectScene(next.id);
+  }
   const duplicate = useCallback(() => {
     if (!scene || story.scenes.length >= 50) return;
     const next = duplicateScene(scene); const scenes = [...story.scenes]; scenes.splice(activeIndex + 1, 0, next);
@@ -269,6 +289,8 @@ export default function Storyboard({ storyboard, elements, selectedKey, selected
   const controlsDisabled = !story.scenes.length || !!disabledReason;
   return <section className="sb-storyboard" aria-label="Presentation storyboard">
     <header className="sb-heading"><div><Film size={17} /><strong>Storyboard</strong><span>{story.scenes.length}/50</span></div>{!!story.scenes.length && <button type="button" className="sb-add" onClick={add} disabled={story.scenes.length >= 50 || playback?.playing} aria-label="Add scene"><Plus size={15} />Add scene</button>}</header>
+    {selectedElement && <button type="button" className="button secondary" disabled={!!disabledReason || story.scenes.length >= 50 || playback?.playing}
+      onClick={addFromSelection}><Focus size={15}/>Scene from selected neighborhood</button>}
     {disabledReason && <p className="sb-disabled-note" role="status">{disabledReason} Scene names and timing can still be edited.</p>}
     {!!story.scenes.length && <div className="sb-playback">
       <div className="sb-now"><span>{playback?.playing ? 'PLAYING' : playback?.preview ? 'PREVIEW' : playback ? 'PAUSED' : 'DIAGRAM VIEW'}</span><strong>{current?.title || (current ? `Scene ${currentIndex + 1}` : 'Choose a scene to preview')}</strong></div>

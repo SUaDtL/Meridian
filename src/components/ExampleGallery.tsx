@@ -5,6 +5,8 @@ import { TEMPLATES } from "../lib/templates";
 import { getTheme } from "../lib/themes";
 import Modal from "./Modal";
 
+const thumbnails = import.meta.glob<string>("../assets/examples/*.webp", { eager: true, query: "?inline", import: "default" });
+
 export default function ExampleGallery({
   onChoose,
   onClose,
@@ -58,7 +60,7 @@ export default function ExampleGallery({
         ))}
       </div>
       <div className="example-grid">
-        {matches.map((template, index) => (
+        {matches.map((template) => (
           <button
             key={template.id}
             className="example-card"
@@ -71,34 +73,7 @@ export default function ExampleGallery({
             }
           >
             <div className="example-art" aria-hidden="true">
-              <svg viewBox="0 0 240 105">
-                <path
-                  d={
-                    index % 2
-                      ? "M48 52H100M140 52H192M120 32V12M120 72V94"
-                      : "M65 30H120V72H179M65 30H179"
-                  }
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                  opacity=".45"
-                />
-                <rect
-                  x="25"
-                  y={index % 2 ? 36 : 14}
-                  width="55"
-                  height="32"
-                  rx="6"
-                />
-                <rect x="95" y="36" width="55" height="32" rx="6" />
-                <rect
-                  x="165"
-                  y={index % 2 ? 36 : 56}
-                  width="55"
-                  height="32"
-                  rx="6"
-                />
-              </svg>
+              <img src={thumbnails[`../assets/examples/${template.id}.webp`]} alt="" width={540} height={240} loading="lazy" />
               <span>{template.category}</span>
             </div>
             <div className="example-copy">

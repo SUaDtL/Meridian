@@ -63,7 +63,7 @@ function wrapHeading(value: string, characters: number, width: number, font: str
   return measured;
 }
 
-export interface ExportFrameOptions { transparent?: boolean; animated?: boolean; includeFrame?: boolean }
+export interface ExportFrameOptions { target?: "current" | "slide" | "figure"; transparent?: boolean; animated?: boolean; includeFrame?: boolean }
 export interface ExportFrame {
   svg: string;
   width: number;
@@ -74,10 +74,11 @@ export interface ExportFrame {
 type FrameDocument = Pick<StudioDocument, 'title' | 'subtitle' | 'settings'>;
 
 /** Build framing and dimensions together so the stage never reparses the result. */
-export function buildExportFrame(result: RenderResult, doc: FrameDocument, opts: ExportFrameOptions = {}): ExportFrame {
+export function buildExportFrame(result: RenderResult, doc: FrameDocument, opts: ExportFrameOptions = {}, captureTemplate?: (root: SVGSVGElement) => void): ExportFrame {
   const source = parseSvg(result.svg);
   const xml = source.ownerDocument;
-  const settings = doc.settings;
+  const settings = opts.target === "slide" ? { ...doc.settings, frame: "16:9" as const }
+    : opts.target === "figure" ? { ...doc.settings, frame: "auto" as const, padding: 16 } : doc.settings;
   const theme = getTheme(settings.theme);
   const framed = opts.includeFrame !== false;
   source.querySelectorAll('[data-node-key], [data-element-key]').forEach((node) => {
@@ -161,6 +162,7 @@ export function buildExportFrame(result: RenderResult, doc: FrameDocument, opts:
   }
   const diagramScale = Math.min(contentWidth / result.width, contentHeight / result.height);
   const [minX, minY] = (source.getAttribute('viewBox') ?? '0 0').trim().split(/[ ,]+/).map(Number);
+  captureTemplate?.(outer);
   return { svg: new XMLSerializer().serializeToString(outer), width, height, diagramScale, diagramOrigin: {
     x: pad + (contentWidth - result.width * diagramScale) / 2 - minX * diagramScale,
     y: pad + headingHeight + (contentHeight - result.height * diagramScale) / 2 - minY * diagramScale,
@@ -264,7 +266,7 @@ async function buildTimelineHtml(svg: string, doc: FrameDocument, story: { versi
     const runtime = createStoryboardRuntime.toString();
     const script = `
 const createPlayer=(${runtime})().createPlayer;
-const story=${safeScriptJson(story)};
+const story=${safeScriptJson({ ...story, scenes: story.scenes.map(({ notes: _notes, ...scene }) => scene) })};
 const accent=${safeScriptJson(theme.accent)};
 const root=document.querySelector('main>svg'),playButton=document.getElementById('play'),seekInput=document.getElementById('seek'),sceneSelect=document.getElementById('scene'),timeOutput=document.getElementById('time'),sceneTitle=document.getElementById('scene-title');
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');

@@ -76,6 +76,7 @@ test('resumes schema facts without source bytes and creates exact local provenan
   await dialog.getByRole('button', { name: 'Preview schema diagram' }).click();
   await expect(dialog.getByRole('img', { name: 'Proposed JSON Schema diagram' })).toBeVisible();
   await dialog.getByRole('button', { name: 'Create schema project' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'JSON Schema relationships' });
   await expect(live.getByRole('img', { name: 'Diagram preview for JSON Schema relationships' })).toBeVisible();
   const [download] = await Promise.all([page.waitForEvent('download'), live.getByRole('button', { name: 'Download v3 project' }).click()]);

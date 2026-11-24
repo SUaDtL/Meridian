@@ -72,7 +72,7 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
   const working = busy || committing;
   const [error, setError] = useState("");
   const [cancelled, setCancelled] = useState(false);
-  const [view, setView] = useState<"current" | "proposed">("current");
+  const [view, setView] = useState<"current" | "proposed" | "both">("current");
   const active = useRef<AbortController | undefined>(undefined);
   const previewButton = useRef<HTMLButtonElement>(null);
   function releaseCandidate(candidate?: Candidate) {
@@ -340,14 +340,15 @@ export default function V3ComparisonDialog({ mode, allowDirection, allowScopedDe
       <div className="recovery-actions" role="group" aria-label="Comparison view">
         <button className="button quiet" aria-pressed={view === "current"} onClick={() => setView("current")}>Current</button>
         <button className="button quiet" aria-pressed={view === "proposed"} disabled={!preview} onClick={() => setView("proposed")}>Proposed</button>
+        <button className="button quiet" aria-pressed={view === "both"} disabled={!preview} onClick={() => setView("both")}>Side by side</button>
       </div>
-      <div className="migration-preview">
-        <figure hidden={view !== "current"}>
-          <img src={currentUrl} alt="Current diagram design" />
+      <div className={view === "both" ? "comparison-pair" : "migration-preview"}>
+        <figure hidden={view === "proposed"}>
+          <img style={view === "both" && preview ? {width: 100 * currentSize.width / Math.max(currentSize.width, preview.width) + "%"} : undefined} src={currentUrl} alt="Current diagram design" />
           <figcaption>Current frame · {currentSize.width} × {currentSize.height}</figcaption>
         </figure>
-        {preview && <figure hidden={view !== "proposed"}>
-          <img key={preview.url} src={preview.url} alt={`Proposed ${title} ${mode}`} onLoad={() => setPainted(true)} onError={() => {
+        {preview && <figure hidden={view === "current"}>
+          <img style={view === "both" ? {width: 100 * preview.width / Math.max(currentSize.width, preview.width) + "%"} : undefined} key={preview.url} src={preview.url} alt={`Proposed ${title} ${mode}`} onLoad={() => setPainted(true)} onError={() => {
             saveCandidate(choice, { error: "The proposed image could not be displayed." });
             setPainted(false);
             setView("current");

@@ -146,6 +146,7 @@ test('applies the reviewed paint recipe only to nodes of one explicit role', asy
   await systems.getByRole('button', { name: 'Review relationships' }).click();
   await systems.getByRole('button', { name: 'Preview systems diagram' }).click();
   await systems.getByRole('button', { name: 'Create systems project' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'Role recipe' });
   await expect(live.getByRole('img', { name: 'Diagram preview for Role recipe' })).toBeVisible();
   const before = await downloadProject(page, live);
@@ -177,6 +178,7 @@ test('applies the reviewed paint recipe only to nodes of one explicit role', asy
   const check = page.getByRole('dialog', { name: 'Check readability' });
   await check.getByRole('button', { name: 'Check diagram' }).click();
   const report = check.getByRole('region', { name: 'Readability results' });
+  await report.getByText('Measurement coverage', { exact: true }).click();
   await expect(report.getByText('Explicit role styling · 1 measured · 0 unknown · 1 not applicable')).toBeVisible();
   await expect(report.getByText('Store has the database role. Text color renders as #334455. The saved recipe specifies #0f172a. User override #334455.')).toBeVisible();
   await report.getByRole('button', { name: 'Review reset for Store' }).click();

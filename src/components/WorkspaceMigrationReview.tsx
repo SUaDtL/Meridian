@@ -29,6 +29,7 @@ export default function WorkspaceMigrationReview({ nextProjectId, onClose, onDow
   onDownloadLegacy: () => void;
 }) {
   const action = useRef<AbortController | null>(null);
+  const activeTask = useRef<Task | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<Task | null>("inspect");
   const [review, setReview] = useState<MigrationReview>(null);
@@ -38,7 +39,13 @@ export default function WorkspaceMigrationReview({ nextProjectId, onClose, onDow
   const [openProjectId, setOpenProjectId] = useState(nextProjectId);
 
   const run = useCallback(async (task: Task, work: (db: IDBDatabase, signal: AbortSignal) => Promise<void>) => {
-    if (action.current) return;
+    if (action.current) {
+      // A file picker can return while a cross-tab inventory refresh is running.
+      // Preserve the user's selection and cancel only the read-only inspection.
+      if (task !== "import" || activeTask.current !== "inspect") return;
+      action.current.abort();
+    }
+    activeTask.current = task;
     const controller = new AbortController();
     action.current = controller;
     setBusy(task);
@@ -57,6 +64,7 @@ export default function WorkspaceMigrationReview({ nextProjectId, onClose, onDow
       db?.close();
       if (action.current === controller) {
         action.current = null;
+        activeTask.current = null;
         setBusy(null);
       }
     }

@@ -29,12 +29,12 @@ export function markProcessDecision(
 ): ProcessConnections {
   const position = steps.findIndex(step => step.line === line);
   if (position < 0 || connections?.decisions.includes(line)) throw new Error('Choose a process step to turn into a decision.');
-  const affected = new Set(connections ? [line] : steps.slice(position).map(step => step.line));
+  // Only this step's outgoing branch changes meaning. Keep downstream continuations.
   return {
     decisions: [...(connections?.decisions ?? []), line],
     terminal: (connections?.terminal ?? []).filter(end => end !== line),
     edges: (connections?.edges ?? adjacentConnections(steps)).map(edge => (
-      affected.has(edge.from) ? { ...edge, review: 'needs-review' } : edge
+      edge.from === line ? { ...edge, review: 'needs-review' } : edge
     )),
   };
 }

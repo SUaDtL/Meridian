@@ -213,6 +213,9 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
     : (operation === "removeEdge" || operation === "setEdgeLabel") ? !!to
     : removingEdges ? !!selectedEdges?.length && selectedEdges.every(Boolean)
     : operation === "removeNode" ? !!to && !unidentified.length : !!from && !!to && (!duplicateKey || approvedDuplicate === duplicateKey);
+  useEffect(() => {
+    if (destination && preview && painted && !busy) applyButton.current?.focus();
+  }, [destination, preview, painted, busy]);
   const canPlan = canPreview && retryMode !== "reduce";
   const retryLabel = retryMode === "retry" ? "Retry planning for five seconds" : undefined;
   const search = operation === "addEdge" ? nodeQuery.trim().toLowerCase() : "";
@@ -402,10 +405,7 @@ export default function V3StructureEditor({ editor, nodes, edges, group, movable
         {preview && (
           <div className="migration-preview">
             <img src={preview.url} alt="Proposed diagram"
-              onLoad={() => {
-                setPainted(true);
-                if (destination) requestAnimationFrame(() => applyButton.current?.focus());
-              }}
+              onLoad={() => setPainted(true)}
               onError={() => setError("The proposed diagram could not be displayed. Prepare the preview again.")} />
           </div>
         )}

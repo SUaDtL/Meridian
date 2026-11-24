@@ -47,14 +47,23 @@ import Brand from "./components/Brand";
 import CommandPalette from "./components/CommandPalette";
 import DiagramStage from "./components/DiagramStage";
 import Inspector from "./components/Inspector";
+import { explainMermaidSourceError, SourceDiagnosticError } from "./lib/authoring/source-diagnostics";
+import { missingNodeBracket } from "./lib/authoring/source-diagnostic-repair";
+import { cacheThumbnail } from "./lib/persistence/project-thumbnail";
+import { buildExportFrame } from "./lib/export";
+import PresenterView from "./components/PresenterView";
+import SceneFilmstrip from "./components/SceneFilmstrip";
+import PanelSplitter from "./components/PanelSplitter";
 import Storyboard from "./components/Storyboard";
 import HeadingEditor from "./components/HeadingEditor";
 import { prepareHeadingProposal } from "./lib/authoring/proposals";
+import { authoringCommands } from "./lib/authoring/command-catalog";
 import type { WorkspaceCommand } from "./lib/authoring/command-search";
 import { useDiagram } from "./hooks/useDiagram";
 import { createDesign } from "./lib/design";
 import { DEFAULT_SETTINGS } from "./lib/themes";
 import { storyboardDuration } from "./lib/storyboard";
+import type { RenderTargetTable } from "./lib/authoring/project-render";
 import type { Workspace } from "./hooks/useWorkspace";
 import type { StudioDocument } from "./types";
 import type { DesignState, ElementStyle } from "./types/design";
@@ -67,20 +76,26 @@ import type {
 import type { DocumentPatch } from "./lib/workspace";
 import type { Notify } from "./App";
 
+const SavedVersions = lazy(() => import("./components/SavedVersions"));
 const SourceEditor = lazy(() => import("./components/SourceEditor"));
 const ExportDialog = lazy(() => import("./components/ExportDialog"));
 const MemoInspector = memo(Inspector);
 type WorkspaceTab = "canvas" | "source" | "style" | "story";
-interface Props {
-  document: StudioDocument;
-  workspace: Workspace;
+export interface StudioNavigation {
   notify: Notify;
   onHome: () => void;
-  onNew: () => void;
-  onExamples: () => void;
   onProjects: () => void;
   onGuide: () => void;
+  onNew: () => void;
   onImport: () => void;
+  onExamples: () => void;
+}
+interface Props extends StudioNavigation {
+  document: StudioDocument;
+  workspace: Pick<Workspace, "patch" | "settings" | "undo" | "redo" | "undoLabel" | "redoLabel" | "saveState" | "autosave" | "revision" | "proposalOutcome" | "applyProposal">;
+  onAuthoring?: (command: string) => void;
+  extraCommands?: WorkspaceCommand[];
+  native?: { original: import("./lib/authoring/mermaid-project").MermaidProjectV3; restore: (snapshot: import("./lib/authoring/mermaid-project").MermaidProjectV3) => void; editSource?: () => void; editHeading: () => void; export: () => void; tools: () => void; table?: RenderTargetTable | null; select: (key: string | null) => void; rename: (key: string) => void };
   onDownload: () => void;
 }
 function applyStoryAction(
@@ -95,8 +110,17 @@ function applyStoryAction(
   else if (action !== "stop") controller[action]();
 }
 
-export default function Studio({
+function panelVisible(side: string) {
+  try { return localStorage.getItem("meridian:visible:" + side) !== "false"; } catch { return true; }
+}
+export default function Studio(props: Props) {
+  const diagram = useDiagram(props.document);
+  return <StudioWorkspace {...props} diagram={diagram} />;
+}
+
+export function StudioWorkspace({
   document: doc,
+  diagram, native, onAuthoring, extraCommands = [],
   workspace,
   notify,
   onHome,
@@ -106,8 +130,7 @@ export default function Studio({
   onGuide,
   onImport,
   onDownload,
-}: Props) {
-  const diagram = useDiagram(doc);
+}: Props & { diagram: ReturnType<typeof useDiagram> }) {
   const {
     result,
     error,
@@ -120,12 +143,27 @@ export default function Studio({
     setLive,
     renderNow,
   } = diagram;
+  const stageFrame = useMemo(() => {
+    if (!result) return { svg: "", width: 900, height: 700, template: null };
+    let template: SVGSVGElement | null = null;
+    const frame = buildExportFrame(result, stageDocument, { animated: true, includeFrame: true }, root => { template = root; });
+    return { ...frame, template: template as SVGSVGElement | null };
+  }, [result, stageDocument.title, stageDocument.subtitle, stageDocument.settings.theme, stageDocument.settings.font,
+    stageDocument.settings.padding, stageDocument.settings.frame, stageDocument.settings.showTitle, stageDocument.settings.showBrand,
+    stageDocument.settings.background, stageDocument.settings.ambient]);
   const { patch, settings, undo, redo, undoLabel, redoLabel } = workspace;
   const [tab, setTab] = useState<WorkspaceTab>("canvas");
+  const [manual, setManual] = useState(false);
+  const [cleanAudience, setCleanAudience] = useState(false);
+  const presentationFullscreen = useRef(false);
   const [present, setPresent] = useState(false);
-  const [sourceVisible, setSourceVisible] = useState(true);
+  const [sourceVisible, setSourceVisible] = useState(() => panelVisible("source"));
+  const [jumpLine, setJumpLine] = useState<number>();
   const [focusRequest, setFocusRequest] = useState(0);
-  const [inspectorVisible, setInspectorVisible] = useState(true);
+  const [inspectorVisible, setInspectorVisible] = useState(() => panelVisible("inspector"));
+  useEffect(() => {
+    try { localStorage.setItem("meridian:visible:source", String(sourceVisible)); localStorage.setItem("meridian:visible:inspector", String(inspectorVisible)); } catch { /* session only */ }
+  }, [sourceVisible, inspectorVisible]);
   const [inspectorMode, setInspectorMode] = useState<"design" | "story">(
     "design",
   );
@@ -137,8 +175,11 @@ export default function Studio({
   );
   const [heading, setHeading] = useState<"title" | "subtitle" | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [versions, setVersions] = useState<"checkpoints" | "styles">();
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [replayKey, setReplayKey] = useState(0);
+  const [selectionRevision, setSelectionRevision] = useState(0);
+  const [selectionRequest, setSelectionRequest] = useState(0);
   const [fitRequest, setFitRequest] = useState(0);
   const [motionPaused, setMotionPaused] = useState(false);
   const [compact, setCompact] = useState(
@@ -215,19 +256,22 @@ export default function Studio({
     },
     [stopStory],
   );
-  const beginPresentation = useCallback(() => {
+  const startPresentation = useCallback((manual: boolean) => {
     const state = current.current;
     if (!state.result || state.stale || state.error) {
       notify("Render a valid diagram before presenting.", "error");
       return;
     }
+    setCleanAudience(false);
     setPresent(true);
     setFitRequest((value) => value + 1);
-    setSelectedKey(null);
-    if (state.doc.storyboard?.scenes.length) playbackAction("restart");
+    if (state.doc.storyboard?.scenes.length) playbackAction(manual ? "preview" : "restart", 0);
   }, [playbackAction, notify]);
+  const beginPresentation = useCallback(() => startPresentation(manual), [startPresentation, manual]);
   const leavePresentation = useCallback(() => {
     setPresent(false);
+    if (presentationFullscreen.current && globalThis.document.fullscreenElement) void globalThis.document.exitFullscreen().catch(() => {});
+    presentationFullscreen.current = false;
     stopStory();
   }, [stopStory]);
   const showCanvas = useCallback(() => setTab("canvas"), []);
@@ -246,17 +290,19 @@ export default function Studio({
     setInspectorVisible(true);
     setTab("style");
   }, []);
-  const openExport = useCallback(() => setExportOpen(true), []);
+  const openExport = native?.export ?? (() => setExportOpen(true));
   const selectElement = useCallback(
     (key: string | null) => {
       setSelectedKey(key);
+      setSelectionRevision(value => value + 1);
+      native?.select(key);
       if (key) {
         setInspectorVisible(true);
         if (window.innerWidth <= 800)
           setTab(inspectorMode === "story" ? "story" : "style");
       }
     },
-    [inspectorMode],
+    [inspectorMode, native?.select],
   );
   const clearSelection = useCallback(() => setSelectedKey(null), []);
   const replay = useCallback(() => setReplayKey((value) => value + 1), []);
@@ -264,7 +310,7 @@ export default function Studio({
     (field: "title" | "subtitle" = "title") => setHeading(field),
     [],
   );
-  const editTitle = useCallback(() => setHeading("title"), []);
+  const editTitle = native?.editHeading ?? (() => setHeading("title"));
   const closeHeading = useCallback(() => setHeading(null), []);
   const changeSource = useCallback(
     (source: string, group?: string) => {
@@ -337,7 +383,7 @@ export default function Studio({
     : null;
   const selectedNode =
     selectedElement?.kind === "node"
-      ? (nodeIndex.get(selectedElement.sourceId) ?? null)
+      ? (nodeIndex.get(selectedElement.key) ?? nodeIndex.get(selectedElement.sourceId) ?? null)
       : null;
   const changeAccent = useCallback(
     (color: string | null) => {
@@ -411,6 +457,7 @@ export default function Studio({
         return;
       }
       if (editing || command || event.altKey) return;
+      if (present && key === "h") { event.preventDefault(); setCleanAudience(value => !value); }
       if (key === "f") {
         event.preventDefault();
         setFitRequest((value) => value + 1);
@@ -454,6 +501,16 @@ export default function Studio({
     playbackAction,
   ]);
 
+  const diagnosis = useMemo(() => error ? explainMermaidSourceError(new Error(error), doc.source) : undefined, [error, doc.source]);
+  const repair = useMemo(() => diagnosis instanceof SourceDiagnosticError ? missingNodeBracket(doc.source, diagnosis) : undefined, [diagnosis, doc.source]);
+  useEffect(() => {
+    if (!result || stale || rendering || error) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void cacheThumbnail((native ? "mermaid/" : "") + doc.id, doc.updatedAt, result.svg, controller.signal).catch(() => {});
+    }, 400);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [result, stale, rendering, error, doc.id, doc.updatedAt, !!native]);
   const sourceLines = useMemo(
     () => doc.source.split("\n").length,
     [doc.source],
@@ -466,6 +523,11 @@ export default function Studio({
         ? "Render the current diagram to preview scenes."
         : undefined;
   const commands: WorkspaceCommand[] = [
+    { id: "source-workspace", title: "Source-focused workspace", category: "Workspace", run: () => { setInspectorVisible(false); showSource(); } },
+    { id: "canvas-workspace", title: "Canvas-focused workspace", category: "Workspace", run: () => { setSourceVisible(false); setInspectorVisible(false); showCanvas(); } },
+    { id: "editing-workspace", title: "Show both editing panels", category: "Workspace", run: () => { setSourceVisible(true); openDesign(); } },
+    { id: "checkpoints", title: "Named checkpoints", category: "History", synonyms: ["save version", "restore", "alternatives"], run: () => setVersions("checkpoints") },
+    { id: "style-profiles", title: "Style profiles", category: "Design", synonyms: ["reusable styles", "save style"], run: () => setVersions("styles") },
     { id: "edit-heading", title: "Edit heading", category: "Project", synonyms: ["title", "rename project"], run: editTitle },
     { id: "show-source", title: "Show Mermaid source", category: "Diagram", synonyms: ["open source", "code"], run: showSource },
     { id: "render-now", title: "Render diagram", category: "Diagram", synonyms: ["refresh"], shortcut: "Ctrl/⌘ Enter",
@@ -473,6 +535,7 @@ export default function Studio({
     { id: "copy-source", title: "Copy Mermaid source", category: "Diagram", unavailable: blank ? "There is no source to copy." : undefined, run: () => { void copySource(); } },
     { id: "open-design", title: "Open design options", category: "Diagram", synonyms: ["style", "theme"], run: openDesign },
     { id: "open-story", title: "Open storyboard", category: "Diagram", synonyms: ["scenes", "timeline"], run: openStoryboard },
+    { id: "present-manually", title: "Present with manual advance", category: "Story", synonyms: ["hold slide", "presenter"], unavailable: !doc.storyboard?.scenes.length ? "Create a scene first." : undefined, run: () => startPresentation(true) },
     { id: "present", title: "Present diagram", category: "Diagram", shortcut: "P",
       unavailable: !result || stale || error ? "Render a valid diagram before presenting." : undefined, run: beginPresentation },
     { id: "undo", title: "Undo", category: "History", shortcut: "Ctrl/⌘ Z", unavailable: undoLabel ? undefined : "There are no changes to undo.", run: undo },
@@ -480,6 +543,16 @@ export default function Studio({
     { id: "export", title: "Export diagram", category: "Export", synonyms: ["download", "presentation", "png", "svg"], run: openExport },
     { id: "download-project", title: "Download project", category: "Export", synonyms: ["backup", "save project"], shortcut: "Ctrl/⌘ S", run: onDownload },
   ];
+  const commandMap = new Map(commands.map(command => [command.id, command]));
+  if (onAuthoring) for (const command of Object.values(authoringCommands)) {
+    if (!commandMap.has(command.id) && !["download-project", "export-diagram", "download-presentation"].includes(command.id)) {
+      commandMap.set(command.id, { ...command, unavailable: !result?.diagramType.startsWith("flowchart") || stale || error
+        ? "Render a current flowchart to use this authoring command." : undefined, run: () => onAuthoring(command.id) });
+    }
+  }
+  for (const command of extraCommands) {
+    if (!commandMap.has(command.id)) commandMap.set(command.id, command);
+  }
   return (
     <div
       className={`studio ${present ? "is-presenting" : ""} ${sourceVisible ? "" : "source-hidden"} ${inspectorVisible ? "" : "inspector-hidden"}`}
@@ -554,6 +627,8 @@ export default function Studio({
                 <GalleryHorizontalEnd size={16} />
                 <span>Examples</span>
               </button>
+              {!!doc.storyboard?.scenes.length && <select className="delivery-mode" aria-label="Presentation advance" value={manual ? "manual" : "auto"}
+                onChange={event => setManual(event.target.value === "manual")}><option value="auto">Timed</option><option value="manual">Manual</option></select>}
               <button
                 className="button quiet present-top"
                 onClick={beginPresentation}
@@ -604,6 +679,7 @@ export default function Studio({
               </button>
             </div>
             <div className="workspace-tools">
+              {native && <button className="button quiet" onClick={native.tools}>Authoring tools</button>}
               <div
                 className="history-controls"
                 role="group"
@@ -665,6 +741,7 @@ export default function Studio({
             aria-label="Source editor"
             inert={compact ? tab !== "source" : !sourceVisible}
           >
+            <PanelSplitter side="source" />
             <div className="panel-heading">
               <div>
                 <Code2 size={16} />
@@ -672,6 +749,7 @@ export default function Studio({
                 <span className="language-badge">.mmd</span>
               </div>
               <button
+                hidden={!!native}
                 className={`live-button ${live ? "on" : ""}`}
                 onClick={() => setLive((value) => !value)}
                 aria-pressed={live}
@@ -685,7 +763,7 @@ export default function Studio({
               <p>
                 {blank
                   ? "Paste Mermaid here to begin."
-                  : "Your source. Your diagram."}
+                  : "Mermaid source"}
               </p>
               <button onClick={onGuide}>
                 Syntax guide
@@ -700,13 +778,17 @@ export default function Studio({
                   </p>
                 }
               >
-                <SourceEditor
+                {native ? <div className="accepted-source">
+                  <button className="button primary" disabled={!native.editSource} onClick={native.editSource}>Edit Mermaid source</button>
+                  <pre>{doc.source}</pre>
+                </div> : <SourceEditor
                   source={doc.source}
                   onChange={changeSource}
                   onUndo={undo}
                   onRedo={redo}
+                  jumpLine={jumpLine}
                   focusRequest={focusRequest}
-                />
+                />}
               </Suspense>
             </div>
             {error && (
@@ -715,7 +797,13 @@ export default function Studio({
                   <CircleAlert size={16} />
                   <strong>Check your syntax</strong>
                 </div>
-                <pre>{error}</pre>
+                {diagnosis instanceof SourceDiagnosticError && <p>{diagnosis.message}</p>}
+                {diagnosis instanceof SourceDiagnosticError && diagnosis.line && <button onClick={() => {
+                  setJumpLine(diagnosis.line); showSource();
+                }}>Go to line {diagnosis.line}</button>}
+                {repair && <div><p>Proposed line {repair.line}</p><code>{repair.after}</code>
+                  <button onClick={() => changeSource(doc.source.slice(0,repair.insertAt) + "]" + doc.source.slice(repair.insertAt))}>Apply bracket fix</button></div>}
+                <details><summary>Renderer details</summary><pre>{error}</pre></details>
                 <p>
                   {result
                     ? "Your last valid diagram stays on the canvas."
@@ -799,6 +887,7 @@ export default function Studio({
                 </button>
               )}
               <DiagramStage
+                frame={stageFrame}
                 result={result}
                 document={stageDocument}
                 selectedKey={selectedKey}
@@ -806,12 +895,15 @@ export default function Studio({
                 replayKey={replayKey}
                 present={present}
                 motionPaused={(!storyPreview && motionPaused) || reducedMotion}
+                selectionRequest={selectionRequest}
                 fitRequest={fitRequest}
                 storyPreview={storyPreview}
                 reducedMotion={reducedMotion}
                 onStoryController={receiveStoryController}
                 onStoryPlayback={setStoryPlayback}
-                onEditHeading={editHeading}
+                onEditHeading={native?.editHeading ?? editHeading}
+                onRename={native?.rename}
+                targetTable={native?.table}
                 loading={rendering}
                 error={error}
               />
@@ -871,6 +963,7 @@ export default function Studio({
               compact ? tab !== "style" && tab !== "story" : !inspectorVisible
             }
           >
+            <PanelSplitter side="inspector" />
             <div
               className="inspector-mode"
               role="group"
@@ -930,9 +1023,10 @@ export default function Studio({
                   onSettings={settings}
                   onDocument={changeDocument}
                   onDesign={changeDesign}
+                  selectionRevision={selectionRevision}
                   selectedElement={selectedElement}
                   selectedNode={selectedNode}
-                  onSelectElement={selectElement}
+                  onSelectElement={key => { selectElement(key); if (key) setSelectionRequest(count => count + 1); }}
                   onAccent={changeAccent}
                   onClearSelection={clearSelection}
                   onReplay={replay}
@@ -944,12 +1038,16 @@ export default function Studio({
           </aside>
         )}
       </main>
+      {!present && inspectorMode === "story" && inspectorVisible && stageFrame.template && !!doc.storyboard?.scenes.length &&
+        <SceneFilmstrip doc={doc} template={stageFrame.template} selected={selectedSceneId} targets={native?.table}
+          onSelect={(scene,index) => { setSelectedSceneId(scene.id); playbackAction("preview",index); }}
+          onReorder={scenes => changeStoryboard({ ...doc.storyboard!, scenes })} />}
       {!present && (
         <>
           <footer className="status-bar">
             <span>
               <ShieldCheck size={13} />
-              Saved on this device.
+              Local workspace
               <span className="status-sub">
                 {" "}
                 Download a project for a portable backup.
@@ -1001,6 +1099,7 @@ export default function Studio({
       )}
       {present && (
         <div
+          hidden={cleanAudience}
           className={`presentation-controls ${doc.storyboard?.scenes.length ? "has-storyboard" : ""}`}
         >
           <span className="presentation-label">
@@ -1086,6 +1185,14 @@ export default function Studio({
             <Maximize2 size={16} />
             <span>Fit</span>
           </button>
+          {!!doc.storyboard?.scenes.length && <PresenterView scenes={doc.storyboard.scenes} index={storyPlayback?.sceneIndex ?? 0}
+            previous={() => playbackAction("previous")} next={() => playbackAction("next")}/>}
+          <button onClick={() => setCleanAudience(true)} title="Hide controls. Press H to restore them.">Audience view</button>
+          {globalThis.document.fullscreenEnabled && <button onClick={() => {
+            const page = globalThis.document;
+            void (page.fullscreenElement ? page.exitFullscreen() : page.documentElement.requestFullscreen().then(() => { presentationFullscreen.current = true; }))
+              .catch(() => notify("Fullscreen is unavailable in this window.", "error"));
+          }}>Fullscreen</button>}
           <span className="control-separator" />
           <button onClick={leavePresentation}>
             <X size={17} />
@@ -1095,7 +1202,16 @@ export default function Studio({
           </button>
         </div>
       )}
-      {commandsOpen && <CommandPalette commands={commands} onClose={() => setCommandsOpen(false)} />}
+      {present && cleanAudience && <button className="restore-controls" onClick={() => setCleanAudience(false)}>Show controls (H)</button>}
+      {versions && <Suspense><SavedVersions mode={versions} project={native?.original ?? doc} onStyle={settings => changeDocument({ settings })}
+        onRestore={snapshot => {
+          if (snapshot.schema === "meridian/v3") native?.restore(snapshot);
+          else {
+            const { title, subtitle, source, settings, design, nodeAccents, storyboard } = snapshot;
+            patch({ title, subtitle, source, settings, design, nodeAccents, storyboard }, "Restore checkpoint");
+          }
+        }} onClose={() => setVersions(undefined)} /></Suspense>}
+      {commandsOpen && <CommandPalette commands={[...commandMap.values()]} onClose={() => setCommandsOpen(false)} />}
       {heading && (
         <HeadingEditor
           document={doc}

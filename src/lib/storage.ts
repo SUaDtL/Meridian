@@ -64,7 +64,7 @@ function number(value: unknown, label: string, min: number, max: number): number
   return value;
 }
 
-function validateSettings(value: unknown): StudioSettings {
+export function validateSettings(value: unknown): StudioSettings {
   const s = record(value, 'Settings');
   checkKeys(s, SETTING_KEYS, 'Settings');
   return {

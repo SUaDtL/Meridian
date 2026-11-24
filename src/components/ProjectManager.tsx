@@ -1,19 +1,20 @@
+import ProjectThumbnail from "./ProjectThumbnail";
 import { useMemo, useState } from "react";
 import {
   Copy,
   Download,
-  Layers3,
   Plus,
   Search,
   Trash2,
   Upload,
 } from "lucide-react";
-import type { StudioDocument } from "../types";
+import type { ProjectListItem } from "../lib/persistence/project-inventory";
 import { getTheme } from "../lib/themes";
 import Modal from "./Modal";
 
 export default function ProjectManager({
   documents,
+  inventoryStatus,
   activeId,
   onOpen,
   onNew,
@@ -25,7 +26,8 @@ export default function ProjectManager({
   onCharts,
   onClose,
 }: {
-  documents: StudioDocument[];
+  documents: ProjectListItem[];
+  inventoryStatus: string;
   activeId: string | null;
   onOpen: (id: string) => void;
   onNew: () => void;
@@ -66,7 +68,7 @@ export default function ProjectManager({
           New diagram
         </button>
       </div>
-      {documents.length > 3 && (
+      {documents.length > 0 && (
         <label className="search-field">
           <Search size={16} />
           <input
@@ -77,6 +79,7 @@ export default function ProjectManager({
           />
         </label>
       )}
+      {inventoryStatus && matches.length > 0 && <p role="status">{inventoryStatus}</p>}
       <div className="project-list">
         {matches.map((project) => (
           <div
@@ -84,19 +87,11 @@ export default function ProjectManager({
             className={`project-row ${activeId === project.id ? "current" : ""}`}
           >
             <button className="project-open" onClick={() => onOpen(project.id)}>
-              <span
-                className="project-icon"
-                style={{
-                  color: getTheme(project.settings.theme).accent,
-                  background: getTheme(project.settings.theme).canvas,
-                }}
-              >
-                <Layers3 size={22} />
-              </span>
+              <ProjectThumbnail project={project} />
               <span>
                 <strong>{project.title || "Untitled diagram"}</strong>
                 <small>
-                  {getTheme(project.settings.theme).name} ·{" "}
+                  {project.kind === "chart" ? "Chart" : "Diagram"} · {getTheme(project.theme).name} ·{" "}
                   {new Date(project.updatedAt).toLocaleDateString(undefined, {
                     month: "short",
                     day: "numeric",
@@ -105,21 +100,21 @@ export default function ProjectManager({
                 </small>
               </span>
             </button>
-            <button
+            {project.kind === "diagram" && <button
               className="icon-button danger"
               aria-label={`Delete ${project.title || "Untitled diagram"}`}
               onClick={() => setPending(project.id)}
             >
               <Trash2 size={16} />
-            </button>
+            </button>}
           </div>
         ))}
       </div>
       {!matches.length && (
         <p className="empty-search">
-          {documents.length
+          {inventoryStatus || (documents.length
             ? "No matching projects."
-            : "Your workspace is empty. Start a new diagram or import a project."}
+            : "Your workspace is empty. Start a new diagram or import a project.")}
         </p>
       )}
       {pending && (
@@ -147,7 +142,7 @@ export default function ProjectManager({
       <div className="project-modal-footer">
         <button
           className="button quiet"
-          disabled={!activeId}
+          disabled={!activeId || !documents.some(project => project.kind === "diagram" && project.id === activeId)}
           onClick={onDuplicate}
         >
           <Copy size={15} />
@@ -155,13 +150,13 @@ export default function ProjectManager({
         </button>
         <button
           className="button quiet"
-          disabled={!activeId}
+          disabled={!activeId || !documents.some(project => project.kind === "diagram" && project.id === activeId)}
           onClick={onDownload}
         >
           <Download size={15} />
           Download current
         </button>
-        <span>{documents.length} / 50 projects</span>
+        <span>{documents.length} saved projects</span>
       </div>
       <p className="muted-note">
         Download .meridian.json projects for backups or to move between

@@ -11,6 +11,7 @@ import '../inspector.css';
 export interface InspectorProps {
   document: StudioDocument;
   result?: RenderResult | null;
+  selectionRevision?: number;
   selectedElement?: RenderElement | null;
   onDesign?: (design: DesignState) => void;
   onSelectElement?: (key: string | null) => void;
@@ -24,7 +25,7 @@ export interface InspectorProps {
   reducedMotion: boolean;
 }
 
-export function Inspector({ document, result, selectedElement, onDesign, onSelectElement, onSettings, onDocument, onEditHeading, selectedNode, onAccent, onClearSelection, onReplay, reducedMotion }: InspectorProps) {
+export function Inspector({ document, result, selectedElement, selectionRevision, onDesign, onSelectElement, onSettings, onDocument, onEditHeading, selectedNode, onAccent, onClearSelection, onReplay, reducedMotion }: InspectorProps) {
   const [scope, setScope] = useState<'diagram' | 'selected'>('diagram');
   const [filter, setFilter] = useState('');
   const scrollArea = useRef<HTMLDivElement>(null);
@@ -42,7 +43,7 @@ export function Inspector({ document, result, selectedElement, onDesign, onSelec
   const choices = selectedElement && !matches.some(item => item.key === selectedElement.key) ? [selectedElement, ...matches] : matches;
   useEffect(() => {
     setScope(selectedElement ? 'selected' : 'diagram');
-  }, [selectedElement?.key]);
+  }, [selectedElement?.key, selectionRevision]);
   useEffect(() => { setFilter(''); }, [document.id]);
   useLayoutEffect(() => { if (scrollArea.current) scrollArea.current.scrollTop = 0; }, [scope, selectedElement?.key]);
   const resetSelected = () => {
@@ -69,27 +70,6 @@ export function Inspector({ document, result, selectedElement, onDesign, onSelec
       </section>}
 
       {scope === 'selected' && selectedElement ? <ElementInspector key={selectedElement.key} document={document} element={selectedElement} selectedNode={selectedNode} onDesign={value => onDesign?.(value)} onAccent={onAccent} onReset={resetSelected} onClear={onClearSelection}/> : <>
-        <Disclosure title="Design presets" hint={preset ? `${preset.name}${presetModified ? ' · modified' : ' · coordinated style'}` : 'Choose a coordinated starting point'} className="mi-presets">
-          <div className="mi-preset-list">{DESIGN_PRESETS.map(item => <button key={item.id} type="button" className={`mi-preset${design.preset === item.id && !presetModified ? ' is-active' : ''}`} aria-pressed={design.preset === item.id && !presetModified} onClick={() => onDocument(applyDesignPreset(document, item.id))}>
-            <span className="mi-preset-swatch" style={{ background: getTheme(item.settings.theme ?? 'obsidian').canvas, color: getTheme(item.settings.theme ?? 'obsidian').accent }} aria-hidden="true"><span/><i/><span/></span><span><strong>{item.name}</strong><small>{design.preset === item.id && presetModified ? 'Base preset · reapply to restore its settings.' : item.description}</small></span>{design.preset === item.id && !presetModified && <Check size={13}/>}
-          </button>)}</div>
-          <p className="mi-note">Presets coordinate theme, layout, and effects. Your heading and individual element overrides stay in place.</p>
-        </Disclosure>
-
-        <section className="mi-section mi-theme-section" aria-labelledby="mi-theme-title"><h3 id="mi-theme-title">Theme</h3>
-          <div className="mi-theme-grid">{THEMES.map(item => <button key={item.id} type="button" className={`mi-theme-card${settings.theme === item.id ? ' is-active' : ''}`} aria-pressed={settings.theme === item.id} title={item.description} onClick={() => onSettings({ theme: item.id })}>
-            <span className="mi-theme-preview" style={{ backgroundColor: item.canvas }} aria-hidden="true"><span className="mi-theme-line" style={{ backgroundColor: item.edge }}/><span className="mi-theme-node mi-theme-node-first" style={{ background: `linear-gradient(135deg, ${item.node}, ${item.nodeEnd})`, borderColor: item.accent }}/><span className="mi-theme-node mi-theme-node-last" style={{ backgroundColor: item.node, borderColor: item.border }}/>{settings.theme === item.id && <span className="mi-theme-check" style={{ backgroundColor: item.accent, color: item.canvas }}><Check size={11} strokeWidth={3}/></span>}</span><span className="mi-theme-name">{item.name}</span>
-          </button>)}</div>
-          <Choice label="Typography" value={settings.font} options={[{ value: 'sans', label: 'Sans serif' }, { value: 'mono', label: 'Monospace' }]} onChange={font => onSettings({ font })}/>
-        </section>
-
-        <section className="mi-section" aria-labelledby="mi-motion-title"><div className="mi-section-heading"><h3 id="mi-motion-title"><Sparkles size={14} aria-hidden="true"/>Motion</h3><button className="mi-icon-button" type="button" aria-label="Replay diagram entrance" title="Replay entrance" onClick={onReplay}><RotateCcw size={14}/></button></div>
-          <Choice label="Connection effect" value={settings.motion} disabled={!hasConnectors} options={[{ value: 'none', label: 'Still' }, { value: 'flow', label: 'Flow' }, { value: 'pulse', label: 'Pulse' }]} onChange={motion => onSettings({ motion })}/>
-          {hasConnectors && settings.motion !== 'none' && <Range label="Speed" min={.25} max={3} step={.25} value={settings.speed} unit="×" onChange={speed => onSettings({ speed })}/>}
-          {!hasConnectors && <p className="mi-note">Connection effects are available on flowchart connectors.</p>}
-          {reducedMotion && <p className="mi-note">Reduced motion is enabled on this device. Animation stays paused.</p>}
-        </section>
-
         <Disclosure title="Connections & layout" hint="Automatic layout, spacing, and routes">
           {flowchart ? <>
             <button type="button" className="mi-auto-layout" onClick={() => onDocument({ settings: { ...settings, ...suggestedLayout(elements ?? []) }, design: { ...design, preset: 'custom' } })}><Sparkles size={15}/>Refine layout</button>
@@ -100,12 +80,6 @@ export function Inspector({ document, result, selectedElement, onDesign, onSelec
             {settings.layout === 'elk' && <p className="mi-note">ELK sets routes and spacing automatically. Choose Dagre to adjust them.</p>}
             <Range label="Line weight" min={.8} max={5} step={.1} value={settings.edgeWidth} unit="px" onChange={edgeWidth => onSettings({ edgeWidth })}/>
           </> : <p className="mi-note">This diagram uses its native layout. Theme, typography, canvas, and export controls still apply.</p>}
-        </Disclosure>
-
-        <Disclosure title="Surfaces & effects" hint="Node finish, shadow, and glow">
-          <Choice label="Node finish" value={settings.finish} options={[{ value: 'solid', label: 'Solid' }, { value: 'gradient', label: 'Gradient' }]} onChange={finish => onSettings({ finish })}/>
-          <Switch label="Soft shadows" checked={settings.shadow} onChange={shadow => onSettings({ shadow })}/>
-          <Switch label="Accent glow" checked={settings.glow} onChange={glow => onSettings({ glow })}/>
         </Disclosure>
 
         <Disclosure title="Canvas & frame" hint="Heading, background, and export proportions">
@@ -119,6 +93,34 @@ export function Inspector({ document, result, selectedElement, onDesign, onSelec
           <Range label="Frame padding" min={16} max={120} step={4} value={settings.padding} unit="px" onChange={padding => onSettings({ padding })}/>
           <Switch label="Meridian signature" hint="A small credit below the diagram." checked={settings.showBrand} onChange={showBrand => onSettings({ showBrand })}/>
         </Disclosure>
+        <section className="mi-section mi-theme-section" aria-labelledby="mi-theme-title"><h3 id="mi-theme-title">Theme</h3>
+          <div className="mi-theme-grid">{THEMES.map(item => <button key={item.id} type="button" className={`mi-theme-card${settings.theme === item.id ? ' is-active' : ''}`} aria-pressed={settings.theme === item.id} title={item.description} onClick={() => onSettings({ theme: item.id })}>
+            <span className="mi-theme-preview" style={{ backgroundColor: item.canvas }} aria-hidden="true"><span className="mi-theme-line" style={{ backgroundColor: item.edge }}/><span className="mi-theme-node mi-theme-node-first" style={{ background: `linear-gradient(135deg, ${item.node}, ${item.nodeEnd})`, borderColor: item.accent }}/><span className="mi-theme-node mi-theme-node-last" style={{ backgroundColor: item.node, borderColor: item.border }}/>{settings.theme === item.id && <span className="mi-theme-check" style={{ backgroundColor: item.accent, color: item.canvas }}><Check size={11} strokeWidth={3}/></span>}</span><span className="mi-theme-name">{item.name}</span>
+          </button>)}</div>
+          <Choice label="Typography" value={settings.font} options={[{ value: 'sans', label: 'Sans serif' }, { value: 'mono', label: 'Monospace' }]} onChange={font => onSettings({ font })}/>
+        </section>
+
+        <Disclosure title="Design presets" hint={preset ? `${preset.name}${presetModified ? ' · modified' : ' · coordinated style'}` : 'Choose a coordinated starting point'} className="mi-presets">
+          <div className="mi-preset-list">{DESIGN_PRESETS.map(item => <button key={item.id} type="button" className={`mi-preset${design.preset === item.id && !presetModified ? ' is-active' : ''}`} aria-pressed={design.preset === item.id && !presetModified} onClick={() => onDocument(applyDesignPreset(document, item.id))}>
+            <span className="mi-preset-swatch" style={{ background: getTheme(item.settings.theme ?? 'obsidian').canvas, color: getTheme(item.settings.theme ?? 'obsidian').accent }} aria-hidden="true"><span/><i/><span/></span><span><strong>{item.name}</strong><small>{design.preset === item.id && presetModified ? 'Base preset · reapply to restore its settings.' : item.description}</small></span>{design.preset === item.id && !presetModified && <Check size={13}/>}
+          </button>)}</div>
+          <p className="mi-note">Presets coordinate theme, layout, and effects. Your heading and individual element overrides stay in place.</p>
+        </Disclosure>
+
+        <Disclosure title="Surfaces & effects" hint="Node finish, shadow, and glow">
+          <Choice label="Node finish" value={settings.finish} options={[{ value: 'solid', label: 'Solid' }, { value: 'gradient', label: 'Gradient' }]} onChange={finish => onSettings({ finish })}/>
+          <Switch label="Soft shadows" checked={settings.shadow} onChange={shadow => onSettings({ shadow })}/>
+          <Switch label="Accent glow" checked={settings.glow} onChange={glow => onSettings({ glow })}/>
+        </Disclosure>
+
+        <section className="mi-section" aria-labelledby="mi-motion-title"><div className="mi-section-heading"><h3 id="mi-motion-title"><Sparkles size={14} aria-hidden="true"/>Motion</h3><button className="mi-icon-button" type="button" aria-label="Replay diagram entrance" title="Replay entrance" onClick={onReplay}><RotateCcw size={14}/></button></div>
+          <Choice label="Connection effect" value={settings.motion} disabled={!hasConnectors} options={[{ value: 'none', label: 'Still' }, { value: 'flow', label: 'Flow' }, { value: 'pulse', label: 'Pulse' }]} onChange={motion => onSettings({ motion })}/>
+          {hasConnectors && settings.motion !== 'none' && <Range label="Speed" min={.25} max={3} step={.25} value={settings.speed} unit="×" onChange={speed => onSettings({ speed })}/>}
+          {(result?.edgeCount ?? 0) > 150 && <p className="mi-note">Highlighted connectors get priority within the 150-connector motion limit. Choose Connector flow in a scene to animate specific paths during playback.</p>}
+          {!hasConnectors && <p className="mi-note">Connection effects are available on flowchart connectors.</p>}
+          {reducedMotion && <p className="mi-note">Reduced motion is enabled on this device. Animation stays paused.</p>}
+        </section>
+
         <div className="mi-inspector-footer"><MousePointer2 size={14} aria-hidden="true"/><span>Select a node, connector, or group on the canvas for individual styling.</span></div>
       </>}
     </div>

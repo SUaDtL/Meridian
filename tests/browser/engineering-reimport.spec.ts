@@ -42,6 +42,7 @@ for (const fixture of fixtures) {
       await wizard.getByRole('button', { name: fixture.preview }).click();
       await expect(wizard.getByRole('img', { name: fixture.proposed })).toBeVisible();
       await wizard.getByRole('button', { name: fixture.create }).click();
+      await page.getByRole('button', { name: 'Authoring tools' }).click();
       const live = page.getByRole('dialog', { name: fixture.title });
       await expect(live.getByRole('img', { name: `Diagram preview for ${fixture.title}` })).toBeVisible();
       return live;
@@ -64,9 +65,8 @@ for (const fixture of fixtures) {
     const edited = page.getByRole('dialog', { name: editedTitle });
     const authored = await download(page, edited);
     expect(JSON.parse(authored)).toMatchObject({ source: initial.source + note, revision: initial.revision + 2 });
-    await edited.getByRole('button', { name: 'Back to v3 projects' }).click();
-    const library = page.getByRole('dialog', { name: 'Project migration and recovery' });
-    await library.getByRole('button', { name: 'Close dialog' }).click();
+    await edited.getByRole('button', { name: 'Back to projects' }).click();
+    const library = page.getByRole('dialog', { name: 'Your projects' });
     await page.getByRole('dialog', { name: 'Your projects' }).getByRole('button', { name: 'Close dialog' }).click();
 
     const updated = await importProject(fixture.second);
@@ -77,8 +77,9 @@ for (const fixture of fixtures) {
     expect(fresh.source).not.toContain(fixture.first);
     expect(fresh.source).not.toContain(note);
     expect(fresh.provenance).toContainEqual(expect.objectContaining({ virtualPath: 'reimport.json', pointer: fixture.provenance }));
-    await updated.getByRole('button', { name: 'Back to v3 projects' }).click();
-    await library.getByRole('button', { name: `Open v3 project ${editedTitle}` }).click();
+    await updated.getByRole('button', { name: 'Back to projects' }).click();
+    await library.getByRole('button', { name: new RegExp(editedTitle) }).click();
+    await page.getByRole('button', { name: 'Authoring tools' }).click();
     expect(await download(page, edited)).toBe(authored);
   });
 }

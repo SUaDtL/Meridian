@@ -29,7 +29,7 @@ export function searchCommands(commands: readonly WorkspaceCommand[], query: str
 }
 
 function compareCommand(a: WorkspaceCommand, b: WorkspaceCommand) {
-  return a.category.localeCompare(b.category, 'en') || a.title.localeCompare(b.title, 'en') || a.id.localeCompare(b.id, 'en');
+  return Number(a.category === 'Advanced') - Number(b.category === 'Advanced') || a.category.localeCompare(b.category, 'en') || a.title.localeCompare(b.title, 'en') || a.id.localeCompare(b.id, 'en');
 }
 
 export function recentCommands(): string[] {

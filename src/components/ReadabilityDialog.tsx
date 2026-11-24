@@ -260,7 +260,14 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
       {cancelled && <p role="status">Readability work cancelled.</p>}
       {error && <p role="alert">{error}</p>}
       {result && <section aria-label="Readability results" aria-busy={busy}>
-        <h3>Coverage</h3>
+        <h3>Readability at this size</h3>
+        {Object.entries(checkNames).map(([rule, label]) => {
+          const count = findings.filter(item => item.finding.rule === rule && !dismissed.has(item.key)).length;
+          if (rule === "QC-03" && count) return <div key={rule}><p><strong>{count} {count === 1 ? "label is" : "labels are"} smaller than 14 px at this output size.</strong></p>
+            <button type="button" className="button secondary" disabled={busy} onClick={onCompareLayouts}>Compare orientation and spacing</button></div>;
+          return count ? <p key={rule}><strong>{label}</strong> · {count} {count === 1 ? "finding" : "findings"}</p> : null;
+        })}
+        <details><summary>Measurement coverage</summary>
         <ul>{result.report.coverage.map(item => <li key={item.rule}>{checkNames[item.rule]} · {item.measured} measured · {item.unknown} unknown · {item.inapplicable} not applicable</li>)}</ul>
         <p>Text contrast requires a verified solid backdrop. Gradients and unverified overlaps appear as unknown.</p>
         {!!targets.some(item => item.kind === "edge") && <p>
@@ -276,6 +283,7 @@ export default function ReadabilityDialog({ frame, targets, token, editor, canva
           {result.report.crossings.skipped > 0 && <> {result.report.crossings.skipped.toLocaleString()} segment pairs skipped.</>}
           {result.report.crossings.findingsOmitted && <> Additional crossing findings exceed the display limit.</>}
         </p>}
+        </details>
         <h3>Findings</h3>
         <p ref={summary} tabIndex={-1} role="status">{findings.length - hiddenCount} {findings.length - hiddenCount === 1 ? "finding" : "findings"} from the checks above.
           {hiddenCount ? ` ${hiddenCount} ignored this session.` : ""}</p>

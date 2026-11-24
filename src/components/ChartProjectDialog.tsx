@@ -17,6 +17,7 @@ import { discardGuidedCheckpoint } from "../lib/persistence/guided-drafts";
 import type { ProjectSaveState } from "../lib/persistence/project-save-queue";
 import { listWorkspaceProjectIds, openWorkspaceDatabase, readWorkspaceProject, writeWorkspaceProject } from "../lib/persistence/workspace-db";
 import { downloadText, MAX_PROJECT_FILE_BYTES, safeFilename } from "../lib/storage";
+import { cacheThumbnail } from "../lib/persistence/project-thumbnail";
 import "./chart.css";
 
 type Accepted = ReturnType<typeof validateChartProject>;
@@ -61,14 +62,15 @@ function ConversionSummary({ dataset, counts }: {
   </section>;
 }
 
-export default function ChartProjectDialog({ onBack, onClose, fromProjects = false }: {
-  onBack: () => void; onClose: () => void; fromProjects?: boolean;
+export default function ChartProjectDialog({ onBack, onClose, onOpened, initialId, fromProjects = false }: {
+  onBack: () => void; onClose: () => void; onOpened: (id: string) => void; fromProjects?: boolean; initialId?: string;
 }) {
   const [stage, setStage] = useState<Stage>("choose");
   const [projects, setProjects] = useState<{ id: string; title: string }[]>([]);
   const [drafts, setDrafts] = useState<ChartCheckpoint[]>([]);
   const [checkpoint, setCheckpoint] = useState<ChartCheckpoint>();
   const [format, setFormat] = useState<ChartInputFormat>(",");
+  const [paste, setPaste] = useState("");
   const [file, setFile] = useState<File>();
   const [raw, setRaw] = useState<ChartInput>();
   const [columns, setColumns] = useState<ColumnConfirmation[]>([]);
@@ -129,6 +131,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
         if (current) {
           setProjects(entries.flatMap(entry => entry ? [{ id: entry.id, title: entry.document.title }] : []));
           setDrafts(available);
+          if (initialId) openSaved(initialId);
         }
       } finally {
         db.close();
@@ -136,6 +139,14 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     })().catch(reason => { if (current) setError(reason instanceof Error ? reason.message : "Saved charts could not be loaded."); });
     return () => { current = false; };
   }, []);
+
+  useEffect(() => {
+    if (stage !== "workspace" || !candidate || !svg.current) return;
+    const controller = new AbortController();
+    void cacheThumbnail("chart/" + candidate.project.id, candidate.project.updatedAt,
+      new XMLSerializer().serializeToString(svg.current), controller.signal).catch(() => {});
+    return () => controller.abort();
+  }, [stage, candidate]);
 
   function resetNotice() { setError(""); setStatus(""); setRetry(undefined); }
 
@@ -160,18 +171,21 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
   function chooseFile(event: ChangeEvent<HTMLInputElement>) {
     const selected = event.currentTarget.files?.[0];
     setFile(selected);
+    if (selected) setPaste("");
     resetNotice();
     if (selected && (/\.(json|tsv)$/i).test(selected.name)) setFormat(selected.name.toLowerCase().endsWith(".json") ? "json" : "\t");
   }
 
   function readData() {
-    if (!file) return;
+    const input = file ?? new Blob([paste]);
+    if (!input.size) return;
     void perform({ label: "Reading chart data", async run(signal, extended) {
-      if (file.size > chartDataLimits.bytes) throw new Error("Choose a file no larger than 2,000,000 bytes.");
-      const bytes = await file.arrayBuffer();
+      if (input.size > chartDataLimits.bytes) throw new Error("Choose a file no larger than 2,000,000 bytes.");
+      const bytes = await input.arrayBuffer();
       const data = await runAuthoringWorker<ChartInput>(() => new Worker(), { action: "read", bytes, format }, signal, "Reading the data", extended);
       signal.throwIfAborted();
       setFile(undefined);
+      setPaste("");
       setRaw(data);
       setColumns(data.headings.map(name => ({ name, type: "string", unit: "", emptyIsNull: false })));
       setExcludedColumns(new Set());
@@ -246,16 +260,17 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     previous?.editor.dispose();
     if (previous && previous.db !== db) previous.db.close();
     chartSession.current = { db, editor };
+    onOpened(id);
     setSaveState(editor.saveState());
     setCandidate(editor.snapshot());
     setStage("workspace");
   }
 
-  async function saveAccepted(accepted: Accepted, signal: AbortSignal) {
+  async function saveAccepted(accepted: Accepted, signal: AbortSignal, imported = false) {
     const db = await openWorkspaceDatabase();
     try {
       signal.throwIfAborted();
-      await writeWorkspaceProject(db, accepted.project, null);
+      await writeWorkspaceProject(db, accepted.project, null, undefined, imported ? { kind: "import" } : undefined);
       await startSession(db, accepted.project.id, signal);
     } catch (reason) {
       db.close();
@@ -345,6 +360,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
     } });
   }
 
+
   function editSaved() {
     const current = chartSession.current?.editor.snapshot().project;
     if (!current) return;
@@ -420,7 +436,7 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
       signal.throwIfAborted();
       const imported = parseChartProject(text);
       const project = { ...imported.project, id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString() };
-      await saveAccepted({ ...imported, project }, signal);
+      await saveAccepted({ ...imported, project }, signal, true);
     } });
   }
 
@@ -460,13 +476,14 @@ export default function ChartProjectDialog({ onBack, onClose, fromProjects = fal
         </li>)}
       </ul>}
       <form className="heading-form" onSubmit={event => { event.preventDefault(); readData(); }}>
+        <label>Paste chart data<textarea rows={4} value={paste} disabled={!!busy} onChange={event => { setPaste(event.target.value); setFile(undefined); }} /></label>
         <label>Chart data file<input type="file" accept=".csv,.txt,.tsv,.json,text/plain,text/csv,application/json" disabled={!!busy} onChange={chooseFile} /></label>
         <label>Data format<select value={format} disabled={!!busy} onChange={event => { setFormat(event.target.value as ChartInputFormat); resetNotice(); }}>
           <option value=",">Comma-separated</option><option value="\t">Tab-separated</option><option value=";">Semicolon-separated</option><option value="json">JSON records</option>
         </select></label>
         <div className="dialog-actions">
           <button className="button quiet" type="button" disabled={!!busy} onClick={onBack}>Back</button>
-          <button className="button primary" disabled={!file || !!busy}>Read data</button>
+          <button className="button primary" disabled={(!file && !paste.trim()) || !!busy}>Read data</button>
         </div>
       </form>
       <label className="chart-import">Import a Meridian chart project<input type="file" accept=".json,application/json" disabled={!!busy} onChange={importSaved} /></label>

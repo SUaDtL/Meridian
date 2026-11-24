@@ -65,6 +65,7 @@ test('keeps duplicate systems distinct, resumes explicit directions, and creates
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: info.outputPath('systems-review-mobile.png') });
   await dialog.getByRole('button', { name: 'Create systems project' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const live = page.getByRole('dialog', { name: 'Reviewed system map' });
   await expect(live.getByRole('img', { name: 'Diagram preview for Reviewed system map' })).toBeVisible();
   const project = await downloadProject(page, live);

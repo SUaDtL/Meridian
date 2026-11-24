@@ -1,0 +1,195 @@
+import { readFile } from 'node:fs/promises';
+import { expect, test } from '@playwright/test';
+import { createDocument, STORAGE_KEY } from '../../src/lib/storage';
+
+test('a connection list opens in the studio, survives reload and retains labels through export and reimport', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Systems and relationships' }).click();
+  const importer = page.getByRole('dialog', { name: 'Systems and relationships' });
+  await importer.getByLabel('Project title').fill('Review loop');
+  await importer.getByLabel('Paste a relationship table').fill('source,target,label\nIntake,Review,submit\nReview,Publish,approve\nReview,Intake,revise');
+  await importer.getByRole('button', { name: 'Read table' }).click();
+  await expect(importer.getByLabel('Table mode')).toHaveValue('edges');
+  await importer.getByRole('button', { name: 'Preview relationships' }).click();
+  await expect(importer.getByText(/3 systems · 3 relationships/)).toBeVisible();
+  await importer.getByRole('button', { name: 'Create systems diagram' }).click();
+  await expect(page.getByTestId('rendered-diagram')).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const projects = page.getByRole('dialog', { name: 'Your projects' });
+  await projects.getByLabel('Search projects').fill('review loop');
+  await projects.getByRole('button', { name: /Review loop/ }).click();
+  await expect(page.getByTestId('rendered-diagram')).toBeVisible();
+  await page.getByRole('button', { name: 'Edit Mermaid source', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit Mermaid source' });
+  const code = editor.locator('.cm-content');
+  await code.press('Control+End');
+  await page.keyboard.insertText('\n' + Array.from({ length: 100 }, (_, i) => '  N' + i + '[Step ' + i + ']').join('\n') + '\n  Broken[Missing');
+  const preview = editor.getByRole('button', { name: 'Preview source' });
+  await preview.click();
+  await expect(editor.getByRole('alert')).toBeVisible();
+  const contained = await editor.locator('.v3-source-draft').evaluate(el => {
+    const frame = el.getBoundingClientRect(), scroller = el.querySelector('.cm-scroller')!.getBoundingClientRect();
+    return scroller.bottom <= frame.bottom + 1 && scroller.top >= frame.top - 1;
+  });
+  expect(contained).toBe(true);
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Take your diagram with you.' });
+  await dialog.getByRole('button', { name: /SVG Scalable/ }).click();
+  await dialog.getByLabel('Output target').selectOption('slide');
+  const img = dialog.getByAltText('Preview of the export frame');
+  await expect.poll(() => img.evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth > 0)).toBeTruthy();
+  const dimensions = await img.evaluate((node: HTMLImageElement) => [node.naturalWidth, node.naturalHeight]);
+  const pending = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: /Download SVG/i }).click();
+  const svg = await readFile((await (await pending).path())!, 'utf8');
+  const proof = await img.evaluate(async (preview: HTMLImageElement, svg) => {
+    const exported = new Image();
+    exported.src = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    await exported.decode();
+    const signature = (image: HTMLImageElement) => {
+      const canvas = document.createElement('canvas'); canvas.width = 480; canvas.height = 270;
+      canvas.getContext('2d')!.drawImage(image, 0, 0, 480, 270);
+      return canvas.toDataURL();
+    };
+    const match = signature(exported) === signature(preview);
+    URL.revokeObjectURL(exported.src);
+    return { match, size: [exported.naturalWidth, exported.naturalHeight] };
+  }, svg);
+  expect(proof).toEqual({ match: true, size: dimensions });
+  await dialog.getByRole('button', { name: /Project Editable/ }).click();
+  const portable = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: /Download project/i }).click();
+  const path = (await (await portable).path())!;
+  const file = await readFile(path);
+  const doc = JSON.parse(file.toString());
+  expect(doc.identity.elements.filter((item: {elementKind: string}) => item.elementKind === 'node')).toHaveLength(3);
+  expect(doc.source).toContain('revise');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByLabel('Import project file').setInputFiles({ name: 'copy.json', mimeType: 'application/json', buffer: file });
+  await expect(page.getByTestId('rendered-diagram')).toBeVisible();
+  await page.getByRole('button', { name: 'Open projects' }).click();
+  await expect(projects.getByText('Review loop (imported)', { exact: true })).toBeVisible();
+});
+
+test('search focuses a readable node on a 200-node graph and restores the previous camera and panel width', async ({ page }) => {
+  const project = { ...createDocument(), title: 'Navigation', source: 'flowchart LR\n' +
+    Array.from({ length: 200 }, (_, i) => '  N' + i + '[Service ' + i + ']').join('\n') + '\n' +
+    Array.from({ length: 199 }, (_, i) => '  N' + i + ' --> N' + (i + 1)).join('\n') };
+  await page.goto('/');
+  await page.evaluate(({ project, key }) => localStorage.setItem(key, JSON.stringify({ version: 2, documents: [project], activeId: project.id })), { project, key: STORAGE_KEY });
+  await page.reload(); await page.getByRole('button', { name: 'Continue project: Navigation' }).click();
+  await expect(page.getByTestId('rendered-diagram')).toBeVisible();
+  const splitter = page.getByRole('separator', { name: 'Resize source panel' });
+  const before = Number(await splitter.getAttribute('aria-valuenow'));
+  await splitter.press('ArrowLeft');
+  const saved = String(before - 16);
+  await expect(splitter).toHaveAttribute('aria-valuenow', saved);
+  const zoom = page.locator('.zoom-value');
+  const initial = await zoom.textContent();
+  await page.getByRole('searchbox', { name: 'Find an element' }).fill('Service 199');
+  await page.getByLabel('Inspect an element').selectOption('node:N199');
+  await expect(page.getByRole('group', { name: 'Style scope' }).getByRole('button', { name: 'Selected' })).toHaveAttribute('aria-pressed','true');
+  const last = page.getByTestId('rendered-diagram').locator('[data-element-key="node:N199"]');
+  await expect.poll(async () => (await last.boundingBox())!.width).toBeGreaterThan(80);
+  await expect(last).toBeInViewport();
+  await page.getByRole('button', { name: 'Previous view' }).click();
+  await expect(zoom).toHaveText(initial!);
+  await page.reload(); await page.getByRole('button', { name: 'Continue project: Navigation' }).click();
+  await expect(splitter).toHaveAttribute('aria-valuenow', saved);
+});
+
+test('a scene from a selected neighborhood supports private presenter notes and manual advance', async ({ page }) => {
+  const project = { ...createDocument(), title: 'Briefing', source: 'flowchart LR\n A[Arrival] --> B[Review]\n B --> C[Release]' };
+  await page.addInitScript(({ project, key }) => {
+    if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 2, documents: [project], activeId: project.id }));
+  }, { project, key: STORAGE_KEY });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Continue project: Briefing' }).click();
+  await page.getByLabel('Inspect an element').selectOption('node:B');
+  await page.getByRole('button', { name: 'Storyboard', exact: true }).click();
+  const story = page.getByRole('region', { name: 'Presentation storyboard' });
+  await story.getByRole('button', { name: 'Scene from selected neighborhood' }).click();
+  await story.getByLabel('Presenter notes').fill('Private rehearsal note');
+  await story.getByRole('button', { name: 'Add scene', exact: true }).click();
+  await page.getByLabel('Presentation advance').selectOption('manual');
+  await page.getByRole('button', { name: 'Present', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Play presentation' })).toBeVisible();
+  const opened = page.waitForEvent('popup');
+  await page.getByRole('button', { name: 'Presenter view' }).click();
+  const notes = await opened;
+  await expect(notes.getByText('Private rehearsal note')).toBeVisible();
+  await expect(page.getByText('Private rehearsal note', { exact: true })).toHaveCount(0);
+  await notes.getByRole('button', { name: 'Next scene' }).click();
+  await expect(notes.getByText('Scene 2 of 2')).toBeVisible();
+  await page.getByRole('button', { name: 'Audience view' }).click();
+  await expect(page.locator('.presentation-controls')).toBeHidden();
+  await page.keyboard.press('h');
+  await page.getByRole('button', { name: /Exit.*Esc/ }).click();
+  await expect.poll(() => notes.isClosed()).toBe(true);
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: /^HTML/ }).click();
+  const pending = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'Download HTML' }).click();
+  const html = await readFile((await (await pending).path())!, 'utf8');
+  expect(html).not.toContain('Private rehearsal note');
+});
+
+test('a named checkpoint restores the heading and can be undone', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Browse examples' }).click();
+  await page.locator('.example-card').filter({ has: page.getByRole('heading', { name: 'Edge to cloud', exact: true }) }).click();
+  const title = page.getByRole('button', { name: 'Edit diagram title', exact: true });
+  const original = await title.textContent();
+  const dialog = page.getByRole('dialog', { name: 'Named checkpoints' });
+  const open = async () => {
+    await page.getByRole('button', { name: 'Commands', exact: true }).click();
+    const search = page.getByRole('combobox', { name: 'Search commands' });
+    await search.fill('Named checkpoints'); await search.press('Enter');
+  };
+  await open();
+  await dialog.getByLabel('Checkpoint name').fill('Before briefing');
+  await dialog.getByRole('button', { name: 'Save checkpoint' }).click();
+  await expect(dialog.getByText('Before briefing')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await title.click();
+  const heading = page.getByRole('dialog', { name: 'Edit heading' });
+  await heading.getByRole('textbox', { name: /^Title/ }).fill('Revised briefing');
+  await heading.getByRole('button', { name: 'Apply heading' }).click();
+  await expect(title).toHaveText('Revised briefing');
+  await open();
+  await dialog.getByRole('button', { name: 'Restore checkpoint' }).click();
+  await expect(title).toHaveText(original!);
+  await page.keyboard.press('Control+z');
+  await expect(title).toHaveText('Revised briefing');
+});
+
+test('pasted chart data makes a chart that opens from the ordinary project manager', async ({ page }) => {
+  const previous = createDocument();
+  await page.addInitScript(({ key, previous }) => {
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, JSON.stringify({ version: 2, activeId: previous.id, documents: [previous] }));
+    localStorage.setItem('meridian:last-opened', previous.id);
+  }, { key: STORAGE_KEY, previous });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build with guidance' }).click();
+  await page.getByRole('button', { name: 'Chart values' }).click();
+  const chart = page.getByRole('dialog', { name: 'Chart values' });
+  await chart.getByLabel('Paste chart data').fill('Team,Requests\nIntake,14\nReview,25');
+  await chart.getByRole('button', { name: 'Read data' }).click();
+  await chart.getByRole('group', { name: 'Requests', exact: true }).getByLabel('Type').selectOption('number');
+  await chart.getByRole('button', { name: 'Confirm columns' }).click();
+  await chart.getByLabel('Title', { exact: true }).fill('Requests by team');
+  await chart.getByRole('button', { name: 'Review chart' }).click();
+  await expect(chart.getByRole('img', { name: 'Requests by team' })).toBeVisible();
+  await chart.getByRole('button', { name: 'Create chart project' }).click();
+  await expect(chart.getByRole('button', { name: 'Download chart project' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Continue project: Requests by team' })).toBeVisible();
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('dialog', { name: 'Your projects' }).getByRole('button', { name: /Requests by team/ }).click();
+  await expect(page.getByRole('table', { name: 'Displayed values' }).getByText('25', { exact: true })).toBeVisible();
+});

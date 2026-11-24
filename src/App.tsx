@@ -3,11 +3,13 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
 } from "react";
 import { CircleAlert, LoaderCircle } from "lucide-react";
+import { listStoredProjects, studioListItem, type ProjectListItem } from "./lib/persistence/project-inventory";
 import Home, { StartChoices } from "./components/Home";
 import Modal from "./components/Modal";
 import WorkspaceBoundary from "./components/WorkspaceBoundary";
@@ -29,6 +31,7 @@ import {
 } from "./lib/storage";
 import type { DiagramTemplate, StudioDocument } from "./types";
 
+const V3ProjectSession = lazy(() => import("./components/V3ProjectSession"));
 const Studio = lazy(() => import("./Studio"));
 const ExampleGallery = lazy(() => import("./components/ExampleGallery"));
 const ProjectManager = lazy(() => import("./components/ProjectManager"));
@@ -52,12 +55,44 @@ export type Notify = (
 
 export default function App() {
   const workspace = useWorkspace();
-  const [screen, setScreen] = useState<"home" | "studio">("home");
+  const [screen, setScreen] = useState<"home" | "studio" | "author">("home");
   const [dialog, setDialog] = useState<Dialog>(null);
   const [guidedDraft, setGuidedDraft] = useState<GuidedProcessDraft>({ title: "", text: "" });
   const [guidedSystems, setGuidedSystems] = useState(emptySystemsSession);
   const [relationshipTable, setRelationshipTable] = useState(emptyRelationshipTable);
-  const [requestedV3Project, setRequestedV3Project] = useState<string>();
+  const [author, setAuthor] = useState<{ id: string; command?: string }>();
+  const upgrading = useRef(false);
+  const [savedProjects, setSavedProjects] = useState<ProjectListItem[]>([]);
+  const [inventoryError, setInventoryError] = useState("");
+  const [inventoryReady, setInventoryReady] = useState(false);
+  const [lastOpened, setLastOpened] = useState<string | null>(() => {
+    try { return localStorage.getItem("meridian:last-opened"); } catch { return null; }
+  });
+  const rememberOpened = useCallback((id: string) => {
+    setLastOpened(id);
+    try { localStorage.setItem("meridian:last-opened", id); } catch { /* session only */ }
+  }, []);
+  const [chartId, setChartId] = useState<string>();
+  useEffect(() => {
+    if (dialog !== "projects" && (dialog || screen !== "home")) return;
+    let active = true;
+    const refresh = () => listStoredProjects().then(items => {
+      if (active) { setSavedProjects(items); setInventoryError(""); setInventoryReady(true); }
+    }).catch(() => { if (active) { setInventoryError("Some saved projects could not be listed. Reopen Projects to retry."); setInventoryReady(true); } });
+    void refresh();
+    window.addEventListener("focus", refresh);
+    return () => { active = false; window.removeEventListener("focus", refresh); };
+  }, [dialog, screen]);
+  const inventory = useMemo(() => {
+    const converted = new Map(savedProjects.flatMap(({ origin }) => origin?.kind === "upgrade" ? [[origin.sourceId, origin.updatedAt] as const] : []));
+    return [...workspace.documents.filter(doc => converted.get(doc.id) !== doc.updatedAt).map(studioListItem), ...savedProjects];
+  }, [workspace.documents, savedProjects]);
+  const openAuthor = useCallback((id: string, command?: string) => {
+    rememberOpened("mermaid/" + id);
+    setAuthor({ id, command });
+    setScreen("author");
+    setDialog(null);
+  }, []);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [openModals, setOpenModals] = useState(0);
   const dismissNotice = useCallback(() => setNotice(null), []);
@@ -83,6 +118,9 @@ export default function App() {
   }, [notice]);
 
   const open = useCallback((id: string) => {
+    rememberOpened(id);
+    if (id.startsWith("mermaid/")) { openAuthor(id.slice(8)); return; }
+    if (id.startsWith("chart/")) { setChartId(id.slice(6)); setDialog("saved-charts"); return; }
     workspaceRef.current.open(id);
     setScreen("studio");
     setDialog(null);
@@ -96,7 +134,6 @@ export default function App() {
   const showProjects = useCallback(() => setDialog("projects"), []);
   const showMigration = useCallback(() => {
     workspaceRef.current.flush();
-    setRequestedV3Project(undefined);
     setDialog("migration");
   }, []);
   const showNew = useCallback(() => setDialog("new"), []);
@@ -114,6 +151,7 @@ export default function App() {
         return false;
       }
       workspaceRef.current.add(project);
+      rememberOpened(project.id);
       setScreen("studio");
       setDialog(null);
       return true;
@@ -189,8 +227,26 @@ export default function App() {
         throw new Error("Choose a project or Mermaid file smaller than 2 MB.");
       const text = await file.text();
       let project: StudioDocument;
-      if (file.name.toLowerCase().endsWith(".json"))
+      if (file.name.toLowerCase().endsWith(".json")) {
+        const schema = JSON.parse(text)?.schema;
+        if (schema === "meridian/v3" || schema === "meridian-chart/v1") {
+          const { openWorkspaceDatabase, importWorkspaceProject, writeWorkspaceProject } = await import("./lib/persistence/workspace-db");
+          const db = await openWorkspaceDatabase();
+          try {
+            if (schema === "meridian/v3") {
+              openAuthor((await importWorkspaceProject(db, text)).id);
+            } else {
+              const { parseChartProject } = await import("./lib/authoring/chart-project");
+              const original = parseChartProject(text).project;
+              const chart = { ...original, id: crypto.randomUUID(), revision: 0, updatedAt: new Date().toISOString() };
+              await writeWorkspaceProject(db, chart, null, undefined, { kind: "import" });
+              open("chart/" + chart.id);
+            }
+          } finally { db.close(); }
+          return;
+        }
         project = parseProject(text);
+      }
       else {
         const source = normalizeSource(text);
         if (source.length > 100_000)
@@ -203,14 +259,11 @@ export default function App() {
             "Imported diagram",
         };
       }
-      if (
-        addProject({
-          ...project,
-          id: createDocument().id,
-          updatedAt: new Date().toISOString(),
-        })
-      )
+      const id = createDocument().id;
+      if (addProject({ ...project, id, updatedAt: new Date().toISOString() })) {
+        try { localStorage.setItem("meridian:import/" + id, "1"); } catch { /* optional list annotation */ }
         notify(`Imported ${project.title || "Untitled diagram"}.`);
+      }
     } catch (reason) {
       notify(
         reason instanceof Error
@@ -222,6 +275,30 @@ export default function App() {
       setImporting(false);
     }
   };
+
+  async function upgradeForAuthoring(command: string) {
+    if (upgrading.current) return;
+    const doc = workspaceRef.current.document;
+    if (!doc) return;
+    upgrading.current = true;
+    setImporting(true);
+    try {
+      workspaceRef.current.flush();
+      const existing = savedProjects.find(({ origin }) => origin?.kind === "upgrade" && origin.sourceId === doc.id && origin.updatedAt === doc.updatedAt);
+      if (existing) { openAuthor(existing.id.slice(8), command); return; }
+      const { inspectLegacyProject } = await import("./lib/authoring/migrate-legacy-project");
+      const next = await inspectLegacyProject(doc);
+      if (next.status !== "migrated") throw new Error("This diagram could not be prepared for structured editing. Check the source and try again.");
+      if (workspaceRef.current.document !== doc) throw new Error("The diagram changed. Run the command again.");
+      const { openWorkspaceDatabase, saveWorkspaceProjectCopy } = await import("./lib/persistence/workspace-db");
+      const db = await openWorkspaceDatabase();
+      try {
+        const stored = await saveWorkspaceProjectCopy(db, next.document, { kind: "upgrade", sourceId: doc.id, updatedAt: doc.updatedAt });
+        openAuthor(stored.id, command);
+      } finally { db.close(); }
+    } catch (reason) { notify(reason instanceof Error ? reason.message : "The project could not be opened.", "error"); }
+    finally { upgrading.current = false; setImporting(false); }
+  }
 
   const backupWorkspace = () => {
     try {
@@ -296,7 +373,11 @@ export default function App() {
               )}
             </div>
           )}
-          {screen === "studio" && workspace.document ? (
+          {screen === "author" && author ? <Suspense fallback={<div className="app-loading" role="status">Opening your studio…</div>}>
+            <V3ProjectSession key={author.id} id={author.id} initialCommand={author.command} onOpenCopy={openAuthor}
+              onBack={() => { setScreen("home"); showProjects(); }} navigation={{ notify, onHome: goHome, onNew: showNew,
+                onGuide: showGuide, onExamples: showExamples, onImport: importClick, onProjects: showProjects }} />
+          </Suspense> : screen === "studio" && workspace.document ? (
             <Suspense
               fallback={
                 <div className="app-loading" role="status">
@@ -313,6 +394,7 @@ export default function App() {
                 key={workspace.document.id}
                 document={workspace.document}
                 workspace={workspace}
+                onAuthoring={upgradeForAuthoring}
                 notify={notify}
                 onHome={goHome}
                 onNew={showNew}
@@ -325,8 +407,9 @@ export default function App() {
             </Suspense>
           ) : (
             <Home
-              documents={workspace.documents}
-              activeId={workspace.activeId}
+              documents={inventory}
+              inventoryError={inventoryError}
+              activeId={lastOpened ?? workspace.activeId}
               onOpen={open}
               onManage={showProjects}
               onGuide={showGuide}
@@ -346,8 +429,9 @@ export default function App() {
             )}
             {dialog === "projects" && (
               <ProjectManager
-                documents={workspace.documents}
-                activeId={workspace.activeId}
+                documents={inventory}
+                inventoryStatus={inventoryError || (!inventoryReady ? "Checking saved projects…" : "")}
+                activeId={lastOpened ?? workspace.activeId}
                 onOpen={open}
                 onNew={showNew}
                 onImport={importClick}
@@ -355,13 +439,13 @@ export default function App() {
                 onDownload={downloadProject}
                 onRemove={remove}
                 onMigration={showMigration}
-                onCharts={() => setDialog("saved-charts")}
+                onCharts={() => { setChartId(undefined); setDialog("saved-charts"); }}
                 onClose={closeDialog}
               />
             )}
             {dialog === "guide" && <Guide onClose={closeDialog} />}
             {dialog === "migration" && (
-              <WorkspaceMigrationReview nextProjectId={requestedV3Project} onClose={showProjects} onDownloadLegacy={backupWorkspace} />
+              <WorkspaceMigrationReview onClose={showProjects} onDownloadLegacy={backupWorkspace} />
             )}
             {dialog === "guided" && (
               <GuidedProcessDialog draft={guidedDraft} onDraft={setGuidedDraft} onClose={closeDialog}
@@ -372,8 +456,7 @@ export default function App() {
                 onCreated={(id, draftRetained) => {
                   if (draftRetained) notify("Project saved. The local draft could not be cleared.", "error");
                   setGuidedDraft({ title: "", text: "" });
-                  setRequestedV3Project(id);
-                  setDialog("migration");
+                  openAuthor(id);
                 }} />
             )}
             {dialog === "guided-table" && (
@@ -382,28 +465,26 @@ export default function App() {
                 onCreated={(id, draftRetained) => {
                   if (draftRetained) notify("Project saved. The local draft could not be cleared.", "error");
                   setRelationshipTable(emptyRelationshipTable);
-                  setRequestedV3Project(id);
-                  setDialog("migration");
+                  openAuthor(id);
                 }} />
             )}
             {dialog === "guided-systems" && <GuidedSystemsDialog session={guidedSystems} onSession={setGuidedSystems}
               onBack={() => setDialog("guided-table")} onClose={closeDialog} onCreated={(id, draftRetained) => {
                 if (draftRetained) notify("Project saved. The local draft could not be cleared.", "error");
                 setGuidedSystems(emptySystemsSession);
-                setRequestedV3Project(id);
-                setDialog("migration");
+                openAuthor(id);
               }} />}
             {dialog === "components" && <ComponentProjectDialog onBack={() => setDialog("guided")} onClose={closeDialog}
-              onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
-            {(dialog === "guided-chart" || dialog === "saved-charts") && <ChartProjectDialog fromProjects={dialog === "saved-charts"}
+              onCreated={id => { openAuthor(id); }} />}
+            {(dialog === "guided-chart" || dialog === "saved-charts") && <ChartProjectDialog onOpened={id => rememberOpened("chart/" + id)} initialId={dialog === "saved-charts" ? chartId : undefined} fromProjects={dialog === "saved-charts"}
               onBack={() => setDialog(dialog === "saved-charts" ? "projects" : "guided")} onClose={closeDialog} />}
             {dialog === "engineering-file" && <OpenApiImportDialog onBack={() => setDialog("guided")} onClose={closeDialog}
               onTerraform={() => setDialog("terraform-file")} onSchema={() => setDialog("schema-file")}
-              onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
+              onCreated={id => { openAuthor(id); }} />}
             {dialog === "terraform-file" && <TerraformImportDialog onBack={() => setDialog("engineering-file")} onClose={closeDialog}
-              onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
+              onCreated={id => { openAuthor(id); }} />}
             {dialog === "schema-file" && <SchemaImportDialog onBack={() => setDialog("engineering-file")} onClose={closeDialog}
-              onCreated={id => { setRequestedV3Project(id); setDialog("migration"); }} />}
+              onCreated={id => { openAuthor(id); }} />}
           </Suspense>
           {dialog === "new" && (
             <Modal
@@ -461,7 +542,7 @@ export default function App() {
           {importing && (
             <div className="import-progress" role="status">
               <LoaderCircle className="spin" size={17} />
-              Importing your file…
+              {upgrading.current ? "Preparing authoring tools…" : "Importing your file…"}
             </div>
           )}
           {openModals === 0 && (

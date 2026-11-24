@@ -101,7 +101,7 @@ test('framing skips the renderer; motion reuses layout; returning to a style use
   expect(cached.layouts).toBe(decorated.layouts);
   expect(cached.decorations).toBe(decorated.decorations);
 
-  await page.getByTitle('Actual size', { exact: true }).click();
+  await page.getByTitle('Reset zoom to 100%', { exact: true }).click();
   const position = page.locator('.drawing-position');
   await expect.poll(() => position.evaluate(element => (element as HTMLElement).style.transform.endsWith('scale(1)'))).toBe(true);
   await page.getByRole('button', { name: 'Pan canvas', exact: true }).click();

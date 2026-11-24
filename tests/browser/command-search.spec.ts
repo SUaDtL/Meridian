@@ -45,6 +45,7 @@ test('a v3 Connect command uses the same reviewed edit and durable save as the f
   await guide.getByRole('button', { name: 'Review connections' }).click();
   await guide.getByRole('button', { name: 'Preview process' }).click();
   await guide.getByRole('button', { name: 'Create process' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const project = page.getByRole('dialog', { name: 'Command route' });
   await expect(project.getByRole('img', { name: 'Diagram preview for Command route' })).toBeVisible();
   await project.getByRole('button', { name: 'Commands', exact: true }).click();

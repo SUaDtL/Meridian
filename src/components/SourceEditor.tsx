@@ -59,6 +59,7 @@ function syncSource(view: EditorView, source: string) {
 type SourceEditorProps = {
   source: string;
   onChange: (source: string, group?: string) => void;
+  jumpLine?: number;
   focusRequest?: number;
 } & ({
   onUndo: () => void;
@@ -78,7 +79,7 @@ const draftAttributes = EditorView.contentAttributes.of({
   'spellcheck': 'false',
 });
 
-function SourceEditor({ source, onChange, onUndo, onRedo, focusRequest = 0, draft }: SourceEditorProps) {
+function SourceEditor({ source, onChange, onUndo, onRedo, jumpLine, focusRequest = 0, draft }: SourceEditorProps) {
   const actions = useRef({ onChange, onUndo, onRedo, onReady: draft?.onReady, onComposition: draft?.onComposition });
   actions.current = { onChange, onUndo, onRedo, onReady: draft?.onReady, onComposition: draft?.onComposition };
   const editor = useRef<EditorView | null>(null);
@@ -99,7 +100,15 @@ function SourceEditor({ source, onChange, onUndo, onRedo, focusRequest = 0, draf
     // keystroke always starts from the accepted project's source.
     if (!isDraft && editor.current) syncSource(editor.current, source);
   }, [isDraft, source]);
-  useEffect(() => { if (focusRequest) editor.current?.focus(); }, [focusRequest]);
+  useEffect(() => {
+    const view = editor.current;
+    if (!focusRequest || !view) return;
+    if (jumpLine && jumpLine <= view.state.doc.lines) {
+      const line = view.state.doc.line(jumpLine);
+      view.dispatch({ selection: { anchor: line.from, head: line.to }, scrollIntoView: true });
+    }
+    view.focus();
+  }, [focusRequest, jumpLine]);
   const editorExtensions = useMemo(() => [...extensions, EditorView.domEventHandlers({
     keydown(event, view) {
       const key = event.key.toLowerCase();

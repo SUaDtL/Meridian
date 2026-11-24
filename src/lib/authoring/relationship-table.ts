@@ -6,18 +6,52 @@ export const systemRoles = ['neutral', 'service', 'database', 'queue', 'external
 type SystemRole = (typeof systemRoles)[number];
 
 export type RelationshipColumns = {
-  label: number;
+  label: number | null;
+  mode?: "edges";
+  edgeLabel?: number | null;
   id: number | null;
   source: number | null;
   target: number | null;
   role: number | null;
 };
-export type RelationshipGraph = ReturnType<typeof mapRelationshipTable>;
+export type RelationshipGraph = {
+  nodes: { key: string; label: string; role: SystemRole | null; sourceRow: number }[];
+  edges: { from: string; to: string; label?: string }[];
+};
+
+export function mapEdgeList(rows: readonly DelimitedRow[], source: number, target: number, edgeLabel: number | null, header: boolean): RelationshipGraph {
+  const width = rows[0]?.cells.length ?? 0;
+  if ([source, target, edgeLabel].some(i => i !== null && (!Number.isInteger(i) || i < 0 || i >= width)) || source === target)
+    throw new Error("Choose distinct source and target columns.");
+  const graph: RelationshipGraph = { nodes: [], edges: [] };
+  const ids = new Map<string, string>();
+  function endpoint(label: string, row: number) {
+    let key = ids.get(label);
+    if (!key) {
+      if (ids.size >= authoringLimits.graphNodes) throw new Error("Map at most 200 systems.");
+      key = "endpoint-" + (ids.size + 1);
+      ids.set(label, key);
+      graph.nodes.push({ key, label, role: null, sourceRow: row });
+    }
+    return key;
+  }
+  for (const { cells, line } of rows.slice(Number(header))) {
+    if (cells.length !== width) throw new Error(`Line ${line}: Expected ${width} fields.`);
+    const from = cells[source].trim(), to = cells[target].trim(), label = edgeLabel === null ? "" : cells[edgeLabel];
+    if (!from || !to) throw new Error(`Line ${line}: Supply both relationship endpoints.`);
+    try { [from, to, label].filter(Boolean).forEach(value => encodeMermaidLabel(value)); }
+    catch (error) { throw new Error(`Line ${line}: ${error instanceof Error ? error.message : "Invalid label."}`); }
+    if (graph.edges.length >= 400) throw new Error("Map at most 400 relationships.");
+    graph.edges.push({ from: endpoint(from, line), to: endpoint(to, line), label });
+  }
+  if (!graph.edges.length) throw new Error("Include at least one connection.");
+  return graph;
+}
 
 export function mapRelationshipTable(rows: readonly DelimitedRow[], columns: RelationshipColumns, hasHeader: boolean) {
   const [first] = rows;
   if (!first || (hasHeader && rows.length < 2)) throw new Error('Include at least one data row.');
-  if (columns.label == null || Object.values(columns).some(column => column !== null
+  if (columns.label == null || [columns.label, columns.id, columns.source, columns.target, columns.role].some(column => column !== null
     && (!Number.isInteger(column) || column < 0 || column >= first.cells.length))) {
     throw new Error('Map the label and any relationship columns to existing fields.');
   }

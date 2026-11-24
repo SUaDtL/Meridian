@@ -1,3 +1,4 @@
+import ProjectThumbnail from "./ProjectThumbnail";
 import { useMemo, useState } from "react";
 import {
   ArrowRight,
@@ -10,7 +11,7 @@ import {
   ListTree,
   Upload,
 } from "lucide-react";
-import type { StudioDocument } from "../types";
+import type { ProjectListItem } from "../lib/persistence/project-inventory";
 import { getTheme } from "../lib/themes";
 import Brand from "./Brand";
 
@@ -80,13 +81,15 @@ export function StartChoices({ onGuided, onBlank, onExamples, onImport }: StartA
 
 export default function Home({
   documents,
+  inventoryError,
   activeId,
   onOpen,
   onManage,
   onGuide,
   ...actions
 }: StartActions & {
-  documents: StudioDocument[];
+  documents: ProjectListItem[];
+  inventoryError: string;
   activeId: string | null;
   onOpen: (id: string) => void;
   onManage: () => void;
@@ -125,6 +128,7 @@ export default function Home({
             Choose your starting point, then make it yours.
           </p>
         </section>
+        {inventoryError && <p role="alert">{inventoryError}</p>}
         {last && (
           <section className="continue-project" aria-label="Continue working">
             <span className="continue-icon">
@@ -135,7 +139,7 @@ export default function Home({
               <h2>{last.title || "Untitled diagram"}</h2>
               <p>
                 {last.subtitle ||
-                  `${getTheme(last.settings.theme).name} · Saved in this browser`}
+                  `${getTheme(last.theme).name} · Saved in this browser`}
               </p>
             </div>
             <button
@@ -179,15 +183,7 @@ export default function Home({
                   className="recent-card"
                   onClick={() => onOpen(project.id)}
                 >
-                  <span
-                    className="project-icon"
-                    style={{
-                      background: getTheme(project.settings.theme).canvas,
-                      color: getTheme(project.settings.theme).accent,
-                    }}
-                  >
-                    <Layers3 size={20} />
-                  </span>
+                  <ProjectThumbnail project={project} />
                   <span>
                     <strong>{project.title || "Untitled diagram"}</strong>
                     <small>
@@ -195,9 +191,9 @@ export default function Home({
                         undefined,
                         { month: "short", day: "numeric" },
                       )}{" "}
-                      · {getTheme(project.settings.theme).name}
-                      {project.storyboard?.scenes.length
-                        ? ` · ${project.storyboard.scenes.length} scenes`
+                      · {project.kind === "chart" ? "Chart" : "Diagram"} · {getTheme(project.theme).name}
+                      {project.sceneCount
+                        ? ` · ${project.sceneCount} scenes`
                         : ""}
                     </small>
                   </span>

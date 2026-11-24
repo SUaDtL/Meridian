@@ -8,7 +8,7 @@ export default function ProcessConnectionTable({ steps, connections, disabled, o
   onChange: (connections: ProcessConnections) => void;
 }) {
   function editEdge(id: string, change: Partial<ProcessConnection>) {
-    onChange({ ...connections, edges: connections.edges.map(edge => edge.id === id ? { ...edge, ...change } : edge) });
+    onChange({ ...connections, edges: connections.edges.map(edge => edge.id === id ? { ...edge, review: 'accepted', ...change } : edge) });
   }
 
   function removeEdge(id: string) {
@@ -27,7 +27,7 @@ export default function ProcessConnectionTable({ steps, connections, disabled, o
   return (
     <fieldset disabled={disabled} className="guided-process-fieldset">
       <legend>Explicit connections</legend>
-      <p>Review each carried-over connection. Use the same destination to join branches, or mark the last step of each branch as an end.</p>
+      <p>Unchanged connections are retained. Review the decision branches. Use the same destination to join branches, or mark the last step of each branch as an end.</p>
       <ol className="guided-process-connections">
         {connections.edges.map((edge, index) => (
           <li key={edge.id}>

@@ -236,8 +236,8 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return prepareGuidedInsertion(async base => {
       const { prepareGuidedFragmentInsertion } = await import('./guided-systems-insertion');
       const nodes = draft.graph.nodes.map(({ key, label, role }) => ({ key, label, role, shape: 'rect' as const }));
-      const edges = draft.graph.edges.map(({ from, to }, index) => ({
-        key: `row-edge-${index + 1}`, from: { key: from }, to: { key: to }, label: '',
+      const edges = draft.graph.edges.map(({ from, to, label }, index) => ({
+        key: `row-edge-${index + 1}`, from: { key: from }, to: { key: to }, label: label ?? '',
       }));
       return prepareGuidedFragmentInsertion(base, nodes, edges, draft.attachment, signal);
     }, signal);
@@ -659,6 +659,17 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
     return 'applied';
   }
 
+  function updateStudioDesign(base: MermaidProjectV3, patch: {
+    settings?: MermaidProjectV3['settings'];
+    design?: Pick<MermaidProjectV3['design'], 'elements' | 'preset'>;
+    storyboard?: MermaidProjectV3['storyboard'];
+  }) {
+    if (closed || base !== current.document) return 'stale';
+    const next = validateMermaidProject({ ...base, ...patch,
+      design: { ...base.design, ...patch.design }, revision: base.revision + 1, updatedAt: new Date().toISOString() });
+    return commit(freezeSnapshot(next));
+  }
+
   function advanceHistory(next: typeof current, anchor?: SavedAnchor) {
     past.push(current);
     future.length = 0;
@@ -687,6 +698,11 @@ export async function openStoredProjectEditor(db: IDBDatabase, id: string, notif
 
   return {
     snapshot: () => current.document,
+    updateStudioDesign,
+    restoreCheckpoint(base: MermaidProjectV3, snapshot: MermaidProjectV3) {
+      if (closed || current.document !== base || base.id !== snapshot.id) return 'stale';
+      return commit(freezeSnapshot(validateMermaidProject({ ...snapshot, revision: base.revision + 1, updatedAt: new Date().toISOString() })));
+    },
     prepareHeading,
     applyHeading,
     prepareStructure,

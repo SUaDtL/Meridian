@@ -22,6 +22,7 @@ test('creates a reviewed five-step v3 process without writing source', async ({ 
   await expect(wizard.getByRole('button', { name: 'Create process' })).toBeEnabled();
   await expect(wizard.getByRole('img', { name: 'Proposed process diagram' })).toBeVisible();
   await wizard.getByRole('button', { name: 'Create process' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   const project = page.getByRole('dialog', { name: 'Request process' });
   await expect(project.getByText('Saved in this browser.')).toBeVisible();
   const pendingDownload = page.waitForEvent('download');
@@ -83,6 +84,7 @@ test('resumes a normalized draft after reload and clears it after creating the p
   await expect(wizard.getByText('From line 1: 1. Start')).toHaveCount(0);
   await wizard.getByRole('button', { name: 'Preview process' }).click();
   await wizard.getByRole('button', { name: 'Create process' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Reviewed draft' }).getByText('Saved in this browser.')).toBeVisible();
   await expectWorkspaceOmits(page, ['1. Start', '• Review', 'New unreviewed entry']);
 
@@ -133,6 +135,7 @@ test('guidance keeps session input available when draft storage fails', async ({
   await expect(wizard.getByRole('alert')).toHaveText('Session-only draft. Draft storage is full.');
   await wizard.getByRole('button', { name: 'Preview process' }).click();
   await wizard.getByRole('button', { name: 'Create process' }).click();
+  await page.getByRole('button', { name: 'Authoring tools', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Session draft' }).getByText('Saved in this browser.')).toBeVisible();
 });
 
@@ -210,7 +213,6 @@ test('reviews and resumes explicit approval branches without connecting approve 
   await preview.click();
   await expect(wizard.getByRole('alert')).toHaveText('Keep or remove the connection from Decision to Approve.');
   await connection(2).getByLabel('Connection label').fill('Approve request');
-  await connection(2).getByRole('button', { name: 'Keep connection' }).click();
   await connection(3).getByRole('button', { name: 'Remove connection' }).click();
   await wizard.getByLabel('Mark Complete as an end').check();
   await wizard.getByRole('button', { name: 'Move Reject up' }).click();
@@ -227,8 +229,7 @@ test('reviews and resumes explicit approval branches without connecting approve 
   await expect(wizard.getByLabel('Mark Complete as an end')).toBeChecked();
   await expect(connection(2).getByLabel('Connection label')).toHaveValue('Approve request');
   await expect(connection(2).getByText('Review connection')).toHaveCount(0);
-  await expect(connection(3).getByText('Review connection')).toBeVisible();
-  await connection(3).getByRole('button', { name: 'Keep connection' }).click();
+  await expect(connection(3).getByText('Review connection')).toHaveCount(0);
   const rejectEnd = wizard.getByLabel('Mark Reject as an end');
   await rejectEnd.check();
   await preview.click();
@@ -239,11 +240,9 @@ test('reviews and resumes explicit approval branches without connecting approve 
   await connection(4).getByLabel('From').selectOption({ label: 'Decision · line 2' });
   await connection(4).getByLabel('To').selectOption({ label: 'Reject · line 4' });
   await connection(4).getByLabel('Connection label').fill('Reject request');
-  await connection(4).getByRole('button', { name: 'Keep connection' }).click();
   await add.click();
   await connection(5).getByLabel('From').selectOption({ label: 'Approve · line 3' });
   await connection(5).getByLabel('To').selectOption({ label: 'Complete · line 5' });
-  await connection(5).getByRole('button', { name: 'Keep connection' }).click();
   await preview.click();
   const create = wizard.getByRole('button', { name: 'Create process' });
   await expect(create).toBeEnabled();
@@ -253,6 +252,7 @@ test('reviews and resumes explicit approval branches without connecting approve 
     'Decision → Reject (Reject request)', 'Approve → Complete',
   ]);
   await create.click();
+  await page.getByRole('button', { name: 'Authoring tools' }).click();
   const project = page.getByRole('dialog', { name: 'Approval process' });
   await expect(project.getByText('Saved in this browser.')).toBeVisible();
   const pendingDownload = page.waitForEvent('download');
@@ -304,7 +304,6 @@ test('inserts reviewed process branches after refreshing a changed target and un
   await wizard.getByRole('button', { name: 'Make Decision a decision' }).click();
   const connection = (n: number) => wizard.getByRole('group', { name: `Connection ${n}`, exact: true });
   await connection(2).getByLabel('Connection label').fill('Accept it');
-  await connection(2).getByRole('button', { name: 'Keep connection' }).click();
   await connection(3).getByRole('button', { name: 'Remove connection' }).click();
   await wizard.getByLabel('Mark Accept as an end').check();
   await wizard.getByLabel('Mark Reject as an end').check();
@@ -312,7 +311,6 @@ test('inserts reviewed process branches after refreshing a changed target and un
   await connection(3).getByLabel('From').selectOption({ label: 'Decision · line 2' });
   await connection(3).getByLabel('To').selectOption({ label: 'Reject · line 4' });
   await connection(3).getByLabel('Connection label').fill('Reject it');
-  await connection(3).getByRole('button', { name: 'Keep connection' }).click();
 
   const attachment = wizard.getByRole('group', { name: 'Attachment to this project' });
   await attachment.getByRole('combobox', { name: 'Existing node', exact: true }).selectOption({ label: 'Intake (A)' });
@@ -397,16 +395,13 @@ for (const mode of ['keyboard', 'touch'] as const) {
       await expect(steps.nth(2)).toContainText('Reject');
       const connection = (index: number) => wizard.getByRole('group', { name: `Connection ${index}`, exact: true });
       await connection(2).getByLabel('Connection label').fill('Approve branch');
-      await activate(connection(2).getByRole('button', { name: 'Keep connection' }));
       await activate(connection(3).getByRole('button', { name: 'Remove connection' }));
-      await activate(connection(3).getByRole('button', { name: 'Keep connection' }));
       const add = wizard.getByRole('button', { name: 'Add connection', exact: true });
       for (const [index, from, to] of [[4, 'Decision · line 2', 'Reject · line 4'], [5, 'Approve · line 3', 'Finish · line 5']] as const) {
         await activate(add);
         await choose(connection(index).getByLabel('From'), from);
         await choose(connection(index).getByLabel('To'), to);
         if (index === 4) await connection(index).getByLabel('Connection label').fill('Reject branch');
-        await activate(connection(index).getByRole('button', { name: 'Keep connection' }));
       }
       const end = wizard.getByLabel('Mark Finish as an end');
       if (mode === 'keyboard') await end.press('Space');
@@ -417,6 +412,7 @@ for (const mode of ['keyboard', 'touch'] as const) {
         'Start → Decision', 'Decision → Approve (Approve branch)', 'Reject → Finish', 'Decision → Reject (Reject branch)', 'Approve → Finish',
       ]);
       await activate(wizard.getByRole('button', { name: 'Create process' }));
+      await activate(page.getByRole('button', { name: 'Authoring tools' }));
       const live = page.getByRole('dialog', { name: 'Reviewed decision' });
       await expect(live.getByText('Saved in this browser.')).toBeVisible();
       const [file] = await Promise.all([page.waitForEvent('download'), activate(live.getByRole('button', { name: 'Download v3 project' }))]);
